@@ -1,4 +1,14 @@
-# redis:7-alpine — queue frontier + celery broker, mất được (tái tạo từ DB).
+# redis:7-alpine — queue frontier + celery broker + cache db3.
+# Persist frontier/seen qua PVC (restart không mất hàng đợi).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: sict
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 5Gi}}
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -25,8 +35,12 @@ spec:
         - name: redis
           image: redis:7-alpine
           args: ["redis-server", "--maxmemory", "512mb",
-                 "--maxmemory-policy", "volatile-ttl"]
+                 "--maxmemory-policy", "volatile-ttl", "--appendonly", "yes"]
           ports: [{containerPort: 6379}]
+          volumeMounts: [{name: rdata, mountPath: /data}]
+      volumes:
+        - name: rdata
+          persistentVolumeClaim: {claimName: redis-data}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: 500m, memory: 512Mi}
