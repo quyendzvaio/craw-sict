@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Pack code
-        run: tar czf sict-deploy.tgz --exclude=.venv --exclude=.pgdata
+        run: tar czf /tmp/sict-deploy.tgz --exclude=.venv --exclude=.pgdata
           --exclude=__pycache__ --exclude=.ruff_cache --exclude=_local_store
           --exclude=.git --exclude='*.log' --exclude='*.pt' --exclude='.lock*' .
       - name: Upload tarball
@@ -28,7 +28,7 @@ jobs:
           host: ${{ secrets.VM1_HOST }}
           username: ubuntu
           key: ${{ secrets.VM1_KEY }}
-          source: sict-deploy.tgz
+          source: /tmp/sict-deploy.tgz
           target: /home/ubuntu/sict-deploy.tgz
       - name: Build + restart API
         uses: appleboy/ssh-action@v1
@@ -57,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Pack code
-        run: tar czf sict-deploy.tgz --exclude=.venv --exclude=.pgdata
+        run: tar czf /tmp/sict-deploy.tgz --exclude=.venv --exclude=.pgdata
           --exclude=__pycache__ --exclude=.ruff_cache --exclude=_local_store
           --exclude=.git --exclude='*.log' --exclude='*.pt' --exclude='.lock*' .
       - name: Upload tarball
@@ -66,7 +66,7 @@ jobs:
           host: ${{ secrets.VM2_HOST }}
           username: ubuntu
           key: ${{ secrets.VM2_KEY }}
-          source: sict-deploy.tgz
+          source: /tmp/sict-deploy.tgz
           target: /home/ubuntu/sict-deploy.tgz
       - name: Build worker + restart 24h loop
         uses: appleboy/ssh-action@v1
