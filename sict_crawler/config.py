@@ -97,6 +97,15 @@ class VlmConfig:
 
     def __post_init__(self):
         self.api_key = os.environ.get("VLM_API_KEY", self.api_key)
+        # Override provider qua env (không cần sửa yaml/rebuild):
+        # VLM_API_BASE (VD https://api.openai.com/v1), VLM_MODELS (phân tách dấu phẩy),
+        # VLM_ENABLED (true/false).
+        if os.environ.get("VLM_API_BASE"):
+            self.api_base = os.environ["VLM_API_BASE"]
+        if os.environ.get("VLM_MODELS"):
+            self.models = [m.strip() for m in os.environ["VLM_MODELS"].split(",") if m.strip()]
+        if os.environ.get("VLM_ENABLED"):
+            self.enabled = os.environ["VLM_ENABLED"].lower() in ("1", "true", "yes", "on")
 
 
 @dataclass
@@ -109,6 +118,11 @@ class LlmConfig:
 
     def __post_init__(self):
         self.api_key = os.environ.get("LLM_API_KEY", self.api_key)
+        # Override provider qua env: LLM_API_BASE, LLM_MODEL.
+        if os.environ.get("LLM_API_BASE"):
+            self.api_base = os.environ["LLM_API_BASE"]
+        if os.environ.get("LLM_MODEL"):
+            self.model = os.environ["LLM_MODEL"]
 
 
 @dataclass

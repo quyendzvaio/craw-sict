@@ -30,7 +30,12 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_API_BASE: ${LLM_API_BASE:-}
+      LLM_MODEL: ${LLM_MODEL:-}
       VLM_API_KEY: ${VLM_API_KEY:-}
+      VLM_API_BASE: ${VLM_API_BASE:-}
+      VLM_MODELS: ${VLM_MODELS:-}
+      VLM_ENABLED: ${VLM_ENABLED:-false}
       HF_TOKEN: ${HF_TOKEN:-}
       POSTGRES_DSN: ${POSTGRES_DSN:-postgresql+asyncpg://sict:sict@postgres:5432/sict_crawler}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
