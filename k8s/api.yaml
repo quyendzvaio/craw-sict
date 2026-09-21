@@ -1,0 +1,59 @@
+# API serve (Dockerfile.api, slim — cần torch cho E5/CLIP query).
+# startupProbe trừ hao load model CPU (~30-90s lần đầu).
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: sict
+spec:
+  selector: {app: api}
+  ports: [{port: 8000, targetPort: 8000, nodePort: 30080}]
+  type: NodePort  # UI public: http://<vm1>:30080 (SG mở port này)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: sict
+spec:
+  replicas: 1  # 2 khi VM1 dư RAM (mỗi replica tải E5+CLIP ~1GB, limit 4Gi)
+  selector: {matchLabels: {app: api}}
+  template:
+    metadata: {labels: {app: api}}
+    spec:
+      nodeSelector: {workload: infra}  # pin VM1 (local-path data + image sict-api)
+      securityContext: {runAsUser: 10000, runAsNonRoot: true}
+      containers:
+        - name: api
+          image: sict-api:latest
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8000}]
+          env:
+            - {name: SICT_CONFIG, value: /app/config.yaml}
+            - {name: PGB_USER, valueFrom: {secretKeyRef: {name: sict-postgres, key: user}}}
+            - {name: PGB_PASS, valueFrom: {secretKeyRef: {name: sict-postgres, key: password}}}
+            - {name: POSTGRES_DSN, value: "postgresql+asyncpg://$(PGB_USER):$(PGB_PASS)@postgres:5432/sict_crawler"}
+            - {name: REDIS_URL, value: "redis://redis:6379/0"}
+            - {name: QDRANT_HOST, value: qdrant}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: {secretKeyRef: {name: sict-s3, key: access_key_id}}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: sict-s3, key: secret_access_key}}
+            - name: S3_ENDPOINT_URL
+              valueFrom: {secretKeyRef: {name: sict-s3, key: endpoint_url, optional: true}}
+          volumeMounts: [{name: config, mountPath: /app/config.yaml, subPath: config.yaml}]
+          resources:
+            requests: {cpu: 500m, memory: 1Gi}
+            limits: {cpu: "2", memory: 4Gi}
+          startupProbe:
+            httpGet: {path: /, port: 8000}
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /, port: 8000}
+            periodSeconds: 15
+      volumes:
+        - name: config
+          configMap: {name: sict-config}
+      # Gợi ý gán VM theo libreview trước đó (label node rồi uncomment):
+      # nodeSelector: {workload: edge}      # t3.small 2vCPU/2GB

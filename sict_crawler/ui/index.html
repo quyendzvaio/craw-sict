@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SICT RAG — Hỏi đáp đa phương thức</title>
+<style>
+:root{color-scheme:light dark;--bg:#f7f7f8;--fg:#1a1a1a;--card:#fff;--accent:#0b5fff;--muted:#666;--border:#e2e2e6}
+@media(prefers-color-scheme:dark){:root{--bg:#17171a;--fg:#ececf1;--card:#232328;--accent:#5b8cff;--muted:#999;--border:#333}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}
+.wrap{max-width:760px;margin:0 auto;padding:24px 16px;display:flex;flex-direction:column;min-height:100vh}
+h1{font-size:18px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 20px;font-size:13px}
+#log{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding-bottom:16px}
+.msg{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;white-space:pre-wrap}
+.msg.user{background:var(--accent);color:#fff;border-color:var(--accent);align-self:flex-end;max-width:80%}
+.srcs{margin-top:8px;border-top:1px solid var(--border);padding-top:8px;font-size:12px}
+.src{display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border:1px solid var(--border);border-radius:99px;color:var(--muted);text-decoration:none}
+.src.image,.src.video_frame{border-color:var(--accent);color:var(--accent)}
+.srcimg{display:block;width:100%;max-width:320px;border-radius:8px;margin:6px 0;border:1px solid var(--border)}
+form{display:flex;gap:8px}input#q{flex:1;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--fg);font-size:14px}
+button{padding:12px 20px;border:0;border-radius:10px;background:var(--accent);color:#fff;font-size:14px;cursor:pointer}
+button:disabled{opacity:.5}
+#preview{margin-bottom:8px;position:relative}#preview img{max-height:80px;border-radius:8px;border:1px solid var(--border)}
+#pvx{position:absolute;top:4px;left:88px;padding:2px 8px;background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:99px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>SICT RAG</h1>
+  <p class="sub">Hỏi đáp đa phương thức — Trường CNTT & TT, HaUI</p>
+  <div id="log"></div>
+  <form id="f">
+    <div id="preview" hidden><img id="pvimg" alt=""><button type="button" id="pvx">✕</button></div>
+    <input id="q" placeholder="Ví dụ: Ngành An toàn thông tin đào tạo những gì? (có thể kèm ảnh)" autocomplete="off">
+    <input id="img" type="file" accept="image/jpeg,image/png" hidden>
+    <button type="button" id="pick" title="Đính kèm ảnh">📎</button>
+    <button id="go">Gửi</button>
+  </form>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

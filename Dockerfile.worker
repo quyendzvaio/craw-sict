@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1
+# Worker incremental full: crawl render + OCR + embed E5/CLIP. BẮT BUỘC glibc (slim).
+# - torch/sentence-transformers/transformers: không có musl wheel → alpine build từ source (fail).
+# - obscura binary: link glibc 2.35+ → không chạy trên musl.
+# - tesseract-ocr-vie: chắc chắn có trên apt, không chắc trên apk.
+# Deps quản lý bằng uv (pyproject.toml group ml + uv.lock), KHÔNG dùng pip/requirements.txt.
+# Build: docker build -f Dockerfile.worker -t sict-worker .
+ARG PYTHON_VERSION=3.11
+FROM python:${PYTHON_VERSION}-slim AS runtime
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_COMPILE_BYTECODE=1 \
+    OBSCURA_BIN=/usr/local/bin/obscura CRAWLER_BACKEND=auto
+ARG OBSCURA_VERSION=latest
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr tesseract-ocr-vie tesseract-ocr-eng ffmpeg curl ca-certificates \
+    && arch=$(uname -m | sed 's/x86_64/x86_64/;s/aarch64/aarch64/') \
+    && if [ "$OBSCURA_VERSION" = "latest" ]; then \
+         curl -fsSL -o /tmp/obscura.tgz \
+           https://github.com/h4ckf0r0day/obscura/releases/latest/download/obscura-${arch}-linux.tar.gz; \
+       else \
+         curl -fsSL -o /tmp/obscura.tgz \
+           https://github.com/h4ckf0r0day/obscura/releases/download/${OBSCURA_VERSION}/obscura-${arch}-linux.tar.gz; \
+       fi \
+    && tar xzf /tmp/obscura.tgz -C /usr/local/bin && rm /tmp/obscura.tgz \
+    && (obscura --version || echo "obscura install skipped (offline build)") \
+    && apt-get purge -y curl && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -u 10000 app
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project --group ml
+COPY config.yaml ./
+COPY sict_crawler ./sict_crawler
+RUN /app/.venv/bin/python -c "import pytesseract; print(pytesseract.get_tesseract_version())" \
+    && mkdir -p /app/_local_store && chown -R 10000:10000 /app
+ENV PATH="/app/.venv/bin:$PATH"
+USER 10000
+# cron/k8s override command khi chỉ backfill: --annotate-ocr 20000
+CMD ["python", "-m", "sict_crawler.main", "--incremental", "--check-edits", "100", "--crawl-limit", "200", "--annotate-ocr-n", "500"]
