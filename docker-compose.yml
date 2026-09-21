@@ -10,8 +10,10 @@ services:
 
   redis:
     image: redis:7
-    command: ["redis-server", "--maxmemory", "512mb", "--maxmemory-policy", "volatile-ttl"]
+    command: ["redis-server", "--maxmemory", "512mb", "--maxmemory-policy", "volatile-ttl",
+              "--appendonly", "yes"]
     ports: ["6379:6379"]
+    volumes: [redisdata:/data]
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -49,3 +51,4 @@ volumes:
   pgdata:
   qdata:
   hfcache:
+  redisdata:  # persist frontier/seen + heartbeat (restart không mất hàng đợi)
