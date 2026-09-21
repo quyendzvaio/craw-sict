@@ -39,6 +39,35 @@ def test_cache_key_stable_and_scoped():
     assert a != _query_cache_key("tuyển sinh?", 5)
 
 
+def _minimal_data():
+    return {
+        "site": {"base_url": "https://x", "seed_urls": ["https://x"],
+                 "skip_patterns": []},
+        "qdrant": {}, "redis": {"url": "redis://localhost:6379/0"},
+        "celery": {"broker_url": "r", "result_url": "r"},
+        "postgres": {"dsn": "postgresql://u:p@localhost/db"},
+        "s3": {"bucket": "b"}, "vlm": {}, "llm": {},
+    }
+
+
+def test_llm_vlm_env_override(monkeypatch):
+    from sict_crawler.config import _build
+
+    monkeypatch.setenv("LLM_API_BASE", "https://api.openai.com/v1")
+    monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("VLM_API_BASE", "https://api.openai.com/v1")
+    monkeypatch.setenv("VLM_MODELS", "gpt-4o-mini, qwen-vl")
+    monkeypatch.setenv("VLM_ENABLED", "true")
+    monkeypatch.setenv("VLM_API_KEY", "sk-v")
+    s = _build(_minimal_data())
+    assert s.llm.api_base == "https://api.openai.com/v1"
+    assert s.llm.model == "gpt-4o-mini" and s.llm.api_key == "sk-test"
+    assert s.vlm.api_base == "https://api.openai.com/v1"
+    assert s.vlm.models == ["gpt-4o-mini", "qwen-vl"]
+    assert s.vlm.enabled is True and s.vlm.api_key == "sk-v"
+
+
 class _NoRow:
     """DB giả: media không tồn tại → 404, không cần PG thật."""
 
@@ -81,6 +110,22 @@ if __name__ == "__main__":
     print("OK — cầu chì mass-delete")
     test_cache_key_stable_and_scoped()
     print("OK — cache key ổn định, phân biệt top_k")
+    import os
+
+    from sict_crawler.config import _build
+
+    os.environ.update({"LLM_API_BASE": "https://api.openai.com/v1",
+                       "LLM_MODEL": "gpt-4o-mini", "LLM_API_KEY": "sk-test",
+                       "VLM_MODELS": "gpt-4o-mini", "VLM_ENABLED": "true"})
+    try:
+        s = _build(_minimal_data())
+        assert s.llm.api_base.endswith("/v1") and s.llm.model == "gpt-4o-mini"
+        assert s.vlm.models == ["gpt-4o-mini"] and s.vlm.enabled is True
+    finally:
+        for k in ("LLM_API_BASE", "LLM_MODEL", "LLM_API_KEY",
+                  "VLM_MODELS", "VLM_ENABLED"):
+            os.environ.pop(k, None)
+    print("OK — LLM/VLM env override")
     from sict_crawler import api as _api
 
     _orig = _api.db.get_session
