@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Pack code
-        run: tar czf /tmp/sict-deploy.tgz --exclude=.venv --exclude=.pgdata
+        run: tar czf sict-deploy.tgz --exclude=.venv --exclude=.pgdata
           --exclude=__pycache__ --exclude=.ruff_cache --exclude=_local_store
           --exclude=.git --exclude='*.log' --exclude='*.pt' --exclude='.lock*' .
       - name: Upload tarball
@@ -28,8 +28,8 @@ jobs:
           host: ${{ secrets.VM1_HOST }}
           username: ubuntu
           key: ${{ secrets.VM1_KEY }}
-          source: /tmp/sict-deploy.tgz
-          target: ~/
+          source: sict-deploy.tgz
+          target: /home/ubuntu/sict-deploy.tgz
       - name: Build + restart API
         uses: appleboy/ssh-action@v1
         with:
@@ -45,6 +45,7 @@ jobs:
             docker exec -u 0 craw-sict-api-1 chown -R 10000:10000 /cache/hf || true
             docker compose restart api
             sleep 25
+            docker exec craw-sict-api-1 python -c "import sict_crawler.agent"
             curl -sf -m 10 http://localhost:8003/app.js -o /dev/null
             curl -sf -m 120 -X POST http://localhost:8003/query \
               -H 'Content-Type: application/json' \
@@ -56,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Pack code
-        run: tar czf /tmp/sict-deploy.tgz --exclude=.venv --exclude=.pgdata
+        run: tar czf sict-deploy.tgz --exclude=.venv --exclude=.pgdata
           --exclude=__pycache__ --exclude=.ruff_cache --exclude=_local_store
           --exclude=.git --exclude='*.log' --exclude='*.pt' --exclude='.lock*' .
       - name: Upload tarball
@@ -65,8 +66,8 @@ jobs:
           host: ${{ secrets.VM2_HOST }}
           username: ubuntu
           key: ${{ secrets.VM2_KEY }}
-          source: /tmp/sict-deploy.tgz
-          target: ~/
+          source: sict-deploy.tgz
+          target: /home/ubuntu/sict-deploy.tgz
       - name: Build worker + restart 24h loop
         uses: appleboy/ssh-action@v1
         with:
@@ -78,6 +79,7 @@ jobs:
             cd ~/craw-sict && tar xzf ~/sict-deploy.tgz
             docker build -f Dockerfile.worker -t sict-worker .
             docker build -f Dockerfile.crawl -t sict-crawl .
+            docker run --rm sict-worker python -c "import sict_crawler.agent"
             docker builder prune -af || true
             [ -f ~/craw-sict/loop24h.sh ] || cat > ~/craw-sict/loop24h.sh <<'EOF'
             #!/bin/sh
