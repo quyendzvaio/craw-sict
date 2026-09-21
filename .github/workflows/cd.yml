@@ -29,7 +29,7 @@ jobs:
           username: ubuntu
           key: ${{ secrets.VM1_KEY }}
           source: /tmp/sict-deploy.tgz
-          target: /home/ubuntu/sict-deploy.tgz
+          target: ~/
       - name: Build + restart API
         uses: appleboy/ssh-action@v1
         with:
@@ -38,6 +38,7 @@ jobs:
           key: ${{ secrets.VM1_KEY }}
           script: |
             set -euo pipefail
+            mv ~/tmp/sict-deploy.tgz ~/sict-deploy.tgz
             cd ~/craw-sict && tar xzf ~/sict-deploy.tgz
             docker compose up -d postgres redis qdrant
             docker compose build api
@@ -67,7 +68,7 @@ jobs:
           username: ubuntu
           key: ${{ secrets.VM2_KEY }}
           source: /tmp/sict-deploy.tgz
-          target: /home/ubuntu/sict-deploy.tgz
+          target: ~/
       - name: Build worker + restart 24h loop
         uses: appleboy/ssh-action@v1
         with:
@@ -76,6 +77,7 @@ jobs:
           key: ${{ secrets.VM2_KEY }}
           script: |
             set -euo pipefail
+            mv ~/tmp/sict-deploy.tgz ~/sict-deploy.tgz
             cd ~/craw-sict && tar xzf ~/sict-deploy.tgz
             docker build -f Dockerfile.worker -t sict-worker .
             docker build -f Dockerfile.crawl -t sict-crawl .
