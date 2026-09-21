@@ -188,21 +188,28 @@ def build_context(tsrcs: list[Source], msrcs: list[Source]) -> str:
 
 @app.post("/query")
 async def query(q: QueryIn):
-    tsrcs, msrcs = retrieve(q.question, q.top_k, q.image)
-    return {"answer": None, "context": build_context(tsrcs, msrcs),
-            "text": [s.model_dump() for s in tsrcs],
-            "media": [s.model_dump() for s in msrcs]}
+    from . import agent as _agent
+    res = _agent.run(q.question, q.top_k, q.image)
+    return {"answer": None, "context": res["context"],
+            "text": [s.model_dump() for s in res["text"]],
+            "media": [s.model_dump() for s in res["media"]],
+            "attempts": res["attempts"], "sufficient": res["sufficient"]}
 
 
 @app.post("/chat")
 async def chat(q: QueryIn):
-    """SSE streaming: sources event first, then streamed LLM answer (context
-    echo fallback if no LLM key)."""
+    """SSE streaming qua agent loop: status (attempts) → sources event →
+    streamed LLM answer (context echo fallback if no LLM key)."""
+    from . import agent as _agent
     from . import vlm
-    tsrcs, msrcs = retrieve(q.question, q.top_k, q.image)
-    context = build_context(tsrcs, msrcs)
+    res = _agent.run(q.question, q.top_k, q.image)
+    tsrcs, msrcs, context = res["text"], res["media"], res["context"]
+    if not res["sufficient"]:
+        context = ("(Lưu ý: tài liệu tìm được chỉ liên quan một phần, "
+                   "câu trả lời có thể chưa đầy đủ.)\n\n" + context)
 
     async def gen():
+        yield f"data: {json.dumps({'status': {'attempts': res['attempts'], 'sufficient': res['sufficient']}})}\n\n"
         yield f"data: {json.dumps({'text': [s.model_dump() for s in tsrcs], 'media': [s.model_dump() for s in msrcs]})}\n\n"
         import asyncio
         import queue
