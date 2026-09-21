@@ -17,3 +17,4 @@ jobs:
       - run: uv run --frozen pytest sict_crawler/tests/ -q --ignore=sict_crawler/tests/smoke_incremental.py
       - run: uv run --frozen python -m sict_crawler.tests.test_safety
       - run: uv run --frozen python -m sict_crawler.tests.test_captions
+      - run: uv run --frozen python -m sict_crawler.tests.test_agent
