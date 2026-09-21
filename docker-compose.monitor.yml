@@ -1,0 +1,79 @@
+# Realtime monitoring cho craw-sict (nhẹ, chạy cùng host):
+#   docker compose -f docker-compose.monitor.yml up -d
+# Grafana: http://<host>:3000 (admin/admin) | Prometheus: http://<host>:9090
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=3d
+      - --storage.tsdb.retention.size=2GB
+    ports: ["9092:9090"]
+    volumes: [./monitor/prometheus.yml:/etc/prometheus/prometheus.yml:ro, promdata:/prometheus]
+    networks: [mon, app]
+    restart: unless-stopped
+    mem_limit: 512m
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    ports: ["3001:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./monitor/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitor/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    networks: [mon]
+    depends_on: [prometheus]
+    restart: unless-stopped
+    mem_limit: 400m
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    ports: ["9100:9100"]
+    volumes: [/proc:/host/proc:ro, /sys:/host/sys:ro, /:/rootfs:ro]
+    command: [--path.procfs=/host/proc, --path.sysfs=/host/sys, --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)]
+    networks: [mon]
+    restart: unless-stopped
+    mem_limit: 128m
+
+  # thay cAdvisor (không đọc được containerd snapshotter) bằng Telegraf Docker input
+  # entrypoint mặc định tự hạ từ root về uid telegraf (làm mất group docker)
+  # → chạy binary trực tiếp để giữ root đọc docker.sock (host dev nội bộ)
+  telegraf:
+    image: telegraf:1.32-alpine
+    entrypoint: ["telegraf"]
+    ports: ["9273:9273"]
+    volumes: [/var/run/docker.sock:/var/run/docker.sock:ro, ./monitor/telegraf.conf:/etc/telegraf/telegraf.conf:ro]
+    networks: [mon]
+    restart: unless-stopped
+    mem_limit: 256m
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    ports: ["9187:9187"]
+    environment:
+      DATA_SOURCE_NAME: "postgresql://sict:sict@postgres:5432/sict_crawler?sslmode=disable"
+    networks: [mon, app]
+    restart: unless-stopped
+    mem_limit: 128m
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    ports: ["9121:9121"]
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    networks: [mon, app]
+    restart: unless-stopped
+    mem_limit: 128m
+
+networks:
+  mon: {}
+  app:
+    name: craw-sict_default
+    external: true
+
+volumes:
+  promdata:
+  grafanadata:

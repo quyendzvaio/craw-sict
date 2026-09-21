@@ -1,0 +1,30 @@
+# python / uv
+.venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+uv.lock-incremental
+
+# data local (KHÔNG commit — VMs/S3 giữ source of truth)
+.pgdata/
+_local_store/
+*.log
+*.pt
+*.onnx
+.lock
+.lock-incremental
+
+# secrets (KHÔNG commit)
+.env
+!.env.example
+k8s/secrets.yaml
+*.pem
+.kube-sict.yaml
+
+# deploy tạm
+*.tgz
+auto_process.sh.bak
+
+# OS/IDE
+.DS_Store
+.vscode/

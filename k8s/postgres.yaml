@@ -1,0 +1,47 @@
+# postgres:16-alpine — alpine dùng được ở đây vì image upstream đã build sẵn,
+# không liên quan torch/glibc của app.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: sict
+spec:
+  selector: {app: postgres}
+  ports: [{port: 5432, targetPort: 5432, nodePort: 30432}]
+  type: NodePort  # postgres-exporter (compose monitor) scrape qua host:30432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: sict
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      nodeSelector: {workload: infra}  # local-path PVC ở VM1
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports: [{containerPort: 5432}]
+          env:
+            - {name: POSTGRES_USER, valueFrom: {secretKeyRef: {name: sict-postgres, key: user}}}
+            - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: sict-postgres, key: password}}}
+            - {name: POSTGRES_DB, valueFrom: {secretKeyRef: {name: sict-postgres, key: db}}}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          volumeMounts: [{name: pgdata, mountPath: /var/lib/postgresql/data}]
+          readinessProbe:
+            exec: {command: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: "1", memory: 2Gi}
+  volumeClaimTemplates:
+    - metadata: {name: pgdata}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 20Gi}}

@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1
+# Bước discover httpx-only — image duy nhất dùng được alpine.
+# Lý do: không torch (no musl wheel), không obscura binary (glibc-only),
+# không tesseract-vie. Chỉ deps common trong pyproject (httpx + bs4/lxml + redis...).
+# Deps quản lý bằng uv (uv.lock), KHÔNG dùng pip/requirements.txt.
+# Build: docker build -f Dockerfile.crawl -t sict-crawl .
+# Run:   docker run --env-file .env sict-crawl
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-alpine AS runtime
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+RUN apk add --no-cache libxml2 libxslt gcc musl-dev libxml2-dev libxslt-dev \
+    && adduser -D -u 10000 app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_COMPILE_BYTECODE=1
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project \
+    && apk del gcc musl-dev libxml2-dev libxslt-dev
+COPY config.yaml ./
+COPY sict_crawler ./sict_crawler
+RUN chown -R 10000:10000 /app
+ENV PATH="/app/.venv/bin:$PATH"
+USER 10000
+# discover seeds → Redis frontier, idempotent (seen-set dedup)
+CMD ["python", "-m", "sict_crawler.discover"]

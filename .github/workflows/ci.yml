@@ -1,0 +1,19 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync --frozen --group dev --group api
+      - run: uv run --frozen pytest sict_crawler/tests/ -q --ignore=sict_crawler/tests/smoke_incremental.py
+      - run: uv run --frozen python -m sict_crawler.tests.test_safety
+      - run: uv run --frozen python -m sict_crawler.tests.test_captions

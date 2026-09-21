@@ -1,0 +1,32 @@
+# redis:7-alpine — queue frontier + celery broker, mất được (tái tạo từ DB).
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: sict
+spec:
+  selector: {app: redis}
+  ports: [{port: 6379, targetPort: 6379, nodePort: 36379}]
+  type: NodePort  # redis-exporter (compose monitor) scrape qua host:36379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: sict
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: redis}}
+  template:
+    metadata: {labels: {app: redis}}
+    spec:
+      nodeSelector: {workload: infra}  # cùng VM1 với worker-job DNS ổn định
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["redis-server", "--maxmemory", "512mb",
+                 "--maxmemory-policy", "volatile-ttl"]
+          ports: [{containerPort: 6379}]
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}

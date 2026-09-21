@@ -1,0 +1,18 @@
+# kubectl apply -k k8s/              # infra + api + cron (không minio)
+# kubectl apply -k k8s/ ...          # kèm MinIO: kustomize edit add resource minio.yaml
+# MinIO mặc định KHÔNG apply (dùng AWS S3). Cần thì:
+#   kubectl apply -f k8s/minio.yaml
+# Backfill OCR 1 lần:
+#   kubectl create job -n sict sict-ocr-backfill --from=cronjob/sict-incremental
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: sict
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - postgres.yaml
+  - redis.yaml
+  - qdrant.yaml
+  - api.yaml
+  - cronjob-incremental.yaml
+# secrets.yaml tự tạo từ secrets.example.yaml — không commit, không list ở đây.
