@@ -48,9 +48,13 @@ jobs:
             sleep 25
             docker exec craw-sict-api-1 python -c "import sict_crawler.agent"
             curl -sf -m 10 http://localhost:8003/app.js -o /dev/null
-            curl -sf -m 120 -X POST http://localhost:8003/query \
-              -H 'Content-Type: application/json' \
-              -d '{"question":"test","top_k":1}' -o /dev/null
+            # cold start: E5 (199) + CLIP (398) weights load lần đầu ~100s → timeout 300 + retry
+            for i in 1 2; do
+              curl -sf -m 300 -X POST http://localhost:8003/query \
+                -H 'Content-Type: application/json' \
+                -d '{"question":"test","top_k":1}' -o /dev/null && break
+              sleep 10
+            done
 
   deploy-vm2:
     if: inputs.target == 'all' || inputs.target == 'vm2'
