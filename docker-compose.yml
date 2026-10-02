@@ -1,3 +1,5 @@
+# VM1 = infra + serve (chạy 24/7). Copy file này thành docker-compose.yml trên VM1.
+# VM2 worker trỏ về VM1 qua POSTGRES_DSN/REDIS_URL/QDRANT_HOST (xem .env.worker.example).
 services:
   postgres:
     image: postgres:16
@@ -7,18 +9,25 @@ services:
       POSTGRES_DB: sict_crawler
     ports: ["5432:5432"]
     volumes: [./.pgdata:/var/lib/postgresql/data]
+    restart: unless-stopped
+    mem_limit: 800m
+    command: ["postgres", "-c", "shared_buffers=256MB", "-c", "max_connections=50"]
 
   redis:
     image: redis:7
-    command: ["redis-server", "--maxmemory", "512mb", "--maxmemory-policy", "volatile-ttl",
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-ttl",
               "--appendonly", "yes"]
     ports: ["6379:6379"]
     volumes: [redisdata:/data]
+    restart: unless-stopped
+    mem_limit: 300m
 
   qdrant:
     image: qdrant/qdrant:latest
     ports: ["6333:6333", "6334:6334"]
     volumes: [qdata:/qdrant/storage]
+    restart: unless-stopped
+    mem_limit: 900m
 
   api:
     image: sict-api:latest
@@ -45,7 +54,10 @@ services:
       HF_HOME: /cache/hf  # share model cache, khỏi tải lại E5/CLIP mỗi recreate
       AWS_PROFILE: ${AWS_PROFILE:-quyen-admin}
     depends_on: [postgres, redis, qdrant]
-    volumes: [hfcache:/cache/hf, "${HOME}/.aws:/home/app/.aws:ro"]
+    volumes: [hfcache:/cache/hf, "${AWS_DIR:-${HOME}/.aws}:/home/app/.aws:ro"]
+    restart: unless-stopped
+    mem_limit: 1500m
+    logging: {driver: json-file, options: {max-size: 10m, max-file: "3"}}
 
 volumes:
   pgdata:
