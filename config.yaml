@@ -64,8 +64,8 @@ celery:
   result_url: "redis://localhost:6379/2"
 
 s3:
-  bucket: "sict-crawl-media"
-  region: "ap-southeast-2"
+  bucket: "sict-crawl-media-quyen-ohio"
+  region: "us-east-2"
   prefix_raw: "raw/"
   prefix_media: "media/"
 

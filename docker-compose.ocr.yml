@@ -52,7 +52,7 @@ services:
       HF_HOME: /cache/hf
       AWS_PROFILE: ${AWS_PROFILE:-quyen-admin}  # S3 qua ~/.aws (không cần key rời)
     depends_on: [postgres, redis, qdrant]
-    volumes: [localstore:/app/_local_store, hfcache:/cache/hf, "${HOME}/.aws:/home/app/.aws:ro"]
+    volumes: [localstore:/app/_local_store, hfcache:/cache/hf, "${AWS_DIR:-${HOME}/.aws}:/home/app/.aws:ro"]
     # chạy 1 lần rồi thoát (k8s Job / cron gọi lại); cron container bên dưới chạy lặp
     command: ["python", "-m", "sict_crawler.main", "--annotate-ocr", "2000"]
 
@@ -81,7 +81,7 @@ services:
       CRAWL_LIMIT: ${CRAWL_LIMIT:-200}
       ANNOTATE_OCR_N: ${ANNOTATE_OCR_N:-500}
     depends_on: [postgres, redis, qdrant]
-    volumes: [localstore:/app/_local_store, hfcache:/cache/hf, "${HOME}/.aws:/home/app/.aws:ro"]
+    volumes: [localstore:/app/_local_store, hfcache:/cache/hf, "${AWS_DIR:-${HOME}/.aws}:/home/app/.aws:ro"]
     # supercronic-style: dùng sleep loop để không cần thêm image cron
     # mặc định 6h/lần (21600s), override bằng CRON_INTERVAL_SEC khi cần
     command: >
