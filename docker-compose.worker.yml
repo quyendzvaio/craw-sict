@@ -1,0 +1,73 @@
+# VM2 = worker nặng (crawl + OCR + keyframe + subtitle). Chạy riêng, trỏ về VM1.
+# Dùng: docker compose -f docker-compose.worker.yml up -d --build
+# Env bắt buộc trên VM2 (xem .env.worker.example):
+#   POSTGRES_DSN, REDIS_URL, QDRANT_HOST, S3_* / AWS_*
+services:
+  svc-ocr:
+    image: sict-worker:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      SICT_CONFIG: /app/config.yaml
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      CRAWLER_BACKEND: ${CRAWLER_BACKEND:-auto}
+      OBSCURA_BIN: /usr/local/bin/obscura
+      OBSCURA_CDP: ws://obscura:9222
+      POSTGRES_DSN: ${POSTGRES_DSN:?POSTGRES_DSN phải trỏ về IP VM1}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL phải trỏ về IP VM1}
+      QDRANT_HOST: ${QDRANT_HOST:?QDRANT_HOST phải là IP VM1}
+      QDRANT_TIMEOUT: ${QDRANT_TIMEOUT:-120}
+      HF_HOME: /cache/hf
+      AWS_PROFILE: ${AWS_PROFILE:-quyen-admin}
+    volumes: [localstore:/app/_local_store, hfcache:/cache/hf, "${AWS_DIR:-${HOME}/.aws}:/home/app/.aws:ro"]
+    restart: "no"  # chạy 1 lần rồi thoát; cron bên dưới chạy lặp
+    mem_limit: 3000m
+    logging: {driver: json-file, options: {max-size: 20m, max-file: "3"}}
+    command: ["python", "-m", "sict_crawler.main", "--annotate-ocr", "2000"]
+
+  # Cron incremental 6h/lần. Thay thế k8s CronJob cũ.
+  cron:
+    image: sict-worker:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      SICT_CONFIG: /app/config.yaml
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      CRAWLER_BACKEND: ${CRAWLER_BACKEND:-auto}
+      OBSCURA_BIN: /usr/local/bin/obscura
+      OBSCURA_CDP: ws://obscura:9222
+      POSTGRES_DSN: ${POSTGRES_DSN:?POSTGRES_DSN phải trỏ về IP VM1}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL phải trỏ về IP VM1}
+      QDRANT_HOST: ${QDRANT_HOST:?QDRANT_HOST phải là IP VM1}
+      QDRANT_TIMEOUT: ${QDRANT_TIMEOUT:-120}
+      AWS_PROFILE: ${AWS_PROFILE:-quyen-admin}
+      CHECK_EDITS: ${CHECK_EDITS:-100}
+      CRAWL_LIMIT: ${CRAWL_LIMIT:-200}
+      ANNOTATE_OCR_N: ${ANNOTATE_OCR_N:-500}
+    volumes: [localstore:/app/_local_store, hfcache:/cache/hf, "${AWS_DIR:-${HOME}/.aws}:/home/app/.aws:ro"]
+    restart: unless-stopped
+    mem_limit: 3000m
+    logging: {driver: json-file, options: {max-size: 20m, max-file: "3"}}
+    depends_on: [obscura]
+    command: >
+      /bin/sh -c "while true; do
+        python -m sict_crawler.main --incremental --check-edits $$CHECK_EDITS --crawl-limit $$CRAWL_LIMIT --annotate-ocr-n $$ANNOTATE_OCR_N;
+        sleep $${CRON_INTERVAL_SEC:-21600}; done"
+
+  # Sidecar Obscura CDP cho trang JS nặng. Chỉ chạy trên VM2.
+  obscura:
+    image: h4ckf0r0day/obscura:latest
+    command: ["serve", "--port", "9222"]
+    ports: ["127.0.0.1:9222:9222"]
+    restart: unless-stopped
+    mem_limit: 150m
+
+volumes:
+  localstore:
+  hfcache:
