@@ -1,8 +1,7 @@
-"""Video → keyframes via ffmpeg scene detection. Keyframes retrieved like images.
+"""Video → keyframes via ffmpeg + subtitle-only transcript (no ASR).
 
-Callers: main.py, tests/test_video.py.
-Schemas: extract_keyframes(video_path|url) → list[(bytes, pts_time_seconds)] (PNG frames + timestamp);
-         dedup_indices(vectors, threshold) → list[int] (indices kept, cosine-similarity filter).
+Subtitle: chỉ lấy caption/subtitle có sẵn của YouTube (hoặc host yt-dlp
+hỗ trợ). Không có → trả "" và caller bỏ qua luôn, KHÔNG chạy Whisper.
 """
 from __future__ import annotations
 
@@ -14,6 +13,90 @@ import tempfile
 import httpx
 
 from .config import get_settings
+
+MIN_TS_GAP = 0.5  # seconds — dedup/top-up frames must differ by at least this
+
+# ponytail: yt-dlp lazily imported; only embed hosts resolved — direct .mp4 skips it
+_EMBED_RE = re.compile(r"(youtube\.com|youtu\.be|vimeo\.com|facebook\.com)", re.I)
+
+SUBTITLE_LANGS = ("vi", "en")
+SUBTITLE_MAX_CHARS = 2000
+
+
+def fetch_subtitles(source: str, langs: tuple[str, ...] = SUBTITLE_LANGS) -> str:
+    """Lấy subtitle có sẵn (manual trước, auto sau). Không có → "".
+
+    Chỉ resolve embed URL (youtube/vimeo/facebook). File .mp4 trực tiếp
+    không có subtitle → "" luôn. Không tải video, chỉ fetch file vtt/json.
+    """
+    if not _EMBED_RE.search(source):
+        return ""
+    try:
+        import yt_dlp
+    except ImportError:
+        return ""
+    try:
+        opts = {"skip_download": True, "quiet": True, "no_warnings": True,
+                "noplaylist": True}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(source, download=False) or {}
+        for key in ("subtitles", "automatic_captions"):
+            tracks = info.get(key) or {}
+            for lang in list(langs) + list(tracks.keys()):
+                entries = tracks.get(lang) or []
+                for e in entries:
+                    url = e.get("url") or ""
+                    if not url:
+                        continue
+                    try:
+                        import httpx as _httpx
+                        r = _httpx.Client(timeout=30, follow_redirects=True).get(url)
+                        if r.status_code != 200 or not r.text:
+                            continue
+                        text = _clean_subs(r.text)
+                        if len(text.strip()) >= 10:
+                            return text[:SUBTITLE_MAX_CHARS]
+                    except Exception:
+                        continue
+        return ""
+    except Exception as e:
+        print(f"[video-subs] {source}: {e}")
+        return ""
+
+
+def _clean_subs(raw: str) -> str:
+    """VTT/SRV3/JSON3 → text thuần, dedupe dòng, giữ thứ tự."""
+    import html as _html
+    import json as _json
+    import re as _re
+
+    # JSON3 (youtubeSrv3/json3): {"events": [{"segs": [{"utf8": "..."}]}]}
+    raw_stripped = raw.strip()
+    if raw_stripped.startswith("{"):
+        try:
+            data = _json.loads(raw_stripped)
+            parts = []
+            for ev in data.get("events", []):
+                for seg in ev.get("segs", []) or []:
+                    t = (seg.get("utf8") or "").strip()
+                    if t and t not in parts:
+                        parts.append(t)
+            if parts:
+                return " ".join(parts)
+        except Exception:
+            pass
+    lines: list[str] = []
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s or s.startswith(("WEBVTT", "Kind:", "Language:")):
+            continue
+        if _re.match(r"^\d+$", s) or "-->" in s:
+            continue
+        s = _re.sub(r"<[^>]+>", "", s)  # cue tags <c>, <i>...
+        s = _html.unescape(s).strip()
+        if s and (not lines or lines[-1] != s):
+            lines.append(s)
+    return " ".join(lines)
 
 MIN_TS_GAP = 0.5  # seconds — dedup/top-up frames must differ by at least this
 
