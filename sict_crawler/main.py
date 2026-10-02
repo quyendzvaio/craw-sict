@@ -123,6 +123,9 @@ async def _process_page(session, st: storage.Storage, url: str, depth: int,
                 new_media[j].vector_id = pid
 
     # videos → keyframes (deduped, timestamped) → same image path, kind=video_frame
+    # transcript: subtitle-only (có sẵn từ host). Không có → "" và bỏ qua, KHÔNG ASR.
+    video_subs: dict[str, str] = {}
+    vid_first_asset: dict[str, MediaAsset] = {}
     for vid_url in parsed.video_urls[:5]:
         try:
             frames = video.extract_keyframes(vid_url)  # [(bytes, pts_sec)]
@@ -149,6 +152,14 @@ async def _process_page(session, st: storage.Storage, url: str, depth: int,
                 for a, pid in zip(assets, ids):
                     a.vector_id = pid
             new_media.extend(assets)
+            if assets:
+                vid_first_asset.setdefault(vid_url, assets[0])
+            try:
+                subs = await asyncio.to_thread(video.fetch_subtitles, vid_url)
+            except Exception:
+                subs = ""
+            if subs:
+                video_subs[vid_url] = subs
         except Exception as e:
             print(f"[video] skip {vid_url}: {e}")
             continue
@@ -166,6 +177,28 @@ async def _process_page(session, st: storage.Storage, url: str, depth: int,
                 doc_title=parsed.title, doc_text=full_text[:1000])
     except Exception as e:
         print(f"annotate skipped: {e}")
+
+    # merge subtitle-only vào caption_rows + caption PG (OCR giữ nguyên, sub append)
+    if video_subs:
+        for vid_url, subs in video_subs.items():
+            merged = False
+            for r in caption_rows:
+                if r.get("url") == vid_url and r.get("kind") == "media_caption":
+                    base = r.get("caption") or ""
+                    if subs not in base:
+                        r["caption"] = f"{base} | sub: {subs}"[:900] if base else subs
+                    merged = True
+            if not merged and vid_url in vid_first_asset:
+                first = vid_first_asset[vid_url]
+                cap = f"{parsed.title}. {subs}"[:900] if parsed.title else subs
+                caption_rows.append({"media_id": first.id, "document_id": doc.id,
+                                     "url": vid_url, "kind": "media_caption",
+                                     "media_kind": "video_frame", "title": parsed.title,
+                                     "caption": cap, "timestamp": first.timestamp})
+            for a in new_media:
+                if a.source_url == vid_url and subs not in (a.caption or ""):
+                    a.caption = f"{a.caption} | sub: {subs}"[:900] if a.caption else (
+                        f"{parsed.title}. {subs}"[:900] if parsed.title else subs)
 
     await session.commit()
     # sync caption PG → payload sict_image để /query media leg hiện chú thích
@@ -365,11 +398,19 @@ async def run_video_backfill(limit: int) -> None:
                         frames = [frames[j] for j in ok_idx]
                         kept = video.dedup_indices(vecs, cfg.video.dedup_threshold)
                         assets = []
+                        # subtitle-only: có thì gắn sẵn vào caption, OCR pass sau sẽ append thêm
+                        try:
+                            subs = await asyncio.to_thread(video.fetch_subtitles, vid_url)
+                        except Exception:
+                            subs = ""
+                        sub_cap = f"{doc.title}. sub: {subs}"[:900] if subs and doc.title else (
+                            subs[:900] if subs else "")
                         for j in kept:
                             key, _b64 = st.put_media(frames[j][0], "png")
                             a = MediaAsset(document_id=doc.id, kind="video_frame",
                                            s3_key=key, base64_data="",
-                                           source_url=vid_url, timestamp=frames[j][1])
+                                           source_url=vid_url, timestamp=frames[j][1],
+                                           caption=sub_cap)
                             session.add(a)
                             assets.append(a)
                         await session.flush()
