@@ -59,8 +59,20 @@ services:
     mem_limit: 1500m
     logging: {driver: json-file, options: {max-size: 10m, max-file: "3"}}
 
+  # L0 edge: reverse proxy + cache truoc api (AC-K1..K5). Nghe 8080,
+  # api giu nguyen 8003 de khong vo deploy hien tai; cat-over sau.
+  nginx:
+    image: nginx:alpine
+    ports: ["8080:80"]
+    volumes: ["./nginx/nginx.conf:/etc/nginx/nginx.conf:ro", ngcache:/var/cache/nginx]
+    depends_on: [api]
+    restart: unless-stopped
+    mem_limit: 150m
+    logging: {driver: json-file, options: {max-size: 10m, max-file: "3"}}
+
 volumes:
   pgdata:
   qdata:
   hfcache:
+  ngcache:
   redisdata:  # persist frontier/seen + heartbeat (restart không mất hàng đợi)

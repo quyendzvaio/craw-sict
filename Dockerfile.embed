@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1
+# Dịch vụ embedding tự host (D22): jina-clip-v2 ONNX int8, CPU, KHÔNG torch — sict_crawler/embed_server.py.
+# Cùng API Jina /v1/embeddings → API/worker chỉ đổi EMBED_API_BASE=http://embed:8090/v1.
+# Deps bằng uv (group embed + uv.lock), KHÔNG pip. Model không nằm trong image: lần đầu tải fp32 (3,5 GB) vào HF_HOME
+# (volume) rồi build 2 tháp int8 chỉ trọng số (`python -m sict_crawler.embed_server build`, ~1,7 GB).
+# Build: docker build -f Dockerfile.embed -t sict-embed .
+ARG PYTHON_VERSION=3.11
+FROM python:${PYTHON_VERSION}-slim AS runtime
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_COMPILE_BYTECODE=1 HF_HOME=/hf
+RUN useradd -m -u 10000 app && mkdir -p /hf && chown app /hf
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project --group embed
+COPY sict_crawler/__init__.py sict_crawler/embed_server.py ./sict_crawler/
+ENV PATH="/app/.venv/bin:$PATH"
+USER 10000
+EXPOSE 8090
+HEALTHCHECK --interval=30s --timeout=5s --start-period=300s CMD \
+    python -c "import urllib.request,json,sys; sys.exit(0 if json.load(urllib.request.urlopen('http://127.0.0.1:8090/healthz'))['ok'] else 1)"
+CMD ["python", "-m", "sict_crawler.embed_server", "--host", "0.0.0.0", "--port", "8090"]

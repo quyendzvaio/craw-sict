@@ -32,8 +32,9 @@ site:
     - "\\.ico$"
     - "\\.(doc|docx|xls|xlsx|pdf|zip|rar|ppt|pptx)$"
     - "logout"
-  external_hosts:
-    - "www.haui.edu.vn"
+    - "/vn/tags"            # trang danh sách theo tag: trùng nội dung, nhiễu (AC-H5)
+  # Chỉ crawl sict.haui.edu.vn (chốt 2026-10-12, plan.md Q1). Thêm host vào đây nếu mở rộng phạm vi.
+  external_hosts: []
 
 crawl:
   max_depth: 5
@@ -42,6 +43,8 @@ crawl:
   timeout_seconds: 30
   user_agent: "SICT-RAG-Crawler/1.0 (contact: admin@haui.edu.vn)"
   respect_robots: true
+  listing_max_pages: 5   # incremental: trang danh sách tối đa / mục / lượt (dừng sớm khi 1 trang hết bài lạ)
+  max_fetch_retries: 3   # incremental: URL tải lỗi tạm thời được thử lại ở các lượt sau, tối đa N lần
 
 postgres:
   dsn: "postgresql+asyncpg://sict:sict@localhost:5432/sict_crawler"
@@ -51,8 +54,12 @@ qdrant:
   port: 6333
   grpc_port: 6334
   prefer_grpc: true
-  collection_text: "sict_text"
-  collection_image: "sict_image"
+  # index spec v2 (loader.py / indexer.py). Rollback về v1: QDRANT_COLLECTION_TEXT=sict_text
+  # QDRANT_COLLECTION_IMAGE=sict_image (chỉ API; worker v2 từ chối ghi vào collection v1).
+  collection_text: "sict_text_v2"
+  collection_image: "sict_image_v2"
+  # caption + OCR ảnh/video; "" = chung collection_text (v1/v2). Index v3: QDRANT_COLLECTION_OCR=sict_ocr_v3
+  collection_ocr: ""
   text_dim: 384
   image_dim: 512
 
@@ -72,7 +79,7 @@ s3:
 embedding:
   text_model: "intfloat/multilingual-e5-small"
   image_model: "openai/clip-vit-base-patch32"
-  device: "cpu"
+  device: "auto"   # auto: có GPU (CUDA) thì dùng, không thì CPU. Ép tay: cpu | cuda | cuda:1. Env EMBED_DEVICE ghi đè
   batch_size: 32
 
 chunking:
@@ -100,3 +107,12 @@ llm:
   api_base: "http://localhost:20128/v1"
   model: "sict"
   max_new_tokens: 256
+
+
+# Router thành phần câu trả lời (D17). Ngưỡng TẠM — hiệu chỉnh bằng eval/golden (AC-G3, AC-R9).
+router:
+  clip_min: 0.24
+  caption_min: 0.82
+  optional_max: 3
+  optional_top_docs: 3
+  graph_min: 0.6       # media gắn thực thể nêu trong câu hỏi (graph D20): trọng số cạnh tối thiểu

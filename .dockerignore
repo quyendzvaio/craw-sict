@@ -1,0 +1,20 @@
+# Image chỉ cần pyproject.toml, uv.lock, config.yaml, sict_crawler/ (xem các Dockerfile).
+.git
+.venv
+.pgdata*
+.pytest_cache
+.ruff_cache
+**/__pycache__
+_snapshot
+_local_store
+.hf-cache
+cookies
+*.log
+*.pt
+*.onnx
+*.tgz
+.env
+.env.*
+!.env.example
+!.env.worker.example
+_cutover

@@ -1,0 +1,413 @@
+{
+  "methods": {
+    "doc (10 câu chữ/PDF)": {
+      "bm25": {
+        "R@1": 0.6,
+        "R@5": 1.0,
+        "R@10": 1.0,
+        "MRR@10": 0.783,
+        "n": 10
+      },
+      "jina-clip-v2": {
+        "R@1": 0.9,
+        "R@5": 1.0,
+        "R@10": 1.0,
+        "MRR@10": 0.933,
+        "n": 10
+      },
+      "bge-m3": {
+        "R@1": 1.0,
+        "R@5": 1.0,
+        "R@10": 1.0,
+        "MRR@10": 1.0,
+        "n": 10
+      },
+      "bm25+jina-clip-v2": {
+        "R@1": 1.0,
+        "R@5": 1.0,
+        "R@10": 1.0,
+        "MRR@10": 1.0,
+        "n": 10
+      },
+      "bm25+bge-m3": {
+        "R@1": 1.0,
+        "R@5": 1.0,
+        "R@10": 1.0,
+        "MRR@10": 1.0,
+        "n": 10
+      }
+    },
+    "page (4 câu PDF)": {
+      "bm25": {
+        "R@1": 0.25,
+        "R@5": 1.0,
+        "R@10": 1.0,
+        "MRR@10": 0.542,
+        "n": 4
+      },
+      "jina-clip-v2": {
+        "R@1": 0.75,
+        "R@5": 1.0,
+        "R@10": 1.0,
+        "MRR@10": 0.875,
+        "n": 4
+      },
+      "bge-m3": {
+        "R@1": 1.0,
+        "R@5": 1.0,
+        "R@10": 1.0,
+        "MRR@10": 1.0,
+        "n": 4
+      },
+      "bm25+jina-clip-v2": {
+        "R@1": 0.75,
+        "R@5": 1.0,
+        "R@10": 1.0,
+        "MRR@10": 0.875,
+        "n": 4
+      },
+      "bm25+bge-m3": {
+        "R@1": 1.0,
+        "R@5": 1.0,
+        "R@10": 1.0,
+        "MRR@10": 1.0,
+        "n": 4
+      }
+    },
+    "image (2 câu thị giác)": {
+      "bm25 (caption)": {
+        "R@1": 1.0,
+        "R@5": 1.0,
+        "R@10": 1.0,
+        "MRR@10": 1.0,
+        "n": 2
+      },
+      "jina-clip-v2 (caption)": {
+        "R@1": 1.0,
+        "R@5": 1.0,
+        "R@10": 1.0,
+        "MRR@10": 1.0,
+        "n": 2
+      },
+      "jina-clip-v2 (ảnh)": {
+        "R@1": 1.0,
+        "R@5": 1.0,
+        "R@10": 1.0,
+        "MRR@10": 1.0,
+        "n": 2
+      },
+      "bge-m3 (caption)": {
+        "R@1": 1.0,
+        "R@5": 1.0,
+        "R@10": 1.0,
+        "MRR@10": 1.0,
+        "n": 2
+      }
+    }
+  },
+  "per_question": {
+    "q01": {
+      "question": "Một đội thi nước ngoài muốn tham dự kỳ thi lập trình ICPC tại Việt Nam thì phải nộp phí bao nhiêu tiền?",
+      "type": "pdf-page",
+      "bm25": {
+        "doc_rank": 1,
+        "page_rank": 1
+      },
+      "jina-clip-v2": {
+        "doc_rank": 1,
+        "page_rank": 2
+      },
+      "bge-m3": {
+        "doc_rank": 1,
+        "page_rank": 1
+      },
+      "bm25+jina-clip-v2": {
+        "doc_rank": 1,
+        "page_rank": 2
+      },
+      "bm25+bge-m3": {
+        "doc_rank": 1,
+        "page_rank": 1
+      }
+    },
+    "q02": {
+      "question": "Em có điểm trung bình tích lũy 3,4 thì được xếp loại học lực gì?",
+      "type": "pdf-page",
+      "bm25": {
+        "doc_rank": 1,
+        "page_rank": 3
+      },
+      "jina-clip-v2": {
+        "doc_rank": 1,
+        "page_rank": 1
+      },
+      "bge-m3": {
+        "doc_rank": 1,
+        "page_rank": 1
+      },
+      "bm25+jina-clip-v2": {
+        "doc_rank": 1,
+        "page_rank": 1
+      },
+      "bm25+bge-m3": {
+        "doc_rank": 1,
+        "page_rank": 1
+      }
+    },
+    "q03": {
+      "question": "Nhờ bạn đi thi thay mình lần đầu thì nhà trường xử lý kỷ luật ra sao?",
+      "type": "pdf-page",
+      "bm25": {
+        "doc_rank": 2,
+        "page_rank": 2
+      },
+      "jina-clip-v2": {
+        "doc_rank": 1,
+        "page_rank": 1
+      },
+      "bge-m3": {
+        "doc_rank": 1,
+        "page_rank": 1
+      },
+      "bm25+jina-clip-v2": {
+        "doc_rank": 1,
+        "page_rank": 1
+      },
+      "bm25+bge-m3": {
+        "doc_rank": 1,
+        "page_rank": 1
+      }
+    },
+    "q04": {
+      "question": "Buổi tổng kết và trao giải Olympic Tin học sinh viên lần thứ 33 bắt đầu lúc mấy giờ?",
+      "type": "pdf-page",
+      "bm25": {
+        "doc_rank": 1,
+        "page_rank": 3
+      },
+      "jina-clip-v2": {
+        "doc_rank": 1,
+        "page_rank": 1
+      },
+      "bge-m3": {
+        "doc_rank": 1,
+        "page_rank": 1
+      },
+      "bm25+jina-clip-v2": {
+        "doc_rank": 1,
+        "page_rank": 1
+      },
+      "bm25+bge-m3": {
+        "doc_rank": 1,
+        "page_rank": 1
+      }
+    },
+    "q05": {
+      "question": "Thầy Khôi bên Công nghệ phần mềm học đại học ở đâu?",
+      "type": "web",
+      "bm25": {
+        "doc_rank": 2
+      },
+      "jina-clip-v2": {
+        "doc_rank": 3
+      },
+      "bge-m3": {
+        "doc_rank": 1
+      },
+      "bm25+jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bm25+bge-m3": {
+        "doc_rank": 1
+      }
+    },
+    "q06": {
+      "question": "Chỉ tiêu thạc sĩ ngành Hệ thống thông tin của SICT trong đợt tuyển sinh lần ba năm 2026 là bao nhiêu?",
+      "type": "web",
+      "bm25": {
+        "doc_rank": 1
+      },
+      "jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bge-m3": {
+        "doc_rank": 1
+      },
+      "bm25+jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bm25+bge-m3": {
+        "doc_rank": 1
+      }
+    },
+    "q07": {
+      "question": "Điều kiện để được miễn 100% học phí năm nhất theo học bổng HaUI là gì?",
+      "type": "web",
+      "bm25": {
+        "doc_rank": 3
+      },
+      "jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bge-m3": {
+        "doc_rank": 1
+      },
+      "bm25+jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bm25+bge-m3": {
+        "doc_rank": 1
+      }
+    },
+    "q08": {
+      "question": "Buổi seminar quốc tế tháng 8/2026 với giáo sư người Nhật nói về chủ đề gì và tổ chức ở đâu?",
+      "type": "web",
+      "bm25": {
+        "doc_rank": 1
+      },
+      "jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bge-m3": {
+        "doc_rank": 1
+      },
+      "bm25+jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bm25+bge-m3": {
+        "doc_rank": 1
+      }
+    },
+    "q09": {
+      "question": "Hội nghị của các bạn lớp trưởng và bí thư chi đoàn học kỳ hai năm học 2025–2026 diễn ra vào những ngày nào?",
+      "type": "web",
+      "bm25": {
+        "doc_rank": 1
+      },
+      "jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bge-m3": {
+        "doc_rank": 1
+      },
+      "bm25+jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bm25+bge-m3": {
+        "doc_rank": 1
+      }
+    },
+    "q10": {
+      "question": "Chương trình Kỹ sư tài năng của HaUI năm 2026 dành cho những sinh viên như thế nào?",
+      "type": "web",
+      "bm25": {
+        "doc_rank": 2
+      },
+      "jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bge-m3": {
+        "doc_rank": 1
+      },
+      "bm25+jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bm25+bge-m3": {
+        "doc_rank": 1
+      }
+    },
+    "q11": {
+      "question": "Cho tôi xem ảnh sản phẩm máy bay không người lái mô phỏng sinh vật mà SICT trưng bày ở hội chợ Hanoi MIP Fair",
+      "type": "visual",
+      "bm25": {
+        "doc_rank": 1
+      },
+      "jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bge-m3": {
+        "doc_rank": 1
+      },
+      "bm25+jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bm25+bge-m3": {
+        "doc_rank": 1
+      },
+      "bm25 (caption)": {
+        "image_rank": 1
+      },
+      "jina-clip-v2 (caption)": {
+        "image_rank": 1
+      },
+      "jina-clip-v2 (ảnh)": {
+        "image_rank": 1
+      },
+      "bge-m3 (caption)": {
+        "image_rank": 1
+      }
+    },
+    "q12": {
+      "question": "Hình ảnh các tấm thiệp mà sinh viên khoa CNTT làm để chúc mừng ngày 20/11",
+      "type": "visual",
+      "bm25": {
+        "doc_rank": 1
+      },
+      "jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bge-m3": {
+        "doc_rank": 1
+      },
+      "bm25+jina-clip-v2": {
+        "doc_rank": 1
+      },
+      "bm25+bge-m3": {
+        "doc_rank": 1
+      },
+      "bm25 (caption)": {
+        "image_rank": 1
+      },
+      "jina-clip-v2 (caption)": {
+        "image_rank": 1
+      },
+      "jina-clip-v2 (ảnh)": {
+        "image_rank": 1
+      },
+      "bge-m3 (caption)": {
+        "image_rank": 1
+      }
+    }
+  },
+  "corpus": {
+    "chunks": 550,
+    "target_chunks": 132,
+    "pdf_chunks": 121,
+    "images": 146,
+    "target_images": 66,
+    "seed": 0,
+    "questions": "eval/compare_q12.jsonl",
+    "avg_chars": 1550.590909090909
+  },
+  "embed": {
+    "jina": {
+      "model": "jina",
+      "max_length": 512,
+      "threads": 4,
+      "load_s": 13.1,
+      "queries_s": 56.6,
+      "chunks_s": 4044.7,
+      "images_s": 695.4,
+      "max_rss_mb": 3921
+    },
+    "bge-m3": {
+      "model": "bge-m3",
+      "max_length": 512,
+      "threads": 4,
+      "load_s": 363.8,
+      "queries_s": 2.6,
+      "chunks_s": 844.3,
+      "max_rss_mb": 4151
+    }
+  }
+}

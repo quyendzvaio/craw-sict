@@ -1,8 +1,7 @@
 """Discover-only: fetch seed listing pages (httpx) → parser links → frontier.push.
 
 Nhẹ, không torch: chỉ import httpx/parser/frontier/config.
-Dùng cho: alpine image + initContainer trong CronJob (làm ấm queue trước khi
-worker slim chạy incremental full). Idempotent: URL cũ đã có trong
+Dùng để làm ấm queue trước khi worker chạy incremental full. Idempotent: URL cũ đã có trong
 frontier:seen (Redis SET) thì push() tự skip.
 
 Usage:

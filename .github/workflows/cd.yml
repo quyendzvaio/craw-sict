@@ -19,8 +19,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Pack code
-        run: tar czf /tmp/sict-deploy.tgz --exclude=.venv --exclude=.pgdata
+        # _snapshot (2,3 GB) / _cutover / .hf-cache không lên VM qua CD — artifact nạp bằng
+        # scripts/cutover_v2.sh; .pgdata* gồm cả bản backup hỏng (không đọc được → tar lỗi)
+        run: tar czf /tmp/sict-deploy.tgz --exclude=.venv --exclude='.pgdata*'
           --exclude=__pycache__ --exclude=.ruff_cache --exclude=_local_store
+          --exclude=_snapshot --exclude=_cutover --exclude=.hf-cache
           --exclude=.git --exclude='*.log' --exclude='*.pt' --exclude='.lock*' .
       - name: Upload tarball
         uses: appleboy/scp-action@v1
@@ -62,8 +65,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Pack code
-        run: tar czf /tmp/sict-deploy.tgz --exclude=.venv --exclude=.pgdata
+        # _snapshot (2,3 GB) / _cutover / .hf-cache không lên VM qua CD — artifact nạp bằng
+        # scripts/cutover_v2.sh; .pgdata* gồm cả bản backup hỏng (không đọc được → tar lỗi)
+        run: tar czf /tmp/sict-deploy.tgz --exclude=.venv --exclude='.pgdata*'
           --exclude=__pycache__ --exclude=.ruff_cache --exclude=_local_store
+          --exclude=_snapshot --exclude=_cutover --exclude=.hf-cache
           --exclude=.git --exclude='*.log' --exclude='*.pt' --exclude='.lock*' .
       - name: Upload tarball
         uses: appleboy/scp-action@v1

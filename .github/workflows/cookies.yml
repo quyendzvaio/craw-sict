@@ -1,0 +1,36 @@
+name: cookies
+# Xoay cookie YouTube cho worker VM2 (file that KHONG vao git).
+# Cach dung: dan noi dung cookies.txt (Netscape) vao secret COOKIES_TXT
+# (repo Settings → Secrets → Actions), roi Actions → cookies → Run workflow.
+# Secrets can: VM2_HOST, VM2_KEY (da co tu CD), COOKIES_TXT (moi).
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: VM nhan cookie
+        type: choice
+        options: [vm2]
+        default: vm2
+
+jobs:
+  deploy-cookies:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ghi cookie len VM2 (khong qua git)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VM2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.VM2_KEY }}
+          script: |
+            set -euo pipefail
+            mkdir -p ~/craw-sict/cookies
+            cat > ~/craw-sict/cookies/cookies.txt <<'COOKIES_EOF'
+            ${{ secrets.COOKIES_TXT }}
+            COOKIES_EOF
+            chmod 600 ~/craw-sict/cookies/cookies.txt
+            head -c 200 ~/craw-sict/cookies/cookies.txt | grep -q "Netscape" \
+              && echo "cookies format OK" \
+              || (echo "SAI dinh dang Netscape"; exit 1)
+            wc -l ~/craw-sict/cookies/cookies.txt
+            echo "cron doc file truc tiep qua mount, khong can restart"

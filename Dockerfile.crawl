@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && apk del gcc musl-dev libxml2-dev libxslt-dev
 COPY config.yaml ./
 COPY sict_crawler ./sict_crawler
-RUN chown -R 10000:10000 /app
+# không chown -R /app (nhân đôi layer venv); container chỉ đọc code + ghi Redis
 ENV PATH="/app/.venv/bin:$PATH"
 USER 10000
 # discover seeds → Redis frontier, idempotent (seen-set dedup)
