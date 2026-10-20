@@ -152,3 +152,37 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
     print("OK — indexing spec v2")
+
+
+def _layout_table(width: int = 389) -> str:
+    """Bảng dàn trang bằng ô gộp (bài 'Kế hoạch bảo vệ Đồ án … Khóa 10', 2019): 1 dòng rất rộng, các dòng
+    còn lại bị _table_md đệm ô rỗng cho đủ `width` cột."""
+    names = [f"TS. Nguyễn Văn {i} Chủ tịch Hội đồng {i % 20}" for i in range(width)]
+    rows = [" | ".join(names)] + [" | ".join([f"Stt {r}", f"Họ và tên {r}", "Thư ký"]) for r in range(40)]
+    return ix._table_md("\n".join(rows))
+
+
+def test_oversized_layout_table_is_split_compactly():
+    pieces = ix.chunk_table(_layout_table(), 500)
+    assert pieces and max(ix._tokens(p) for p in pieces) <= 2 * 500        # không còn đoạn ~3.000 token
+    assert not any("| --- " in p or "|  |" in p for p in pieces)            # bỏ dòng phân cách + ô rỗng đệm
+    joined = "\n".join(pieces)
+    for i in (0, 200, 388):
+        assert f"TS. Nguyễn Văn {i} Chủ tịch" in joined                    # không mất chữ của dòng rộng
+    assert sum("Họ và tên 7 " in p or p.endswith("Họ và tên 7 | Thư ký |") for p in pieces) == 1
+
+
+def test_normal_table_chunks_unchanged_by_oversize_rule():
+    """Luật bảng quá khổ chỉ chạm bảng có đoạn > 2×max_tokens: bảng thường giữ nguyên từng byte (ID / vector cũ còn dùng)."""
+    md = ix._table_md("\n".join(" | ".join([f"Stt {r}", f"Họ và tên {r}", "Ghi chú dài " * 5]) for r in range(80)))
+    lines = [ln for ln in md.splitlines() if ln.strip()]
+    header, body = lines[:2], lines[2:]
+    expected, cur = [], []
+    budget = max(50, 500 - ix._tokens("\n".join(header)))
+    for ln in body:
+        if cur and ix._tokens("\n".join(cur + [ln])) > budget:
+            expected.append("\n".join(header + cur))
+            cur = []
+        cur.append(ln)
+    expected.append("\n".join(header + cur))
+    assert ix.chunk_table(md, 500) == expected

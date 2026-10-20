@@ -207,6 +207,60 @@ def chunk_table(table_md: str, max_tokens: int) -> list[str]:
         cur.append(ln)
     if cur:
         out.append("\n".join(header + cur))
+    if any(_tokens(p) > 2 * max_tokens for p in out):
+        return _chunk_table_compact(header, body, max_tokens)
+    return out
+
+
+def _compact_row(line: str) -> list[str]:
+    return [c for c in _row_cells(line) if c]
+
+
+def _chunk_table_compact(header: list[str], body: list[str], max_tokens: int) -> list[str]:
+    """Bảng dàn trang bằng ô gộp (2026-10-21: 1 bài 2019 có dòng 389 cột → mỗi đoạn ~12.000 ký tự, vượt giới hạn
+    2.048 token của dịch vụ embed tự host): bỏ ô rỗng + dòng `---`, không lặp tiêu đề dài hơn max_tokens/4 (đưa vào
+    thân), dòng quá dài cắt theo nhóm ô, ô quá dài cắt theo từ. Chỉ chạy khi cách chia thường ra đoạn > 2×max_tokens
+    → mọi bảng khác giữ nguyên từng byte (ID chunk / vector cũ còn dùng)."""
+    fmt = lambda cells: "| " + " | ".join(cells) + " |"        # noqa: E731
+    head_cells = _compact_row(header[0]) if header else []
+    head = fmt(head_cells) if head_cells else ""
+    rows = [_compact_row(ln) for ln in body]
+    if head and _tokens(head) > max_tokens // 4:
+        rows.insert(0, head_cells)
+        head = ""
+    budget = max(50, max_tokens - _tokens(head))
+    lines: list[str] = []
+    for cells in rows:
+        if not cells:
+            continue
+        group: list[str] = []
+        for cell in cells:
+            while _tokens(cell) > budget:                       # 1 ô quá dài: cắt theo từ
+                words, part = cell.split(), []
+                while words and _tokens(" ".join(part + words[:1])) <= budget - 2:
+                    part.append(words.pop(0))
+                part = part or [words.pop(0)]
+                if group:
+                    lines.append(fmt(group))
+                    group = []
+                lines.append(fmt([" ".join(part)]))
+                cell = " ".join(words)
+            if not cell:
+                continue
+            if group and _tokens(fmt(group + [cell])) > budget:
+                lines.append(fmt(group))
+                group = []
+            group.append(cell)
+        if group:
+            lines.append(fmt(group))
+    out, cur = [], []
+    for ln in lines:
+        if cur and _tokens("\n".join(cur + [ln])) > budget:
+            out.append("\n".join(([head] if head else []) + cur))
+            cur = []
+        cur.append(ln)
+    if cur:
+        out.append("\n".join(([head] if head else []) + cur))
     return out
 
 

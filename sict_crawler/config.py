@@ -57,7 +57,7 @@ class QdrantConfig:
 @dataclass
 class S3Config:
     bucket: str
-    region: str = "ap-northeast-1"
+    region: str = "us-east-2"   # cùng region VM1/VM2 (D14); config.yaml ghi đè
     prefix_raw: str = "raw/"
     prefix_media: str = "media/"
     access_key: str = ""

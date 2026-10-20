@@ -23,14 +23,14 @@ services:
     mem_limit: 300m
 
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.19.1   # ghim (D11): bản đang chứa index v3; nâng = đổi tag có chủ đích
     ports: ["6333:6333", "6334:6334"]
     volumes: [qdata:/qdrant/storage]
     restart: unless-stopped
     mem_limit: 900m
 
   api:
-    image: sict-api:latest
+    image: ${API_IMAGE:-sict-api:latest}   # CD đặt ghcr.io/…/sict-api:<sha> trong .env (D10); local = build
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -62,7 +62,7 @@ services:
   # L0 edge: reverse proxy + cache truoc api (AC-K1..K5). Nghe 8080,
   # api giu nguyen 8003 de khong vo deploy hien tai; cat-over sau.
   nginx:
-    image: nginx:alpine
+    image: nginx:1.31.6-alpine
     ports: ["8080:80"]
     volumes: ["./nginx/nginx.conf:/etc/nginx/nginx.conf:ro", ngcache:/var/cache/nginx]
     depends_on: [api]
