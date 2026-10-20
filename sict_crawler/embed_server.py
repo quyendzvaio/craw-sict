@@ -330,8 +330,20 @@ def create_app(enc=None):
     """FastAPI app; enc=None → nạp model lúc khởi động (test truyền encoder giả)."""
     from fastapi import FastAPI, HTTPException, Request
 
+    from prometheus_client import (
+        CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Histogram, disable_created_metrics, generate_latest,
+    )
+    disable_created_metrics()   # bỏ chuỗi *_created (hạn mức chuỗi Grafana Cloud)
+    from starlette.responses import Response
+
     app = FastAPI(title="sict embed (jina-clip-v2 onnx int8)")
     state = {"enc": enc, "requests": 0, "items": 0, "lock": threading.Lock()}
+    # D13: Alloy (VM2) scrape /metrics — độ trễ theo loại lượt (câu hỏi ngắn / chữ dài / ảnh) + số mục
+    reg = CollectorRegistry()
+    latency = Histogram("sict_embed_request_duration_seconds", "Thời gian 1 request /v1/embeddings", ["kind"],
+                        buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 120), registry=reg)
+    items_total = Counter("sict_embed_items_total", "Số mục đã nhúng", ["kind"], registry=reg)
+    errors_total = Counter("sict_embed_errors_total", "Request lỗi (4xx/5xx)", ["code"], registry=reg)
 
     def get_enc():
         if state["enc"] is None:
@@ -343,6 +355,10 @@ def create_app(enc=None):
     @app.on_event("startup")
     def _load() -> None:
         get_enc()
+
+    @app.get("/metrics", include_in_schema=False)
+    def metrics() -> Response:
+        return Response(generate_latest(reg), media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/")
     @app.get("/healthz")
@@ -357,12 +373,18 @@ def create_app(enc=None):
             if not 1 <= dim <= FULL_DIM:
                 raise ValueError(f"dimensions phải trong 1..{FULL_DIM}")
         except (ValueError, TypeError) as e:
+            errors_total.labels("400").inc()
             raise HTTPException(400, str(e))
         t0 = time.time()
         try:
             vecs, nt, ni = embed(get_enc(), items, dim)
         except Exception as e:   # ảnh hỏng, lỗi ORT → 500 có lý do; embedder phía client thử lại / báo EmbedError
+            errors_total.labels("500").inc()
             raise HTTPException(500, f"{type(e).__name__}: {e}")
+        kind = "image" if ni else ("query" if nt == 1 and len(items[0]["text"]) < 1000 else "text")
+        latency.labels(kind).observe(time.time() - t0)
+        items_total.labels("image").inc(ni)
+        items_total.labels("text").inc(nt)
         state["requests"] += 1
         state["items"] += len(vecs)
         return {"model": MODEL_NAME, "object": "list",

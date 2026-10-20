@@ -1,0 +1,1135 @@
+{
+ "uid": "sict-overview",
+ "title": "SICT — hệ thống",
+ "tags": [
+  "sict"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "refresh": "1m",
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "row",
+   "title": "Tổng quan",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   }
+  },
+  {
+   "id": 2,
+   "type": "stat",
+   "title": "Thành phần đang chạy (up)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 6,
+    "x": 0,
+    "y": 1
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "max by (job) (up{instance=~\"$instance\"})",
+     "legendFormat": "{{job}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "value": null,
+        "color": "red"
+       },
+       {
+        "value": 1,
+        "color": "green"
+       }
+      ]
+     },
+     "color": {
+      "mode": "thresholds"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "graphMode": "none"
+   }
+  },
+  {
+   "id": 3,
+   "type": "stat",
+   "title": "Heartbeat incremental (tuổi)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 6,
+    "x": 6,
+    "y": 1
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "time() - max(sict_incremental_last_ok_timestamp_seconds{instance=~\"$instance\"})",
+     "legendFormat": "tuổi"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "value": null,
+        "color": "green"
+       },
+       {
+        "value": 25200,
+        "color": "red"
+       }
+      ]
+     },
+     "color": {
+      "mode": "thresholds"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "graphMode": "none"
+   }
+  },
+  {
+   "id": 4,
+   "type": "stat",
+   "title": "Lượt incremental gần nhất lỗi?",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 6,
+    "x": 12,
+    "y": 1
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "max(sict_incremental_last_error_timestamp_seconds{instance=~\"$instance\"}) > bool max(sict_incremental_last_ok_timestamp_seconds{instance=~\"$instance\"})",
+     "legendFormat": "lỗi mới hơn OK"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "value": null,
+        "color": "green"
+       },
+       {
+        "value": 1,
+        "color": "red"
+       }
+      ]
+     },
+     "color": {
+      "mode": "thresholds"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "graphMode": "none"
+   }
+  },
+  {
+   "id": 5,
+   "type": "stat",
+   "title": "Bài trong DB / mới 24 h",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 6,
+    "x": 18,
+    "y": 1
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "max(sict_documents_total{instance=~\"$instance\"})",
+     "legendFormat": "tổng"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "max(delta(sict_documents_total{instance=~\"$instance\"}[24h]))",
+     "legendFormat": "mới 24 h"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "graphMode": "none"
+   }
+  },
+  {
+   "id": 6,
+   "type": "row",
+   "title": "API",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 8
+   }
+  },
+  {
+   "id": 7,
+   "type": "timeseries",
+   "title": "Request/giây theo route",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 9
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum by (route) (rate(sict_http_requests_total{instance=~\"$instance\"}[$__rate_interval]))",
+     "legendFormat": "{{route}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 8,
+   "type": "timeseries",
+   "title": "Độ trễ p95 theo route",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 8,
+    "y": 9
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "histogram_quantile(0.95, sum by (le, route) (rate(sict_http_request_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
+     "legendFormat": "{{route}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 9,
+   "type": "timeseries",
+   "title": "Tỉ lệ lỗi 5xx",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 16,
+    "y": 9
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum(rate(sict_http_requests_total{instance=~\"$instance\",status=~\"5..\"}[$__rate_interval])) / sum(rate(sict_http_requests_total{instance=~\"$instance\"}[$__rate_interval]))",
+     "legendFormat": "5xx"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 10,
+   "type": "row",
+   "title": "Pipeline (crawl incremental)",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 16
+   }
+  },
+  {
+   "id": 11,
+   "type": "bargauge",
+   "title": "Lượt gần nhất",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 17
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "max by (field) (sict_incremental_last_run{instance=~\"$instance\"})",
+     "legendFormat": "{{field}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 12,
+   "type": "timeseries",
+   "title": "Frontier",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 8,
+    "y": 17
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "max by (state) (sict_frontier{instance=~\"$instance\"})",
+     "legendFormat": "{{state}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 13,
+   "type": "stat",
+   "title": "Đọc được Redis + PG",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 16,
+    "y": 17
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "min(sict_pipeline_metrics_up{instance=~\"$instance\"})",
+     "legendFormat": "pipeline"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "value": null,
+        "color": "red"
+       },
+       {
+        "value": 1,
+        "color": "green"
+       }
+      ]
+     },
+     "color": {
+      "mode": "thresholds"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "graphMode": "none"
+   }
+  },
+  {
+   "id": 14,
+   "type": "row",
+   "title": "Postgres",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 24
+   }
+  },
+  {
+   "id": 15,
+   "type": "timeseries",
+   "title": "Kết nối / tối đa",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 6,
+    "x": 0,
+    "y": 25
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum(pg_stat_activity_count{instance=~\"$instance\"})",
+     "legendFormat": "đang dùng"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "max(pg_settings_max_connections{instance=~\"$instance\"})",
+     "legendFormat": "tối đa"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 16,
+   "type": "timeseries",
+   "title": "Kích thước DB",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 6,
+    "x": 6,
+    "y": 25
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "pg_database_size_bytes{instance=~\"$instance\",datname!~\"template.*\"}",
+     "legendFormat": "{{datname}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 17,
+   "type": "timeseries",
+   "title": "Giao dịch/giây",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 6,
+    "x": 12,
+    "y": 25
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum(rate(pg_stat_database_xact_commit{instance=~\"$instance\"}[$__rate_interval]))",
+     "legendFormat": "commit"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum(rate(pg_stat_database_xact_rollback{instance=~\"$instance\"}[$__rate_interval]))",
+     "legendFormat": "rollback"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 18,
+   "type": "stat",
+   "title": "Cache hit",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 6,
+    "x": 18,
+    "y": 25
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum(rate(pg_stat_database_blks_hit{instance=~\"$instance\"}[1h])) / (sum(rate(pg_stat_database_blks_hit{instance=~\"$instance\"}[1h])) + sum(rate(pg_stat_database_blks_read{instance=~\"$instance\"}[1h])))",
+     "legendFormat": "hit"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "value": null,
+        "color": "red"
+       },
+       {
+        "value": 0.9,
+        "color": "green"
+       }
+      ]
+     },
+     "color": {
+      "mode": "thresholds"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "graphMode": "none"
+   }
+  },
+  {
+   "id": 19,
+   "type": "row",
+   "title": "Redis",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 32
+   }
+  },
+  {
+   "id": 20,
+   "type": "timeseries",
+   "title": "Bộ nhớ / maxmemory",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 6,
+    "x": 0,
+    "y": 33
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "max(redis_memory_used_bytes{instance=~\"$instance\"})",
+     "legendFormat": "dùng"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "max(redis_memory_max_bytes{instance=~\"$instance\"})",
+     "legendFormat": "tối đa"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 21,
+   "type": "timeseries",
+   "title": "Key theo db",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 6,
+    "x": 6,
+    "y": 33
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum by (db) (redis_db_keys{instance=~\"$instance\"})",
+     "legendFormat": "{{db}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 22,
+   "type": "timeseries",
+   "title": "Key bị đẩy ra / giây (volatile-ttl)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 6,
+    "x": 12,
+    "y": 33
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum(rate(redis_evicted_keys_total{instance=~\"$instance\"}[$__rate_interval]))",
+     "legendFormat": "evicted"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 23,
+   "type": "stat",
+   "title": "Client",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 6,
+    "x": 18,
+    "y": 33
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "max(redis_connected_clients{instance=~\"$instance\"})",
+     "legendFormat": "client"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "graphMode": "none"
+   }
+  },
+  {
+   "id": 24,
+   "type": "row",
+   "title": "Qdrant",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 40
+   }
+  },
+  {
+   "id": 25,
+   "type": "timeseries",
+   "title": "Điểm theo collection",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 41
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "max by (id) (collection_points{instance=~\"$instance\",id=~\"sict_.*\"})",
+     "legendFormat": "{{id}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 26,
+   "type": "timeseries",
+   "title": "RAM Qdrant",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 8,
+    "y": 41
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "max(memory_resident_bytes{instance=~\"$instance\",job=\"sict/qdrant\"})",
+     "legendFormat": "resident"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 27,
+   "type": "timeseries",
+   "title": "Hàng đợi cập nhật / tối ưu",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 16,
+    "y": 41
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum(collection_update_queue_length{instance=~\"$instance\"})",
+     "legendFormat": "queue"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum(collection_running_optimizations{instance=~\"$instance\"})",
+     "legendFormat": "optimizing"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 28,
+   "type": "row",
+   "title": "Dịch vụ embed (ONNX int8)",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 48
+   }
+  },
+  {
+   "id": 29,
+   "type": "timeseries",
+   "title": "Độ trễ p95 theo loại",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 49
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "histogram_quantile(0.95, sum by (le, kind) (rate(sict_embed_request_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
+     "legendFormat": "{{kind}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 30,
+   "type": "timeseries",
+   "title": "Mục nhúng/giây",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 8,
+    "y": 49
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum by (kind) (rate(sict_embed_items_total{instance=~\"$instance\"}[$__rate_interval]))",
+     "legendFormat": "{{kind}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 31,
+   "type": "stat",
+   "title": "Lỗi 1 giờ",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 16,
+    "y": 49
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum by (code) (increase(sict_embed_errors_total{instance=~\"$instance\"}[1h]))",
+     "legendFormat": "{{code}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "value": null,
+        "color": "green"
+       },
+       {
+        "value": 1,
+        "color": "red"
+       }
+      ]
+     },
+     "color": {
+      "mode": "thresholds"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "graphMode": "none"
+   }
+  }
+ ],
+ "templating": {
+  "list": [
+   {
+    "name": "datasource",
+    "type": "datasource",
+    "query": "prometheus",
+    "label": "Prometheus",
+    "current": {},
+    "hide": 0
+   },
+   {
+    "name": "instance",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "${datasource}"
+    },
+    "label": "Máy",
+    "multi": true,
+    "includeAll": true,
+    "query": {
+     "query": "label_values(up{job=~\"sict/.*|integrations/node_exporter\"}, instance)",
+     "refId": "inst"
+    },
+    "refresh": 2,
+    "current": {},
+    "hide": 0
+   }
+  ]
+ },
+ "description": "Sinh bởi scripts/grafana_dashboards.py — sửa script, không sửa trên giao diện (lần push sau ghi đè)."
+}

@@ -2,7 +2,7 @@
 
 Giá trị lấy từ .env (KHÔNG đọc token: file render dùng sys.env("GCLOUD_RW_API_KEY") lúc Alloy chạy):
   GCLOUD_HOSTED_METRICS_URL, GCLOUD_HOSTED_METRICS_ID, GCLOUD_SCRAPE_INTERVAL, GCLOUD_HOSTED_LOGS_URL, GCLOUD_HOSTED_LOGS_ID
-Role: vm1 = base + Postgres/Redis/Qdrant (monitor/alloy/vm1-services.alloy); vm2 = base.
+Role: vm1 = base + Postgres/Redis/Qdrant/API (monitor/alloy/vm1-services.alloy); vm2 = base + embed (vm2-services.alloy).
 `--host-prefix /host` khi Alloy chạy trong Docker và /proc, /sys, / của máy được mount vào /host/… (giả lập local).
 
     python scripts/render_alloy.py --role vm1 --instance sict-vm1 --out /tmp/vm1/config.alloy
@@ -17,7 +17,7 @@ from string import Template
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = ["GCLOUD_HOSTED_METRICS_URL", "GCLOUD_HOSTED_METRICS_ID", "GCLOUD_SCRAPE_INTERVAL",
             "GCLOUD_HOSTED_LOGS_URL", "GCLOUD_HOSTED_LOGS_ID"]
-PARTS = {"vm1": ["base.alloy", "vm1-services.alloy"], "vm2": ["base.alloy"]}
+PARTS = {"vm1": ["base.alloy", "vm1-services.alloy"], "vm2": ["base.alloy", "vm2-services.alloy"]}
 DOCKER_PART = "docker-logs.alloy"   # chỉ thêm khi docker_logs=True (cần quyền đọc docker.sock)
 DOCKER_NAMES = {"vm1": ["craw-sict-"],                                   # postgres/redis/qdrant/api/nginx
                 "vm2": ["craw-sict-cron", "craw-sict-svc-ocr", "craw-sict-obscura", "craw-sict-embed",
@@ -36,7 +36,8 @@ def read_env(path: Path) -> dict[str, str]:
 
 def render(role: str, instance: str, env: dict[str, str], host_prefix: str = "", journal_path: str = "/var/log/journal",
            log_glob: str = "/var/log/{syslog,messages,*.log}", docker_names: list[str] | None = None,
-           redis_addr: str = "localhost:6379", qdrant_addr: str = "localhost:6333", docker_logs: bool = True) -> str:
+           redis_addr: str = "localhost:6379", qdrant_addr: str = "localhost:6333", docker_logs: bool = True,
+           api_addr: str = "localhost:8003", embed_addr: str = "localhost:8090") -> str:
     missing = [k for k in REQUIRED if not env.get(k)]
     if missing:
         raise SystemExit(f"thiếu biến trong .env: {', '.join(missing)}")
@@ -52,7 +53,7 @@ def render(role: str, instance: str, env: dict[str, str], host_prefix: str = "",
               "HOST_PROC": f"{host_prefix}/proc", "HOST_SYS": f"{host_prefix}/sys", "HOST_ROOT": f"{host_prefix}/root" if host_prefix else "/",
               "JOURNAL_PATH": journal_path, "LOG_GLOB": log_glob,
               "DOCKER_NAMES": ", ".join(f'"{n}"' for n in names),
-              "REDIS_ADDR": redis_addr, "QDRANT_ADDR": qdrant_addr}
+              "REDIS_ADDR": redis_addr, "QDRANT_ADDR": qdrant_addr, "API_ADDR": api_addr, "EMBED_ADDR": embed_addr}
     head = f"// RENDERED bởi scripts/render_alloy.py — role={role} instance={instance}. Sửa template trong monitor/alloy/.\n\n"
     parts = PARTS[role] + ([DOCKER_PART] if docker_logs else [])
     return head + "\n".join(Template((ROOT / "monitor" / "alloy" / p).read_text(encoding="utf-8")).substitute(values)
@@ -72,10 +73,12 @@ def main() -> None:
     ap.add_argument("--redis-addr", default="localhost:6379")
     ap.add_argument("--qdrant-addr", default="localhost:6333")
     ap.add_argument("--no-docker-logs", action="store_true", help="bỏ phần log container (không cần quyền docker.sock)")
+    ap.add_argument("--api-addr", default="localhost:8003", help="VM1: API (GET /metrics)")
+    ap.add_argument("--embed-addr", default="localhost:8090", help="VM2: dịch vụ embed (= EMBED_BIND:8090)")
     a = ap.parse_args()
     text = render(a.role, a.instance, read_env(Path(a.env_file)), a.host_prefix, a.journal_path, a.log_glob,
                   a.docker_names.split(",") if a.docker_names else None, a.redis_addr, a.qdrant_addr,
-                  docker_logs=not a.no_docker_logs)
+                  docker_logs=not a.no_docker_logs, api_addr=a.api_addr, embed_addr=a.embed_addr)
     if "glc_" in text:   # phòng thủ: token không bao giờ được nằm trong file render
         raise SystemExit("phát hiện chuỗi token trong cấu hình render — dừng")
     out = Path(a.out)

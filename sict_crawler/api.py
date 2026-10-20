@@ -24,6 +24,8 @@ from .config import get_settings
 from .models import MediaAsset
 
 app = FastAPI(title="SICT RAG API")
+from . import metrics as _metrics  # noqa: E402 — D13: GET /metrics (HTTP + pipeline) cho Alloy / Grafana Cloud
+_metrics.instrument(app)
 _GRAPH_REFRESH_SEC = 600
 
 
