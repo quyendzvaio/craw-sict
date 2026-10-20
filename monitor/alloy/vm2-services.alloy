@@ -1,0 +1,22 @@
+// VM2 (worker + embed): dịch vụ embedding ONNX int8 /metrics (độ trễ câu hỏi / chữ / ảnh, số mục, lỗi).
+// Dịch vụ chưa chạy → up=0 cho job sict/embed (thấy ngay trên dashboard), các phần khác không ảnh hưởng.
+
+prometheus.scrape "embed" {
+  targets = [{
+    __address__ = "${EMBED_ADDR}",
+    instance    = "${INSTANCE}",
+    job         = "sict/embed",
+  }]
+  scrape_interval = "${GCLOUD_SCRAPE_INTERVAL}"
+  forward_to      = [prometheus.relabel.embed.receiver]
+}
+
+prometheus.relabel "embed" {
+  forward_to = [prometheus.remote_write.gcloud.receiver]
+
+  rule {
+    source_labels = ["__name__"]
+    regex         = "up|sict_.*"
+    action        = "keep"
+  }
+}

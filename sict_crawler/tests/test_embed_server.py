@@ -104,6 +104,9 @@ def test_http_contract_matches_embedder_client():
         assert d["usage"]["texts"] == 2
         assert c.post("/v1/embeddings", json={"input": []}).status_code == 400
         assert c.post("/v1/embeddings", json={"input": ["a"], "dimensions": 4096}).status_code == 400
+        m = c.get("/metrics").text                                                # D13: Alloy scrape
+        assert 'sict_embed_items_total{kind="text"} 2.0' in m and 'sict_embed_errors_total{code="400"} 2.0' in m
+        assert 'sict_embed_request_duration_seconds_count{kind="text"} 1.0' in m
 
 
 def test_quantize_vocab_table_matches_fp32():
