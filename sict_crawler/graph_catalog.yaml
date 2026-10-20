@@ -1,0 +1,148 @@
+# Danh mục chuẩn CLB / chuỗi sự kiện của graph (D20, sửa 2026-10-18) — DỮ LIỆU, sửa file này, không sửa code.
+#
+# Mỗi mục là 1 thực thể chuẩn: mọi cách gọi trong `aliases` (khớp bỏ dấu, không phân biệt hoa thường, cả trong
+# thân bài) và `acronyms` (viết tắt 1 từ — chỉ khớp ĐÚNG hoa/thường trong bài viết, VD "HIT" chứ không "hit")
+# đều quy về nó. Ứng viên luật trích ra (tiêu đề / alt) chứa 1 cách gọi của mục cũng gộp vào mục
+# ("Chung kết Cuộc thi Thử thách Lập nghiệp lần thứ VII" → Thử thách Lập nghiệp). Năm bị bỏ khỏi khoá nên chuỗi
+# sự kiện hằng năm là 1 thực thể. `block`: khoá luật hay trích nhầm (khẩu hiệu, danh hiệu…) — không thành thực thể.
+#
+# Bản đầu do assistant soạn từ tần suất trong corpus (2026-10-18) — CHỦ DỰ ÁN DUYỆT / BỔ SUNG.
+
+org:
+  - key: clb hit
+    name: CLB Tin học HIT
+    aliases: [CLB HIT, Câu lạc bộ HIT, CLB Tin học HIT, Câu lạc bộ Tin học HIT, CLB Tin học, Câu lạc bộ Tin học,
+              Câu lạc bộ học thuật HIT, CLB học thuật HIT]
+    acronyms: [HIT]
+  - key: clb it supporter
+    name: Đội Hỗ trợ kỹ thuật IT Supporter
+    aliases: [IT Supporter, CLB IT Supporter, Đội IT Supporter, Đội Hỗ trợ kỹ thuật, CLB Hỗ trợ kỹ thuật,
+              Câu lạc bộ ITSupporter, CLB ITSupporter]
+    acronyms: [ITSupporter]
+  - key: clb hec
+    name: CLB Thể thao điện tử HEC
+    aliases: [CLB HEC, CLB Thể thao điện tử, Câu lạc bộ Thể thao điện tử, Câu lạc bộ thể thao điện tử HEC, CLB Esports]
+    acronyms: [HEC]
+  - key: clb fit media
+    name: CLB Truyền thông FIT Media
+    aliases: [FIT Media, CLB FIT Media, CLB Truyền thông FIT Media, Câu lạc bộ truyền thông FIT Media, CLB Truyền thông]
+  - key: clb istar
+    name: Đội nghệ thuật iStar
+    aliases: [CLB iStar, CLB Nghệ thuật iStar, Câu lạc bộ Nghệ thuật iStar, Đội nghệ thuật iStar]
+    acronyms: [iStar, Istar, ISTAR]
+  - key: clb tntn
+    name: Đội Thanh niên tình nguyện Khoa CNTT
+    aliases: [Đội Thanh niên tình nguyện, CLB Thanh niên tình nguyện, Câu lạc bộ Thanh niên tình nguyện, Đội TNTN, CLB TNTN]
+    acronyms: [TNTN]
+  - key: clb sip
+    name: CLB Khởi nghiệp SIP
+    aliases: [CLB SIP, CLB Khởi nghiệp SIP, Câu lạc bộ Khởi nghiệp SIP]
+  - key: clb olympic tin hoc
+    name: Đội tuyển Olympic Tin học
+    aliases: [Đội tuyển Olympic Tin học, Đội Olympic Tin học, CLB Olympic Tin học]
+
+event:
+  - key: olympic tin hoc
+    name: Olympic Tin học sinh viên Việt Nam (OLP)
+    aliases: [Olympic Tin học, Olympic Tin học sinh viên Việt Nam, Kỳ thi Olympic Tin học, Siêu CUP OLP]
+    acronyms: [OLP]
+  - key: icpc
+    name: Kỳ thi lập trình sinh viên quốc tế ICPC
+    aliases: [ACM ICPC, Kỳ thi ICPC, ICPC Asia]
+    acronyms: [ICPC]
+  - key: procon viet nam
+    name: PROCON Việt Nam
+    aliases: [Procon Việt Nam, Kỳ thi PROCON Việt Nam]
+  - key: naprock procon
+    name: NAPROCK PROCON quốc tế (Nhật Bản)
+    aliases: [NAPROCK PROCON, Procon Nhật Bản, Procon quốc tế]
+    acronyms: [NAPROCK]
+  - key: it festival
+    name: IT Festival
+    aliases: [Ngày hội Công nghệ thông tin, Ngày hội CNTT, IT Fest]
+  - key: ai4industry
+    name: AI4Industry
+    aliases: [Hội thảo quốc tế AI4Industry]
+    acronyms: [AI4Industry]
+  - key: icisn
+    name: Hội thảo khoa học quốc tế ICISN
+    aliases: [Hội thảo quốc tế ICISN]
+    acronyms: [ICISN]
+  - key: apsipa
+    name: Hội thảo APSIPA
+    acronyms: [APSIPA]
+  - key: fossasia
+    name: FOSSASIA Summit
+    aliases: [Hội nghị thượng đỉnh Nguồn mở châu Á]
+    acronyms: [FOSSASIA]
+  - key: sict awards
+    name: SICT Awards
+  - key: thu thach lap nghiep
+    name: Cuộc thi Thử thách Lập nghiệp
+    aliases: [Thử thách Lập nghiệp]
+  - key: denso factory hacks
+    name: Denso Factory Hacks
+    aliases: [Factory Hacks]
+  - key: miss mister haui
+    name: MISS & MISTER HaUI
+    aliases: [MISS & MISTER, Sinh viên thanh lịch]
+  - key: the voice haui
+    name: The Voice HaUI
+    aliases: [Giọng hát hay sinh viên]
+  - key: tet am yeu thuong
+    name: Tết ấm yêu thương
+  - key: samsung stp
+    name: Học bổng tài năng Samsung (STP)
+    aliases: [Học bổng tài năng Samsung, Samsung STP, Sinh viên tài năng Samsung]
+    acronyms: [STP]
+  - key: chao tan sinh vien
+    name: Lễ chào tân sinh viên
+    aliases: [Chào tân sinh viên, Ngày hội chào tân sinh viên]
+  - key: haui ai hackathon
+    name: HaUI AI Hackathon
+  - key: i sec
+    name: Cuộc thi bảo mật thông tin I-SEC
+    acronyms: [I-SEC]
+  - key: software product challenge
+    name: Software Product Challenge (SPC)
+    aliases: [Software Product Challenge]
+  - key: ngay hoi viec lam
+    name: Ngày hội việc làm
+    aliases: [Hội chợ việc làm]
+  - key: hoi thao viec lam
+    name: Hội thảo việc làm
+  - key: le tot nghiep
+    name: Lễ tốt nghiệp
+    aliases: [Lễ tốt nghiệp và trao bằng, Lễ trao bằng tốt nghiệp]
+  - key: haui startup mindset
+    name: HaUI Startup Mindset
+    aliases: [Startup Mindset]
+  - key: mua he xanh
+    name: Chiến dịch Mùa hè xanh
+    aliases: [Mùa hè xanh]
+  - key: dong am vung cao
+    name: Đông ấm vùng cao
+  - key: lg dream code
+    name: LG Dream Code
+  - key: samsung svmc find your future
+    name: Samsung SVMC - Find your future
+    aliases: [Samsung SVMC Find your future, Find your future]   # "Samsung (SVMC)" là trung tâm R&D, không phải sự kiện
+  - key: hoi nghi lop truong
+    name: Hội nghị Lớp trưởng, Bí thư chi đoàn
+    aliases: [Hội nghị lớp trưởng]
+  - key: tech support
+    name: TECH SUPPORT – Hỗ trợ máy tính cho sinh viên
+    aliases: [Tech Support]
+  - key: hit open day
+    name: HIT Open Day
+
+block:
+  event: [sinh vien 5 tot, sinh vien 5 tot cap truong, gioi viec nuoc dam viec nha]
+
+# Tên danh nhân dùng làm tên đường / trường / di tích ("643 Phạm Văn Đồng", "THPT Lê Quý Đôn", "Đền thờ Chu Văn
+# An"): KHÔNG nhận là người khi đứng trần; vẫn nhận khi có học hàm / vai trò đứng trước ("thầy Lê Hồng Phong").
+street_names: [Phạm Văn Đồng, Hồ Tùng Mậu, Nguyễn Huy Tưởng, Lê Hồng Phong, Lê Quý Đôn, Đinh Tiên Hoàng,
+               Nguyễn Thái Học, Chu Văn An, Trần Duy Hưng, Hoàng Quốc Việt, Phạm Hùng, Trần Hưng Đạo, Lê Duẩn,
+               Nguyễn Trãi, Tôn Đức Thắng, Nguyễn Chí Thanh, Lê Văn Lương, Nguyễn Văn Cừ, Trần Phú, Lê Lợi,
+               Lý Thường Kiệt, Hai Bà Trưng, Phạm Ngũ Lão, Nguyễn Du, Hồ Chí Minh, Võ Nguyên Giáp, Hoàng Hoa Thám,
+               Phan Đình Phùng, Phan Bội Châu, Lê Thánh Tông, Trần Quang Khải, Nguyễn Khánh Toàn, Xuân Thủy]

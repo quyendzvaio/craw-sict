@@ -1,0 +1,10 @@
+{
+  "chunks": 550,
+  "target_chunks": 132,
+  "pdf_chunks": 121,
+  "images": 146,
+  "target_images": 66,
+  "seed": 0,
+  "questions": "eval/compare_q12.jsonl",
+  "avg_chars": 1550.590909090909
+}

@@ -27,6 +27,13 @@ def _parse_completion(text: str) -> str:
     text = text.strip()
     if not text:
         return ""
+    if text.startswith("{"):
+        # JSON thường — gateway có thể nối thêm "\ndata: [DONE]" ở cuối: raw_decode bỏ qua phần đuôi
+        try:
+            obj = json.JSONDecoder().raw_decode(text)[0]
+            return (obj["choices"][0]["message"].get("content") or "").strip()
+        except Exception:
+            pass
     if text.startswith("data:") or "\ndata:" in text:
         parts = []
         for line in text.splitlines():
@@ -53,12 +60,17 @@ def _parse_completion(text: str) -> str:
         return ""
 
 
+# Proxy 9router: tắt "token saver" (caveman/ponytail chèn ~750 token system prompt và đổi giọng
+# trả lời, headroom nén ngữ cảnh) cho request của dự án. Endpoint khác bỏ qua header lạ.
+NO_TOKEN_SAVER = {"x-9router-token-saver": "off"}
+
+
 def _client(cfg=None) -> httpx.Client:
     cfg = cfg or get_settings().vlm
     return httpx.Client(
         base_url=cfg.api_base,
-        headers={"Authorization": f"Bearer {cfg.api_key}"},
-        timeout=60.0,
+        headers={"Authorization": f"Bearer {cfg.api_key}", **NO_TOKEN_SAVER},
+        timeout=float(getattr(cfg, "timeout", 60)),
     )
 
 
@@ -87,6 +99,7 @@ def _call(model: str, image_b64: str, prompt: str) -> str:
         ],
         "max_tokens": cfg.max_new_tokens,
         "temperature": 0.0,
+        "stream": False,
     }
     for attempt in range(4):
         try:
@@ -186,6 +199,8 @@ def _text_call(model: str, prompt: str) -> str:
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": cfg.max_new_tokens,
         "temperature": 0.0,
+        # ghi rõ: proxy kiểu 9router coi thiếu "stream" là stream=true
+        "stream": False,
     }
     try:
         with _client(get_settings().llm) as c:
@@ -198,6 +213,53 @@ def _text_call(model: str, prompt: str) -> str:
     except Exception as e:
         print(f"[llm] {model} text call fail: {e}")
         return ""
+
+
+def parse_route_json(raw: str) -> dict | None:
+    """Đọc JSON {rewritten, media, wants_file} từ output LLM (chịu được text thừa quanh JSON).
+    Không parse được → None (caller dùng output như câu viết lại thuần + luật router)."""
+    import json
+    if not raw or "{" not in raw:
+        return None
+    try:
+        obj = json.JSONDecoder().raw_decode(raw[raw.find("{"):])[0]
+    except ValueError:
+        return None
+    if not isinstance(obj, dict) or not str(obj.get("rewritten", "")).strip():
+        return None
+    media = str(obj.get("media", "")).strip().lower()
+    return {"rewritten": str(obj["rewritten"]).strip()[:500],
+            "media": media if media in ("none", "optional", "required") else None,
+            "wants_file": bool(obj.get("wants_file"))}
+
+
+def rewrite_and_route(question: str) -> dict | None:
+    """1 lượt LLM: viết lại câu hỏi + ý định thành phần câu trả lời (router D17).
+
+    Trả {rewritten, media|None, wants_file} hoặc None (không key/lỗi). LLM trả text thường thay vì
+    JSON → coi như câu viết lại, media=None (router dùng luật từ khoá).
+    """
+    if not get_settings().llm.api_key:
+        return None
+    prompt = (
+        "Bạn là bộ định tuyến truy vấn cho chatbot website Trường Công nghệ thông tin và Truyền "
+        "thông (SICT, Đại học Công nghiệp Hà Nội). Với câu hỏi dưới đây, trả về DUY NHẤT một JSON:\n"
+        '{"rewritten": "<câu tìm kiếm: đúng chính tả, mở rộng viết tắt (CNTT → công nghệ thông tin, '
+        'ATTT → an toàn thông tin), giữ nguyên tên riêng, tên người>", '
+        '"media": "none|optional|required", "wants_file": true|false}\n'
+        "Quy tắc media: required = người dùng muốn XEM ảnh/video; optional = hỏi về sự kiện, "
+        "hoạt động mà ảnh có thể minh hoạ; none = hỏi thông tin, quy định, số liệu, thời hạn, "
+        "liên hệ, con người (không cần ảnh). wants_file = muốn tải/xem văn bản, biểu mẫu, quy chế, "
+        "quy định, kế hoạch, lịch.\n\n"
+        f"Câu hỏi: {question}"
+    )
+    out = _text_call(get_settings().llm.model, prompt)
+    if not out.strip():
+        return None
+    parsed = parse_route_json(out)
+    if parsed:
+        return parsed
+    return {"rewritten": out.strip()[:500], "media": None, "wants_file": False}
 
 
 def rewrite_query(question: str) -> str:
@@ -216,9 +278,11 @@ def rewrite_query(question: str) -> str:
     return out[:500]
 
 
-def stream_answer(question: str, context: str, max_tokens: int | None = None):
+def stream_answer(question: str, context: str, image_b64: str | None = None, max_tokens: int | None = None):
     """Yield answer chunks from cfg.llm given retrieved context. SSE-style text.
-    Yields nothing if no key/call fails (caller falls back to echo context)."""
+    Yields nothing if no key/call fails (caller falls back to echo context).
+    image_b64: ảnh người dùng gửi (D21) — chỉ đưa vào lượt gọi khi llm.answer_with_image bật; mặc định
+    LLM chỉ thấy chữ đã truy xuất."""
     cfg = get_settings().llm
     if not cfg.api_key:
         return
@@ -226,13 +290,18 @@ def stream_answer(question: str, context: str, max_tokens: int | None = None):
         "Bạn là trợ lý ảo của Trường CNTT & Truyền thông, Đại học Công nghiệp Hà Nội (HaUI). "
         "Trả lời câu hỏi của người dùng CHỈ dựa vào ngữ cảnh được cung cấp. "
         "Trả lời ngắn gọn bằng tiếng Việt. Nếu ngữ cảnh không đủ để trả lời, nói rõ điều đó. "
+        "Ngữ cảnh gồm các nguồn đánh số [1], [2]…; MỌI ý trả lời phải kết thúc bằng số nguồn dạng [n] "
+        "(nguồn là file thì kèm số trang có trong nhãn), chỉ dùng số nguồn có trong ngữ cảnh. "
         "Khi ngữ cảnh có nguồn ảnh/video, hãy nhắc người dùng xem mục Ảnh & Video.\n\n"
         f"Ngữ cảnh:\n{context[:6000]}\n\n"
         f"Câu hỏi: {question}"
     )
     body = {
         "model": cfg.model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": (
+            [{"type": "text", "text": prompt},
+             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{_prep(base64.b64decode(image_b64))}"}}]
+            if image_b64 and cfg.answer_with_image else prompt)}],
         "max_tokens": max_tokens or cfg.max_new_tokens,
         "temperature": 0.2,
         "stream": True,

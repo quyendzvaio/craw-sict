@@ -23,7 +23,9 @@ if [ "$ROLE" = "infra" ]; then
   echo "--- qdrant collections ---"
   curl -s localhost:6333/collections 2>&1 | head -c 500; echo
   echo "--- api health ---"
-  curl -s -m 5 localhost:8003/health 2>&1 | head -c 300; echo
+  curl -s -m 5 -o /dev/null -w "http=%{http_code} " localhost:8003/ 2>&1; echo
+  echo "--- nginx edge (8080) ---"
+  curl -s -m 5 localhost:8080/nginx-health 2>&1 | head -c 100; echo
 else
   echo "--- cron log tail ---"
   docker logs --tail 5 "$(docker ps -q --filter name=cron | head -1)" 2>&1 | tail -5

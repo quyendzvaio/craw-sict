@@ -1,0 +1,31 @@
+# Compute nặng trên máy GPU thuê theo giờ (D16): snapshot → artifact. Chạy 1 lần rồi tắt máy.
+#   docker build -f Dockerfile.worker --build-arg VARIANT=gpu -t sict-worker:gpu .
+#   HOST_UID=$(id -u) HOST_GID=$(id -g) SNAPSHOT=_snapshot/2026-10-12 \
+#     docker compose -f docker-compose.gpu.yml run --rm compute
+# Yêu cầu host: driver NVIDIA (≥ 525 cho cu126) + nvidia-container-toolkit.
+# Không có GPU vẫn chạy được (embedding.device: auto → CPU), chỉ chậm hơn.
+services:
+  compute:
+    image: sict-worker:gpu
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      SICT_CONFIG: /app/config.yaml
+      EMBED_DEVICE: ${EMBED_DEVICE:-auto}
+      HF_HOME: /work/.hf-cache
+      YT_COOKIES: /cookies/cookies.txt
+      HOME: /work
+    working_dir: /app
+    volumes:
+      - ./sict_crawler:/app/sict_crawler:ro # code mới nhất từ repo, khỏi build lại image 13.8 GB
+      - ./config.yaml:/app/config.yaml:ro
+      - ./_snapshot:/app/_snapshot          # snapshot vào, artifact ra (cùng thư mục)
+      - ./.hf-cache:/work/.hf-cache         # cache model, khỏi tải lại khi chạy lại
+      - ./cookies:/cookies:ro               # keyframe/phụ đề YouTube (IP cloud hay bị chặn)
+    command: ["python", "-m", "sict_crawler.compute", "--snapshot", "${SNAPSHOT:-_snapshot/2026-10-12}"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -1,0 +1,9 @@
+{
+  "model": "bge-m3",
+  "max_length": 512,
+  "threads": 4,
+  "load_s": 363.8,
+  "queries_s": 2.6,
+  "chunks_s": 844.3,
+  "max_rss_mb": 4151
+}

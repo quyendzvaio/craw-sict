@@ -58,7 +58,7 @@ def test_run_first_try_sufficient(monkeypatch):
                         lambda *a, **k: {"sufficient": True, "reason": "ok"})
     res = _agent.run("học phí?", 5)
     assert res["attempts"] == 1 and res["sufficient"] is True
-    assert len(res["text"]) == 1 and "[text] t" in res["context"]
+    assert len(res["text"]) == 1 and "[1] (text) t" in res["context"]
 
 
 def test_run_retries_then_sufficient(monkeypatch):
@@ -78,7 +78,11 @@ def test_run_retries_then_sufficient(monkeypatch):
 def test_run_exhausted_marks_insufficient(monkeypatch):
     from sict_crawler import api as _api
 
+    from sict_crawler import vector_store
+
     monkeypatch.setattr(_api, "retrieve", lambda *a, **k: ([], []))
+    # lexical fallback không chạm Qdrant thật (BM25 khớp cả từ phổ biến "không", "tại")
+    monkeypatch.setattr(vector_store, "keyword_search", lambda *a, **k: [])
     monkeypatch.setattr(_agent, "judge_context",
                         lambda *a, **k: {"sufficient": False, "reason": "rỗng"})
     res = _agent.run("xyzabc không tồn tại?", 5)
