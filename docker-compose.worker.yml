@@ -6,7 +6,7 @@
 #   + .env theo .env.worker.example (POSTGRES_DSN/REDIS_URL/QDRANT_HOST = IP VM1).
 services:
   svc-ocr:
-    image: sict-worker:latest
+    image: ${WORKER_IMAGE:-sict-worker:latest}   # CD đặt ghcr.io/…/sict-worker:<sha> (D10)
     build:
       context: .
       dockerfile: Dockerfile.worker
@@ -33,7 +33,7 @@ services:
 
   # Cron incremental 6h/lần — đường chạy worker DUY NHẤT trên VM2.
   cron:
-    image: sict-worker:latest
+    image: ${WORKER_IMAGE:-sict-worker:latest}   # CD đặt ghcr.io/…/sict-worker:<sha> (D10)
     build:
       context: .
       dockerfile: Dockerfile.worker
@@ -66,7 +66,7 @@ services:
 
   # Sidecar Obscura CDP cho trang JS nặng. Chỉ chạy trên VM2.
   obscura:
-    image: h4ckf0r0day/obscura:latest
+    image: h4ckf0r0day/obscura:0.2.4
     command: ["serve", "--port", "9222"]
     ports: ["127.0.0.1:9222:9222"]
     restart: unless-stopped

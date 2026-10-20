@@ -12,15 +12,15 @@
 services:
   embed:
     build: {context: ., dockerfile: Dockerfile.embed}
-    image: sict-embed:latest
+    image: ${EMBED_IMAGE:-sict-embed:latest}   # CD đặt ghcr.io/…/sict-embed:<sha> (D10)
     environment:
       EMBED_THREADS: ${EMBED_THREADS:-2}
       EMBED_TEXT_MAX_LEN: ${EMBED_TEXT_MAX_LEN:-2048}
       EMBED_TOKEN_BUDGET: ${EMBED_TOKEN_BUDGET:-2048}
       EMBED_CONCURRENCY: ${EMBED_CONCURRENCY:-1}
       EMBED_IMAGE_BATCH: ${EMBED_IMAGE_BATCH:-4}
-      EMBED_ONNX_FILE: ${EMBED_ONNX_FILE:-onnx/model_int8.onnx}
-    ports: ["${EMBED_PORT:-8090}:8090"]
+    # D12: không mở ra internet — VM2 đặt EMBED_BIND=<IP private VM2> trong .env để API ở VM1 gọi được (SG chỉ cho VM1)
+    ports: ["${EMBED_BIND:-127.0.0.1}:${EMBED_PORT:-8090}:8090"]
     volumes: [embedhf:/hf]
     restart: unless-stopped
     mem_limit: ${EMBED_MEM_LIMIT:-6000m}

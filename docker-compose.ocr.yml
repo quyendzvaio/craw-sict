@@ -7,14 +7,14 @@ services:
   # dùng trực tiếp binary, service này chỉ cần khi dùng fetch_cdp / login session.
   # Image ~57MB (distroless), RAM ~30MB — thay Chromium ~200MB+ RAM.
   obscura:
-    image: h4ckf0r0day/obscura:latest
+    image: h4ckf0r0day/obscura:0.2.4
     command: ["serve", "--port", "9222"]
     ports: ["127.0.0.1:9222:9222"]
     restart: unless-stopped
     profiles: ["obscura-cdp"]  # bật khi cần: --profile obscura-cdp
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-02-18T16-25-55Z   # 2026-10-21: Docker Hub không còn phát công khai minio/minio (kể cả latest) — chỉ dùng được nơi đã có sẵn image
     command: server /data --console-address ":9001"
     ports: ["9000:9000", "9001:9001"]
     environment:
@@ -33,7 +33,7 @@ services:
     profiles: ["minio"]
 
   svc-ocr:
-    image: sict-worker:latest
+    image: ${WORKER_IMAGE:-sict-worker:latest}
     build:
       context: .
       dockerfile: Dockerfile.worker
@@ -60,7 +60,7 @@ services:
   # Prod chạy service `cron` của docker-compose.worker.yml (VM2) — bật cả 2 sẽ double-crawl.
   cron:
     profiles: ["dev-cron"]
-    image: sict-worker:latest
+    image: ${WORKER_IMAGE:-sict-worker:latest}
     build:
       context: .
       dockerfile: Dockerfile.worker

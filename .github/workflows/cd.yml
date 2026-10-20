@@ -1,8 +1,12 @@
 name: CD
-# Deploy thủ công sau khi điền keys (.env trên VM1):
-#   Actions → CD → Run workflow → chọn vm1 / vm2 / all
-# Secrets cần (repo Settings → Secrets → Actions):
-#   VM1_HOST, VM1_KEY (nội dung <khoá>.pem), VM2_HOST, VM2_KEY (~/key/vLLM_v2.pem)
+# Deploy thủ công (D10): VM KHÔNG build — chỉ pull image GHCR đã build ở workflow release-images, theo commit SHA.
+#   Actions → CD → Run workflow (nhánh main) → target, tag (trống = commit hiện tại của main), embed / alloy tuỳ chọn.
+#   Rollback = chạy lại với tag cũ (VM ghi tag trước vào .env: API_IMAGE_PREV / WORKER_IMAGE_PREV / EMBED_IMAGE_PREV).
+# Chỉ chạy từ main; job deploy dùng environment `production` (thêm Required reviewers trong Settings → Environments
+# để phải duyệt trước khi chạy).
+# Secrets: VM1_HOST, VM1_KEY, VM2_HOST, VM2_KEY (đã có); alloy thêm GCLOUD_HOSTED_METRICS_URL, GCLOUD_HOSTED_METRICS_ID,
+#   GCLOUD_SCRAPE_INTERVAL, GCLOUD_HOSTED_LOGS_URL, GCLOUD_HOSTED_LOGS_ID, GCLOUD_RW_API_KEY.
+# Trên VM: IP/mật khẩu nội bộ nằm trong ~/craw-sict/.env của VM (xem .env.worker.example), KHÔNG ghi cứng ở đây.
 on:
   workflow_dispatch:
     inputs:
@@ -11,106 +15,243 @@ on:
         type: choice
         options: [all, vm1, vm2]
         default: all
+      tag:
+        description: "Image tag = commit SHA trên main (trống = commit đang chạy workflow)"
+        type: string
+        default: ""
+      deploy_embed:
+        description: "VM2: dịch vụ embedding ONNX int8 (docker-compose.embed.yml)"
+        type: boolean
+        default: false
+      deploy_alloy:
+        description: "Cấu hình Grafana Alloy (đã cài trên VM) → Grafana Cloud"
+        type: boolean
+        default: false
+
+concurrency:
+  group: cd-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.t.outputs.tag }}
+    steps:
+      - name: Chỉ deploy từ main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "CD chỉ chạy từ main (đang ở ${{ github.ref }})"; exit 1
+      - id: t
+        env:
+          IN_TAG: ${{ inputs.tag }}
+        run: |
+          tag="${IN_TAG:-${{ github.sha }}}"
+          [[ "$tag" =~ ^[0-9a-f]{40}$ ]] || { echo "tag phải là SHA đầy đủ 40 ký tự"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image của tag phải tồn tại (release-images đã chạy xong)
+        run: |
+          for img in api worker embed; do
+            docker manifest inspect "ghcr.io/${{ github.repository_owner }}/sict-$img:${{ steps.t.outputs.tag }}" >/dev/null \
+              || { echo "thiếu ghcr.io/…/sict-$img:${{ steps.t.outputs.tag }} — chờ workflow release-images"; exit 1; }
+          done
+
   deploy-vm1:
+    needs: prepare
     if: inputs.target == 'all' || inputs.target == 'vm1'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
     steps:
       - uses: actions/checkout@v4
-      - name: Pack code
-        # _snapshot (2,3 GB) / _cutover / .hf-cache không lên VM qua CD — artifact nạp bằng
-        # scripts/cutover_v2.sh; .pgdata* gồm cả bản backup hỏng (không đọc được → tar lỗi)
-        run: tar czf /tmp/sict-deploy.tgz --exclude=.venv --exclude='.pgdata*'
-          --exclude=__pycache__ --exclude=.ruff_cache --exclude=_local_store
-          --exclude=_snapshot --exclude=_cutover --exclude=.hf-cache
-          --exclude=.git --exclude='*.log' --exclude='*.pt' --exclude='.lock*' .
-      - name: Upload tarball
+      - name: Chép file cấu hình (không chép code — code nằm trong image)
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.VM1_HOST }}
           username: ubuntu
           key: ${{ secrets.VM1_KEY }}
-          source: /tmp/sict-deploy.tgz
-          target: ~/
-      - name: Build + restart API
+          source: docker-compose.yml,config.yaml,nginx/nginx.conf,scripts/monitor_2vm.sh
+          target: ~/craw-sict
+      - name: Pull + up (infra, api, nginx)
         uses: appleboy/ssh-action@v1
+        env:
+          API_IMAGE: ghcr.io/${{ github.repository_owner }}/sict-api:${{ needs.prepare.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
         with:
           host: ${{ secrets.VM1_HOST }}
           username: ubuntu
           key: ${{ secrets.VM1_KEY }}
+          envs: API_IMAGE,GH_TOKEN,GH_ACTOR
+          command_timeout: 25m
           script: |
             set -euo pipefail
-            mv ~/tmp/sict-deploy.tgz ~/sict-deploy.tgz
-            cd ~/craw-sict && tar xzf ~/sict-deploy.tgz
-            docker compose up -d postgres redis qdrant
-            docker compose build api
-            docker compose up -d api
+            cd ~/craw-sict
+            touch .env
+            upsert() { if grep -q "^$1=" .env; then sed -i "s#^$1=.*#$1=$2#" .env; else echo "$1=$2" >> .env; fi; }
+            prev="$(grep '^API_IMAGE=' .env | cut -d= -f2- || true)"
+            [ -n "$prev" ] && [ "$prev" != "$API_IMAGE" ] && upsert API_IMAGE_PREV "$prev"
+            upsert API_IMAGE "$API_IMAGE"
+            echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+            docker compose pull api
+            docker logout ghcr.io
+            docker compose up -d postgres redis qdrant api nginx
             docker exec -u 0 craw-sict-api-1 chown -R 10000:10000 /cache/hf || true
-            docker compose restart api
-            sleep 25
-            docker exec craw-sict-api-1 python -c "import sict_crawler.agent"
+            # cold start nạp model ~100 s → thử tới 5 phút
+            for i in $(seq 1 30); do curl -sf -m 10 http://localhost:8003/app.js -o /dev/null && break; sleep 10; done
             curl -sf -m 10 http://localhost:8003/app.js -o /dev/null
-            # cold start: E5 (199) + CLIP (398) weights load lần đầu ~100s → timeout 300 + retry
-            for i in 1 2; do
-              curl -sf -m 300 -X POST http://localhost:8003/query \
-                -H 'Content-Type: application/json' \
-                -d '{"question":"test","top_k":1}' -o /dev/null && break
-              sleep 10
-            done
+            curl -sf -m 10 http://localhost:8080/nginx-health -o /dev/null || echo "cảnh báo: nginx-health không trả lời"
+            docker compose ps --format 'table {{.Name}}\t{{.Image}}\t{{.Status}}'
 
   deploy-vm2:
+    needs: prepare
     if: inputs.target == 'all' || inputs.target == 'vm2'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
     steps:
       - uses: actions/checkout@v4
-      - name: Pack code
-        # _snapshot (2,3 GB) / _cutover / .hf-cache không lên VM qua CD — artifact nạp bằng
-        # scripts/cutover_v2.sh; .pgdata* gồm cả bản backup hỏng (không đọc được → tar lỗi)
-        run: tar czf /tmp/sict-deploy.tgz --exclude=.venv --exclude='.pgdata*'
-          --exclude=__pycache__ --exclude=.ruff_cache --exclude=_local_store
-          --exclude=_snapshot --exclude=_cutover --exclude=.hf-cache
-          --exclude=.git --exclude='*.log' --exclude='*.pt' --exclude='.lock*' .
-      - name: Upload tarball
-        uses: appleboy/scp-action@v1
+      - uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.VM2_HOST }}
           username: ubuntu
           key: ${{ secrets.VM2_KEY }}
-          source: /tmp/sict-deploy.tgz
-          target: ~/
-      - name: Build worker + restart 24h loop
+          source: docker-compose.worker.yml,config.yaml,scripts/monitor_2vm.sh
+          target: ~/craw-sict
+      - name: Pull + up worker (compose `cron` là đường worker DUY NHẤT — D9)
         uses: appleboy/ssh-action@v1
+        env:
+          WORKER_IMAGE: ghcr.io/${{ github.repository_owner }}/sict-worker:${{ needs.prepare.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
         with:
           host: ${{ secrets.VM2_HOST }}
           username: ubuntu
           key: ${{ secrets.VM2_KEY }}
+          envs: WORKER_IMAGE,GH_TOKEN,GH_ACTOR
+          command_timeout: 25m
           script: |
             set -euo pipefail
-            mv ~/tmp/sict-deploy.tgz ~/sict-deploy.tgz
-            cd ~/craw-sict && tar xzf ~/sict-deploy.tgz
-            docker build -f Dockerfile.worker -t sict-worker .
-            docker build -f Dockerfile.crawl -t sict-crawl .
-            docker run --rm sict-worker python -c "import sict_crawler.agent"
-            docker builder prune -af || true
-            [ -f ~/craw-sict/loop24h.sh ] || cat > ~/craw-sict/loop24h.sh <<'EOF'
-            #!/bin/sh
-            while true; do
-              python -m sict_crawler.main --incremental --check-edits 500 --crawl-limit 1000 --annotate-ocr-n 2000
-              echo "pass-exit:$?"
-              sleep 300
-            done
-            EOF
-            docker rm -f sict-worker-24h || true
-            docker run -d --name sict-worker-24h --restart unless-stopped \
-              -e SICT_CONFIG=/app/config.yaml \
-              -e POSTGRES_DSN=postgresql+asyncpg://sict:sict@<IP-private-VM1>:5432/sict_crawler \
-              -e REDIS_URL=redis://<IP-private-VM1>:6379/0 \
-              -e QDRANT_HOST=<IP-private-VM1> -e QDRANT_TIMEOUT=120 \
-              -e AWS_PROFILE=quyen-admin -e HF_HOME=/cache/hf \
-              -e CRAWLER_BACKEND=auto -e OBSCURA_BIN=/usr/local/bin/obscura \
-              -v /home/ubuntu/.aws:/home/app/.aws:ro -v sict-hf:/cache/hf \
-              -v /home/ubuntu/craw-sict/loop24h.sh:/app/loop24h.sh:ro \
-              sict-worker /bin/sh /app/loop24h.sh
+            cd ~/craw-sict
+            [ -f .env ] || { echo "thiếu ~/craw-sict/.env trên VM2 (POSTGRES_DSN/REDIS_URL/QDRANT_HOST trỏ IP private VM1 — xem .env.worker.example)"; exit 1; }
+            grep -qE '^(POSTGRES_DSN|QDRANT_HOST)=' .env || { echo ".env VM2 chưa trỏ về VM1"; exit 1; }
+            upsert() { if grep -q "^$1=" .env; then sed -i "s#^$1=.*#$1=$2#" .env; else echo "$1=$2" >> .env; fi; }
+            prev="$(grep '^WORKER_IMAGE=' .env | cut -d= -f2- || true)"
+            [ -n "$prev" ] && [ "$prev" != "$WORKER_IMAGE" ] && upsert WORKER_IMAGE_PREV "$prev"
+            upsert WORKER_IMAGE "$WORKER_IMAGE"
+            # D9: bỏ vòng `docker run` cũ chạy song song với compose cron (2 incremental cùng lúc)
+            docker rm -f sict-worker-24h 2>/dev/null && echo "đã gỡ sict-worker-24h" || true
+            echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+            docker compose -f docker-compose.worker.yml pull cron
+            docker logout ghcr.io
+            docker compose -f docker-compose.worker.yml up -d obscura cron
+            docker run --rm "$WORKER_IMAGE" python -c "import sict_crawler.agent"
+            sleep 20
+            docker compose -f docker-compose.worker.yml ps --format 'table {{.Name}}\t{{.Image}}\t{{.Status}}'
+            docker compose -f docker-compose.worker.yml ps --status running cron | grep -q cron
+
+  deploy-embed:
+    needs: [prepare, deploy-vm2]
+    if: always() && needs.prepare.result == 'success' && inputs.deploy_embed && (inputs.target == 'all' || inputs.target == 'vm2')
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.VM2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.VM2_KEY }}
+          source: docker-compose.embed.yml
+          target: ~/craw-sict
+      - name: Pull + build model (lần đầu tải fp32 3,5 GB, ~5–15 phút) + up
+        uses: appleboy/ssh-action@v1
+        env:
+          EMBED_IMAGE: ghcr.io/${{ github.repository_owner }}/sict-embed:${{ needs.prepare.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        with:
+          host: ${{ secrets.VM2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.VM2_KEY }}
+          envs: EMBED_IMAGE,GH_TOKEN,GH_ACTOR
+          command_timeout: 70m
+          script: |
+            set -euo pipefail
+            cd ~/craw-sict && touch .env
+            upsert() { if grep -q "^$1=" .env; then sed -i "s#^$1=.*#$1=$2#" .env; else echo "$1=$2" >> .env; fi; }
+            prev="$(grep '^EMBED_IMAGE=' .env | cut -d= -f2- || true)"
+            [ -n "$prev" ] && [ "$prev" != "$EMBED_IMAGE" ] && upsert EMBED_IMAGE_PREV "$prev"
+            upsert EMBED_IMAGE "$EMBED_IMAGE"
+            echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+            docker compose -f docker-compose.embed.yml pull embed
+            docker logout ghcr.io
+            docker compose -f docker-compose.embed.yml run --rm embed python -m sict_crawler.embed_server build
+            docker compose -f docker-compose.embed.yml up -d embed
+            bind="$(grep '^EMBED_BIND=' .env | cut -d= -f2- || true)"; bind="${bind:-127.0.0.1}"
+            for i in $(seq 1 60); do curl -sf -m 5 "http://$bind:8090/healthz" | grep -q '"ok":true' && break; sleep 5; done
+            curl -sf -m 5 "http://$bind:8090/healthz"
+
+  deploy-alloy:
+    needs: [prepare, deploy-vm1, deploy-vm2]
+    if: always() && needs.prepare.result == 'success' && inputs.deploy_alloy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - {vm: vm1, host: VM1_HOST, key: VM1_KEY}
+          - {vm: vm2, host: VM2_HOST, key: VM2_KEY}
+    steps:
+      - uses: actions/checkout@v4
+        if: inputs.target == 'all' || inputs.target == matrix.vm
+      - name: Cấu hình Alloy (scripts/deploy_alloy_vm.sh → alloy_apply.sh trên VM)
+        if: inputs.target == 'all' || inputs.target == matrix.vm
+        env:
+          GCLOUD_HOSTED_METRICS_URL: ${{ secrets.GCLOUD_HOSTED_METRICS_URL }}
+          GCLOUD_HOSTED_METRICS_ID: ${{ secrets.GCLOUD_HOSTED_METRICS_ID }}
+          GCLOUD_SCRAPE_INTERVAL: ${{ secrets.GCLOUD_SCRAPE_INTERVAL }}
+          GCLOUD_HOSTED_LOGS_URL: ${{ secrets.GCLOUD_HOSTED_LOGS_URL }}
+          GCLOUD_HOSTED_LOGS_ID: ${{ secrets.GCLOUD_HOSTED_LOGS_ID }}
+          GCLOUD_RW_API_KEY: ${{ secrets.GCLOUD_RW_API_KEY }}
+          SSH_KEY: ${{ secrets[matrix.key] }}
+          HOST: ${{ secrets[matrix.host] }}
+        run: |
+          set -euo pipefail
+          umask 077
+          for k in GCLOUD_HOSTED_METRICS_URL GCLOUD_HOSTED_METRICS_ID GCLOUD_SCRAPE_INTERVAL GCLOUD_HOSTED_LOGS_URL GCLOUD_HOSTED_LOGS_ID GCLOUD_RW_API_KEY; do
+            [ -n "${!k}" ] || { echo "BLOCKER: thiếu secret $k"; exit 1; }
+            printf '%s=%s\n' "$k" "${!k}"
+          done > "$RUNNER_TEMP/alloy.env"
+          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/key.pem"
+          ENV_FILE="$RUNNER_TEMP/alloy.env" scripts/deploy_alloy_vm.sh --vm ${{ matrix.vm }} --host "$HOST" --key "$RUNNER_TEMP/key.pem"
+      - name: Xác nhận dữ liệu đã vào Grafana Cloud
+        if: inputs.target == 'all' || inputs.target == matrix.vm
+        env:
+          GCLOUD_HOSTED_METRICS_URL: ${{ secrets.GCLOUD_HOSTED_METRICS_URL }}
+          GCLOUD_HOSTED_METRICS_ID: ${{ secrets.GCLOUD_HOSTED_METRICS_ID }}
+          GCLOUD_HOSTED_LOGS_URL: ${{ secrets.GCLOUD_HOSTED_LOGS_URL }}
+          GCLOUD_HOSTED_LOGS_ID: ${{ secrets.GCLOUD_HOSTED_LOGS_ID }}
+          GCLOUD_RW_API_KEY: ${{ secrets.GCLOUD_RW_API_KEY }}
+        run: |
+          umask 077
+          env | grep -E '^GCLOUD_' > "$RUNNER_TEMP/alloy.env"
+          for i in $(seq 1 12); do
+            python3 scripts/verify_gcloud.py --env-file "$RUNNER_TEMP/alloy.env" --instance sict-${{ matrix.vm }} --window 5m && exit 0
             sleep 30
-            docker ps --format '{{.Names}}' | grep -q sict-worker-24h
+          done
+          exit 1
