@@ -1,0 +1,63 @@
+// VM1 (infra + serve): Postgres, Redis, Qdrant — chỉ thêm vào cấu hình của role vm1 (scripts/render_alloy.py).
+// DSN Postgres có mật khẩu → đọc qua sys.env("POSTGRES_EXPORTER_DSN") cùng file bí mật với token.
+
+prometheus.exporter.postgres "pg" {
+  data_source_names = [sys.env("POSTGRES_EXPORTER_DSN")]
+}
+
+prometheus.exporter.redis "redis" {
+  redis_addr = "${REDIS_ADDR}"
+}
+
+discovery.relabel "pg" {
+  targets = prometheus.exporter.postgres.pg.targets
+
+  rule {
+    target_label = "instance"
+    replacement  = "${INSTANCE}"
+  }
+
+  rule {
+    target_label = "job"
+    replacement  = "sict/postgres"
+  }
+}
+
+discovery.relabel "redis" {
+  targets = prometheus.exporter.redis.redis.targets
+
+  rule {
+    target_label = "instance"
+    replacement  = "${INSTANCE}"
+  }
+
+  rule {
+    target_label = "job"
+    replacement  = "sict/redis"
+  }
+}
+
+prometheus.scrape "services" {
+  targets = array.concat(
+    discovery.relabel.pg.output,
+    discovery.relabel.redis.output,
+    [{
+      __address__ = "${QDRANT_ADDR}",
+      instance    = "${INSTANCE}",
+      job         = "sict/qdrant",
+    }],
+  )
+  scrape_interval = "${GCLOUD_SCRAPE_INTERVAL}"
+  forward_to      = [prometheus.relabel.services.receiver]
+}
+
+// chỉ giữ metric dùng cho dashboard (pg_stat theo từng bảng / redis theo lệnh sinh hàng nghìn chuỗi)
+prometheus.relabel "services" {
+  forward_to = [prometheus.remote_write.gcloud.receiver]
+
+  rule {
+    source_labels = ["__name__"]
+    regex         = "up|pg_up|pg_database_size_bytes|pg_stat_database_(numbackends|xact_commit|xact_rollback|blks_read|blks_hit|deadlocks|tup_returned|tup_fetched|tup_inserted|tup_updated|tup_deleted)|pg_stat_activity_count|pg_settings_max_connections|pg_postmaster_start_time_seconds|redis_up|redis_uptime_in_seconds|redis_connected_clients|redis_blocked_clients|redis_memory_used_bytes|redis_memory_max_bytes|redis_db_keys|redis_db_keys_expiring|redis_evicted_keys_total|redis_expired_keys_total|redis_keyspace_hits_total|redis_keyspace_misses_total|redis_commands_processed_total|redis_rejected_connections_total|app_info|collections_total|collections_vector_total|rest_responses_total|rest_responses_fail_total|rest_responses_avg_duration_seconds|grpc_responses_total|grpc_responses_fail_total|grpc_responses_avg_duration_seconds|memory_resident_bytes|memory_allocated_bytes"
+    action        = "keep"
+  }
+}

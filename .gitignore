@@ -37,3 +37,6 @@ _cutover/
 # artifact eval sinh lại được (scripts/eval_compare.py)
 eval/results/compare/*.npy
 eval/results/compare/corpus.jsonl
+
+# cấu hình Alloy đã render (có URL/ID Grafana Cloud) — sinh bằng scripts/render_alloy.py
+monitor/rendered/

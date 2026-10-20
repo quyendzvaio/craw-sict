@@ -1,0 +1,57 @@
+# Giả lập 2 VM trên 1 máy (localhost) để thử đường Alloy → Grafana Cloud trước khi lên VM thật (D13).
+# Dùng qua scripts/monitor_sim.sh (render config + tạo file bí mật + up + kiểm chứng), không gọi trực tiếp.
+#
+# Mỗi "VM" = 1 Alloy với nhãn instance riêng (sict-vm1-sim / sict-vm2-sim) và cấu hình đúng role:
+#   vm1-sim: OS + Postgres/Redis/Qdrant local + log container craw-sict-*;  vm2-sim: OS + log container worker/embed.
+# Giới hạn: cả 2 đọc CÙNG /proc, journal, /var/log của máy dev → metric OS giống nhau (RAM/CPU của máy dev, không
+# phải 4 GB / 8 GB), log hệ thống gửi 2 lần với 2 instance. Chỉ để kiểm đường ống + dashboard, không đo tải VM.
+#
+# Bảo mật: network_mode host để thấy Postgres/Redis/Qdrant ở localhost; UI Alloy chỉ nghe 127.0.0.1;
+# token + DSN Postgres nằm trong $ALLOY_SECRETS (chmod 600, ngoài repo), Alloy đọc bằng sys.env.
+x-alloy: &alloy
+  image: grafana/alloy:v1.20.1
+  network_mode: host
+  env_file: ["${ALLOY_SECRETS:?đặt ALLOY_SECRETS (scripts/monitor_sim.sh)}"]
+  restart: unless-stopped
+  mem_limit: 300m
+  cpus: 0.5
+  logging: {driver: json-file, options: {max-size: 10m, max-file: "2"}}
+
+services:
+  alloy-vm1:
+    <<: *alloy
+    container_name: sict-alloy-vm1-sim
+    command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy/data,
+              --server.http.listen-addr=127.0.0.1:12345, --stability.level=generally-available]
+    volumes:
+      - ./rendered/vm1-sim/config.alloy:/etc/alloy/config.alloy:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave
+      - /var/log:/var/log:ro
+      - /run/log/journal:/run/log/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro
+      - /run/udev:/run/udev:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-vm1-data:/var/lib/alloy/data
+
+  alloy-vm2:
+    <<: *alloy
+    container_name: sict-alloy-vm2-sim
+    command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy/data,
+              --server.http.listen-addr=127.0.0.1:12346, --stability.level=generally-available]
+    volumes:
+      - ./rendered/vm2-sim/config.alloy:/etc/alloy/config.alloy:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave
+      - /var/log:/var/log:ro
+      - /run/log/journal:/run/log/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro
+      - /run/udev:/run/udev:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-vm2-data:/var/lib/alloy/data
+
+volumes:
+  alloy-vm1-data:
+  alloy-vm2-data:

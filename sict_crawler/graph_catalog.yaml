@@ -6,7 +6,7 @@
 # ("Chung kết Cuộc thi Thử thách Lập nghiệp lần thứ VII" → Thử thách Lập nghiệp). Năm bị bỏ khỏi khoá nên chuỗi
 # sự kiện hằng năm là 1 thực thể. `block`: khoá luật hay trích nhầm (khẩu hiệu, danh hiệu…) — không thành thực thể.
 #
-# Bản đầu do assistant soạn từ tần suất trong corpus (2026-10-18) — CHỦ DỰ ÁN DUYỆT / BỔ SUNG.
+# Bản đầu do assistant soạn từ tần suất trong corpus (2026-10-18); chủ dự án đã duyệt 2026-10-21. Sửa / bổ sung = sửa file này.
 
 org:
   - key: clb hit
