@@ -1,0 +1,10 @@
+{
+  "model": "jina",
+  "max_length": 512,
+  "threads": 4,
+  "load_s": 13.1,
+  "queries_s": 56.6,
+  "chunks_s": 4044.7,
+  "images_s": 695.4,
+  "max_rss_mb": 3921
+}

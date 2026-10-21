@@ -6,13 +6,13 @@ Usage:
   python -m sict_crawler.main --annotate-ocr 100
 
 Callers: CLI.
-Schemas: orchestrates frontier/crawler/parser/chunker/embedder/db/vector_store/storage/video.
+Schemas: orchestrates frontier/crawler → indexer (index spec v2). --rechunk/--videos-backfill
+chỉ cho index v1 (từ chối khi collection là v2).
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import os
 
 import httpx
@@ -23,10 +23,6 @@ from .chunker import chunk_text
 from .config import get_settings
 from .frontier import Frontier
 from .models import Chunk, Document, MediaAsset
-
-
-def _content_hash(html: str) -> str:
-    return hashlib.sha256(html.encode()).hexdigest()
 
 
 def _notify(event: str, data: dict) -> None:
@@ -41,158 +37,25 @@ def _notify(event: str, data: dict) -> None:
 
 
 async def _process_page(session, st: storage.Storage, url: str, depth: int,
-                        frontier: Frontier | None, html: str) -> None:
-    cfg = get_settings()
-    parsed = parser.parse_html(url, html)
-
-    # skip unchanged content
-    chash = _content_hash(html)
-    existing = await session.scalar(select(Document).where(Document.url == url))
-    if existing and existing.content_hash == chash:
-        return
-
-    if existing:  # content changed → drop stale chunks/media/vectors first
-        vector_store.delete_by_document(existing.id)
-        await session.execute(delete(Chunk).where(Chunk.document_id == existing.id))
-        await session.execute(delete(MediaAsset).where(MediaAsset.document_id == existing.id))
-        await session.flush()
-        print(f"[changed] {url}")
-
-    raw_key = st.put_raw_html(url, html.encode())
-
-    doc = existing or Document(url=url)
-    doc.title = parsed.title[:512]
-    doc.raw_s3_key = raw_key
-    doc.content_hash = chash
-    doc.meta = {"tables": len(parsed.tables), "chunking": "sem"}
-    session.add(doc)
-    await session.flush()
-
-    # tables → markdown, append to text corpus
-    table_md = "\n\n".join(
-        "| " + " | ".join(row) + " |" for t in parsed.tables for row in t)
-    full_text = parsed.markdown + ("\n\n" + table_md if table_md else "")
-
-    # chunks → embed → qdrant
-    chunks = chunk_text(full_text, parsed.title,
-                        cfg.chunking.min_tokens, cfg.chunking.max_tokens,
-                        cfg.chunking.overlap_ratio, cfg.chunking.semantic)
-    if chunks:
-        vectors = embedder.embed_texts([c.text for c in chunks])
-        rows = [{"vector": v, "document_id": doc.id, "chunk_id": i,
-                 "url": url, "title": parsed.title, "heading": c.heading,
-                 "content": c.text} for i, (c, v) in enumerate(zip(chunks, vectors))]
-        ids = vector_store.upsert_text_chunks(rows)
-        for c, pid in zip(chunks, ids):
-            session.add(Chunk(document_id=doc.id, content=c.text, heading=c.heading,
-                              chunk_index=c.index, token_count=len(c.text) // 4,
-                              vector_id=pid))
-
-    # images → S3-only (không lưu base64 vào PG) + base64 giữ trong RAM để embed
-    # alt text HTML thành caption gốc để ảnh luôn đính kèm chú thích
-    new_imgs: list[MediaAsset] = []
-    new_bin: list[bytes] = []
-    for img_url, alt in zip(parsed.image_urls[:20], parsed.image_alts[:20]):
-        try:
-            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as hc:
-                r = await hc.get(img_url)
-                if r.status_code != 200 or len(r.content) < 1000:
-                    continue
-                ext = img_url.rsplit(".", 1)[-1].lower()[:4] or "jpg"
-                key, _b64 = st.put_media(r.content, ext)
-                a = MediaAsset(document_id=doc.id, kind="image", s3_key=key,
-                               base64_data="", source_url=img_url,
-                               caption=alt if len(alt) >= 3 else "")
-                session.add(a)
-                new_imgs.append(a)
-                new_bin.append(r.content)
-        except Exception:
-            continue
-    await session.flush()
-    new_media: list[MediaAsset] = new_imgs
-    if new_media:
-        vecs, ok_idx = embedder.embed_image_bytes(new_bin)
-        rows = [{"vector": v, "media_id": new_media[j].id, "document_id": doc.id,
-                 "url": new_media[j].source_url, "kind": "image",
-                 "s3_key": new_media[j].s3_key,
-                 "caption": new_media[j].caption or ""}
-                for j, v in zip(ok_idx, vecs)]
-        if rows:
-            ids = vector_store.upsert_images(rows)
-            for j, pid in zip(ok_idx, ids):
-                new_media[j].vector_id = pid
-
-    # videos → keyframes (deduped, timestamped) → same image path, kind=video_frame
-    for vid_url in parsed.video_urls[:5]:
-        try:
-            frames = video.extract_keyframes(vid_url)  # [(bytes, pts_sec)]
-            if not frames:
-                continue
-            vecs, ok_idx = embedder.embed_image_bytes([f for f, _ in frames])
-            frames = [frames[i] for i in ok_idx]
-            kept = video.dedup_indices(vecs, cfg.video.dedup_threshold)
-            assets: list[MediaAsset] = []
-            for i in kept:
-                key, _b64 = st.put_media(frames[i][0], "png")
-                a = MediaAsset(document_id=doc.id, kind="video_frame", s3_key=key,
-                               base64_data="", source_url=vid_url,
-                               timestamp=frames[i][1])
-                session.add(a)
-                assets.append(a)
-            await session.flush()
-            rows = [{"vector": vecs[i], "media_id": a.id, "document_id": doc.id,
-                     "url": vid_url, "kind": "video_frame", "s3_key": a.s3_key,
-                     "timestamp": a.timestamp, "caption": ""}
-                    for i, a in zip(kept, assets)]
-            if rows:
-                ids = vector_store.upsert_images(rows)
-                for a, pid in zip(assets, ids):
-                    a.vector_id = pid
-            new_media.extend(assets)
-        except Exception as e:
-            print(f"[video] skip {vid_url}: {e}")
-            continue
-
-    # caption OCR-only (title + OCR text, không face/VLM) — best effort
-    # bytes đọc từ S3 (S3-only, base64 PG luôn "")
-    caption_rows: list[dict] = []
-    try:
-        if new_media:
-            from . import annotate_ocr as _annotate_ocr
-            items = [(a, (storage.from_base64(a.base64_data) if a.base64_data
-                          else st.get_media(a.s3_key))) for a in new_media]
-            caption_rows = await _annotate_ocr.annotate_ocr_batch(
-                session, st, items,
-                doc_title=parsed.title, doc_text=full_text[:1000])
-    except Exception as e:
-        print(f"annotate skipped: {e}")
-
-    await session.commit()
-    # sync caption PG → payload sict_image để /query media leg hiện chú thích
-    try:
-        pairs = [(a.vector_id, a.caption) for a in new_media
-                 if a.vector_id and a.caption]
-        if pairs:
-            vector_store.set_image_captions(pairs)
-    except Exception as e:
-        print(f"caption payload sync skipped: {e}")
-    if existing:
+                        frontier: Frontier | None, html: str) -> str:
+    """1 trang → index spec v2 (indexer.index_page: cùng quy tắc + id với bulk compute/loader).
+    Idempotent: markdown sạch không đổi → bỏ qua; đổi → gỡ dữ liệu cũ của bài rồi ghi lại.
+    Trả trạng thái (new | changed | unchanged | duplicate | listing | error_page | ...)."""
+    from . import indexer
+    status = await indexer.index_page(session, st, url, html, depth, frontier)
+    if status == "changed":
         _notify("crawl.edit", {"url": url})
+    return status
 
-    # caption points → sict_text (E5) so "thầy A" text queries hit media
-    if caption_rows:
-        try:
-            vectors = embedder.embed_texts([r["title"] + ". " + r["caption"]
-                                            for r in caption_rows])
-            vector_store.upsert_media_captions(
-                [{**r, "vector": v} for r, v in zip(caption_rows, vectors)])
-        except Exception as e:
-            print(f"caption upsert skipped: {e}")
 
-    # discover child links
-    if frontier is not None:
-        for link in parsed.links:
-            frontier.push(link, depth + 1)
+def _legacy_v1_only(cmd: str) -> bool:
+    """Lệnh bảo trì index v1 (chunk/media_assets cũ). Collection đang trỏ là v2 → từ chối để không
+    ghi payload v1 vào collection v2. Re-index v2 = snapshot → compute → loader."""
+    if vector_store.has_sparse():
+        print(f"[{cmd}] bỏ qua: lệnh chỉ dành cho index v1, collection hiện tại là schema v2 "
+              "(dùng snapshot → compute → loader)")
+        return True
+    return False
 
 
 async def run_refresh() -> int:
@@ -241,15 +104,15 @@ async def run(crawl_limit: int | None = None) -> None:
             try:
                 html, status = await crawler.fetch(url)
                 if status == 200 and html:
-                    await _process_page(session, st, url, depth, frontier, html)
+                    res = await _process_page(session, st, url, depth, frontier, html)
                     processed += 1
-                    print(f"[{processed}/{limit}] depth={depth} {url}")
+                    print(f"[{processed}/{limit}] {res} depth={depth} {url}")
                 elif status in (404, 410):
                     existing = await session.scalar(
                         select(Document).where(Document.url == url))
                     if existing:
-                        vector_store.delete_by_document(existing.id)
-                        await session.delete(existing)  # chunks/media cascade theo FK
+                        from . import indexer
+                        await indexer.remove_document(session, existing)
                         await session.commit()
                         _notify("crawl.delete", {"url": url})
                         print(f"[deleted] {url}")
@@ -265,6 +128,8 @@ async def run_rechunk(limit: int) -> None:
     Session mới mỗi chunk: 1 session cho 2.8K docs → identity map giữ hết
     Document+Chunk objects (chunk.content ~5KB mỗi cái) → OOM.
     """
+    if _legacy_v1_only("rechunk"):
+        return
     cfg = get_settings()
     st = storage.Storage()
     vector_store.ensure_collections()
@@ -324,6 +189,8 @@ async def run_video_backfill(limit: int) -> None:
     """Re-fetch documents, extract video keyframes missed by earlier runs
     (embed URLs failed silently before yt-dlp support). Idempotent: docs that
     already have video_frame assets are skipped."""
+    if _legacy_v1_only("videos-backfill"):
+        return
     cfg = get_settings()
     st = storage.Storage()
     vector_store.ensure_collections()
@@ -365,11 +232,26 @@ async def run_video_backfill(limit: int) -> None:
                         frames = [frames[j] for j in ok_idx]
                         kept = video.dedup_indices(vecs, cfg.video.dedup_threshold)
                         assets = []
+                        # subtitle-only: có thì gắn sẵn vào caption, OCR pass sau sẽ append thêm
+                        # title video luôn gắn (| vid:) dù không có sub
+                        try:
+                            info = await asyncio.to_thread(
+                                video.fetch_video_info, vid_url)
+                        except Exception:
+                            info = {}
+                        subs = (info.get("subs") or "") if info else ""
+                        vtitle = (info.get("title") or "") if info else ""
+                        extra = " ".join(p for p in (
+                            ("| vid: " + vtitle) if vtitle else "",
+                            ("| sub: " + subs) if subs else "") if p)
+                        sub_cap = (f"{doc.title}. {extra}"[:900]
+                                   if extra and doc.title else extra[:900])
                         for j in kept:
                             key, _b64 = st.put_media(frames[j][0], "png")
                             a = MediaAsset(document_id=doc.id, kind="video_frame",
                                            s3_key=key, base64_data="",
-                                           source_url=vid_url, timestamp=frames[j][1])
+                                           source_url=vid_url, timestamp=frames[j][1],
+                                           caption=sub_cap)
                             session.add(a)
                             assets.append(a)
                         await session.flush()

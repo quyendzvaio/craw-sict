@@ -3,7 +3,7 @@
 Replaces face.annotate_pending for the text+OCR pipeline:
   caption = "{doc_title}. {ocr_text}" (or doc_title alone when OCR empty)
 
-Callers: main.py --annotate-ocr, svc-ocr container, cron/incremental.sh.
+Callers: main.py --annotate-ocr / --incremental, container svc-ocr + cron (compose).
 Schemas: same caption rows as before for Qdrant sict_text (E5):
   {media_id, document_id, url, kind='media_caption', media_kind, title, caption, timestamp}
 
@@ -54,7 +54,9 @@ async def annotate_ocr_batch(session, st, items: list, doc_title: str,
     video_groups: dict[str, list] = {}
     singles: list = []
     for a, b in items:
-        if a.caption:  # already captioned → skip
+        # subtitle-only / title-only van can OCR them (AC-D)
+        if a.caption and "sub:" not in a.caption \
+                and "| vid:" not in a.caption:
             continue
         if a.kind == "video_frame" and a.source_url:
             video_groups.setdefault(a.source_url, []).append((a, b))
@@ -66,7 +68,13 @@ async def annotate_ocr_batch(session, st, items: list, doc_title: str,
             txt = _ocr.ocr_text(b)
         except Exception:
             txt = ""
-        cap = build_caption(doc_title, txt)
+        if "sub:" in (a.caption or "") or "| vid:" in (a.caption or ""):
+            txt = txt.strip()
+            if len(txt) >= 10 and txt not in (a.caption or ""):
+                a.caption = f"{a.caption} | ocr: {txt}"[:900]
+            cap = a.caption
+        else:
+            cap = build_caption(doc_title, txt)
         if cap and not a.caption:
             a.caption = cap
         if cap:
@@ -85,9 +93,19 @@ async def annotate_ocr_batch(session, st, items: list, doc_title: str,
             txt = txt.strip()
             if len(txt) >= 10 and txt not in parts:
                 parts.append(txt)
-        shared = build_caption(doc_title, " | ".join(parts)[:400])
+        ocr_part = " | ".join(parts)[:400]
+        base_sub = (group[0][0].caption or "") if group else ""
+        if "sub:" in base_sub or "| vid:" in base_sub:
+            shared = base_sub
+            if ocr_part and ocr_part not in base_sub:
+                shared = f"{base_sub} | ocr: {ocr_part}"[:900]
+        else:
+            shared = build_caption(doc_title, ocr_part)
         for a, _ in group:
-            if shared and not a.caption:
+            if "sub:" in (a.caption or "") or "| vid:" in (a.caption or ""):
+                if ocr_part and ocr_part not in (a.caption or ""):
+                    a.caption = f"{a.caption} | ocr: {ocr_part}"[:900]
+            elif shared and not a.caption:
                 a.caption = shared
         if shared:
             # one Qdrant point per video (use first frame's ids)
@@ -111,7 +129,12 @@ async def annotate_pending_ocr(session, st, limit: int = 500) -> int:
 
     ids = (await session.scalars(
         select(MediaAsset.id)
-        .where(MediaAsset.caption == "")
+        .where((MediaAsset.caption == "") |
+               ((MediaAsset.caption.like("%sub:%")) &
+                (~MediaAsset.caption.like("%ocr:%"))) |
+               ((MediaAsset.caption.like("%| vid:%")) &
+                (~MediaAsset.caption.like("%ocr:%")) &
+                (~MediaAsset.caption.like("%sub:%"))))
         .order_by(MediaAsset.id)
         .limit(limit))).all()
     if not ids:
@@ -121,7 +144,8 @@ async def annotate_pending_ocr(session, st, limit: int = 500) -> int:
     synced: list[tuple[str, str]] = []
     for aid in ids:
         a = await session.get(MediaAsset, aid)
-        if a is None or a.caption:
+        if a is None or (a.caption and "sub:" not in a.caption
+                         and "| vid:" not in a.caption):
             continue
         rows: list[dict] = []
         try:
@@ -167,6 +191,9 @@ async def run_annotate_ocr(limit: int, chunk: int = 500) -> int:
     """Chunked driver (new session per chunk → identity-map GC). Returns total."""
     from . import db, storage, vector_store
 
+    if vector_store.has_sparse():  # collection v2: OCR đã chạy lúc index (indexer)
+        print("[annotate-ocr] bỏ qua: chỉ dành cho index v1 (media_assets)")
+        return 0
     st = storage.Storage()
     vector_store.ensure_collections()
     await db.init_db()

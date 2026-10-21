@@ -48,6 +48,10 @@ def test():
 
     assert canonicalize("https://SICT.HAUI.EDU.VN/vn/x?b=2&a=1&utm_source=fb#frag") == \
         "https://sict.haui.edu.vn/vn/x?a=1&b=2"
+    # http/https và "/" cuối là cùng 1 trang
+    assert canonicalize("http://sict.haui.edu.vn/vn/html/quy-che/") == \
+        "https://sict.haui.edu.vn/vn/html/quy-che"
+    assert canonicalize("http://sict.haui.edu.vn/") == "https://sict.haui.edu.vn/"
     print("OK — parser, chunker, canonicalize")
 
 

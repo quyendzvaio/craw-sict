@@ -4,17 +4,56 @@ on:
     branches: [main]
   pull_request:
 
+# PR đẩy commit mới → huỷ lượt cũ của cùng nhánh
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
+          version: "0.12.19"
           python-version: "3.11"
           enable-cache: true
-      - run: uv sync --frozen --group dev --group api
-      - run: uv run --frozen pytest sict_crawler/tests/ -q --ignore=sict_crawler/tests/smoke_incremental.py
-      - run: uv run --frozen python -m sict_crawler.tests.test_safety
-      - run: uv run --frozen python -m sict_crawler.tests.test_captions
-      - run: uv run --frozen python -m sict_crawler.tests.test_agent
+      # --locked: fail nếu uv.lock lệch pyproject.toml (--frozen chỉ dùng lock, không kiểm)
+      - run: uv sync --locked --group dev --group api
+      - run: uv run --locked pytest sict_crawler/tests/ -q --ignore=sict_crawler/tests/smoke_incremental.py
+      - run: uv run --locked python -m sict_crawler.tests.test_safety
+      - run: uv run --locked python -m sict_crawler.tests.test_captions
+      - run: uv run --locked python -m sict_crawler.tests.test_agent
+      - name: Alloy templates render
+        run: |
+          printf '%s\n' GCLOUD_HOSTED_METRICS_URL=https://prometheus.example/api/prom/push GCLOUD_HOSTED_METRICS_ID=1 \
+            GCLOUD_SCRAPE_INTERVAL=60s GCLOUD_HOSTED_LOGS_URL=https://logs.example/loki/api/v1/push GCLOUD_HOSTED_LOGS_ID=2 > /tmp/ci.env
+          for vm in vm1 vm2; do python3 scripts/render_alloy.py --env-file /tmp/ci.env --role $vm --instance ci-$vm --out /tmp/alloy/$vm.alloy; done
+          docker run --rm -v /tmp/alloy:/c:ro grafana/alloy:v1.20.1 fmt /c/vm1.alloy >/dev/null
+          docker run --rm -v /tmp/alloy:/c:ro grafana/alloy:v1.20.1 fmt /c/vm2.alloy >/dev/null
+      - name: Shell scripts syntax
+        run: for f in scripts/*.sh; do bash -n "$f"; done
+
+  # build thử mọi image deploy (không đẩy) — Dockerfile hỏng lộ ra ở PR, không phải lúc deploy trên VM
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [api, worker, embed]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.${{ matrix.image }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

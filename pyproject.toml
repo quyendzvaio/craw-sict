@@ -28,7 +28,19 @@ dev = [
 # API serve: FastAPI. Cần thêm group ml (E5+CLIP cho query).
 api = [
     "fastapi>=0.115",
+    "prometheus-client>=0.20",   # GET /metrics (D13)
     "uvicorn[standard]>=0.30",
+]
+# Dịch vụ embedding tự host (D22): jina-clip-v2 ONNX int8 trên CPU, KHÔNG torch (sict_crawler/embed_server.py).
+embed = [
+    "fastapi>=0.115",
+    "prometheus-client>=0.20",   # GET /metrics (D13)
+    "uvicorn[standard]>=0.30",
+    "onnxruntime>=1.20",
+    "onnx>=1.16",          # build_towers: tách graph gộp thành tháp chữ / tháp ảnh
+    "onnx-ir>=0.1",        # MatMulNBitsQuantizer (int8 chỉ trọng số) cần
+    "tokenizers>=0.20",
+    "huggingface-hub>=0.25",
 ]
 # Worker nặng: embed E5/CLIP + OCR + video keyframes + CDP client cho obscura.
 # torch lấy bản CPU (host và container đều không có GPU).

@@ -69,17 +69,54 @@ class Storage:
         self._put(key, gzip.compress(html))
         return key
 
+    def _get(self, key: str) -> bytes:
+        """S3 get, NoSuchKey -> FileNotFoundError de caller fallback re-fetch."""
+        try:
+            return self.s3.get_object(Bucket=self.cfg.bucket,
+                                      Key=key)["Body"].read()
+        except Exception as e:
+            resp = getattr(e, "response", None) or {}
+            code = (resp.get("Error") or {}).get("Code", "")
+            if code in ("NoSuchKey", "404", "NoSuchBucket") \
+                    or "NoSuchKey" in str(e):
+                raise FileNotFoundError(key) from e
+            raise
+
     def read_raw_html(self, key: str) -> bytes:
         if self.local:
             return gzip.decompress((LOCAL_ROOT / key).read_bytes())
-        body = self.s3.get_object(Bucket=self.cfg.bucket, Key=key)["Body"].read()
-        return gzip.decompress(body)
+        return gzip.decompress(self._get(key))
 
     def put_media(self, data: bytes, ext: str) -> tuple[str, str]:
         """Store media bytes → (key, base64)."""
         key = f"{self.cfg.prefix_media}{sha256(data)}.{ext}"
         self._put(key, data)
         return key, to_base64(data)
+
+    def exists(self, key: str) -> bool:
+        if self.local:
+            return (LOCAL_ROOT / key).exists()
+        try:
+            self.s3.head_object(Bucket=self.cfg.bucket, Key=key)
+            return True
+        except Exception:
+            return False
+
+    def put_file(self, key: str, path: Path) -> bool:
+        """Đưa file có sẵn (snapshot/artifact) lên store nếu chưa có. Local: hard link khi cùng
+        ổ (không tốn thêm dung lượng), không được thì copy. Trả True khi có ghi mới."""
+        if self.exists(key):
+            return False
+        if self.local:
+            dst = LOCAL_ROOT / key
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.link(path, dst)
+            except OSError:
+                dst.write_bytes(Path(path).read_bytes())
+            return True
+        self.s3.upload_file(str(path), self.cfg.bucket, key)
+        return True
 
     def get_media(self, key: str) -> bytes:
         if self.local:

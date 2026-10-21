@@ -1,0 +1,29 @@
+# Dịch vụ embedding tự host (D22): jina-clip-v2 ONNX int8 CPU — Dockerfile.embed / sict_crawler/embed_server.py.
+# Đã chạy thử local 2026-10-20 (kết quả: eval/results/INT8.md). Trước khi trỏ API / incremental sang (EMBED_API_BASE=http://<host>:8090/v1, EMBED_API_KEY trống):
+#   1. docker compose -f docker-compose.embed.yml run --rm embed python -m sict_crawler.embed_server build
+#      (1 lần: tải fp32 3,5 GB + tách 2 tháp + int8 chỉ trọng số, ~2,5 phút trên 2 vCPU, không OOM ở 8 GB; nếu bỏ qua
+#      thì `up` tự build lúc khởi động) → docker compose -f docker-compose.embed.yml up -d --build
+#   2. uv run python scripts/embed_parity.py --base http://localhost:8090/v1     (cosine với vector cloud của index v3)
+#   3. eval golden trên index v3 với câu hỏi nhúng bằng dịch vụ này.
+# Đích production: 2 vCPU / 8 GB. Đo trên đúng giới hạn đó (--cpus 2 --memory 8g, 2026-10-20; eval/results/INT8.md): rỗi
+# 1,33 GB, 1 câu hỏi ~0,3 s, 1 ảnh ~9 s. RAM đỉnh chỉ tăng khi nhúng NỘI DUNG dài: 2048 token 3,5 GB, 4096 token 6,9 GB;
+# chunk dài nhất 5.201 token → OOM ở 8 GB → mặc định cắt 2048 token, 1 lượt chạy mỗi lúc, mem_limit 6 GB (chừa ~2 GB
+# cho hệ điều hành / container khác). Khi API v3 nhúng câu hỏi qua dịch vụ này thì API không cần torch nữa.
+services:
+  embed:
+    build: {context: ., dockerfile: Dockerfile.embed}
+    image: ${EMBED_IMAGE:-sict-embed:latest}   # CD đặt ghcr.io/…/sict-embed:<sha> (D10)
+    environment:
+      EMBED_THREADS: ${EMBED_THREADS:-2}
+      EMBED_TEXT_MAX_LEN: ${EMBED_TEXT_MAX_LEN:-2048}
+      EMBED_TOKEN_BUDGET: ${EMBED_TOKEN_BUDGET:-2048}
+      EMBED_CONCURRENCY: ${EMBED_CONCURRENCY:-1}
+      EMBED_IMAGE_BATCH: ${EMBED_IMAGE_BATCH:-1}
+    # D12: không mở ra internet — VM2 đặt EMBED_BIND=<IP private VM2> trong .env để API ở VM1 gọi được (SG chỉ cho VM1)
+    ports: ["${EMBED_BIND:-127.0.0.1}:${EMBED_PORT:-8090}:8090"]
+    volumes: [embedhf:/hf]
+    restart: unless-stopped
+    mem_limit: ${EMBED_MEM_LIMIT:-6000m}
+
+volumes:
+  embedhf:

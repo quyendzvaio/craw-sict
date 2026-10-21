@@ -34,9 +34,13 @@ def test_mass_delete_guard():
 def test_cache_key_stable_and_scoped():
     a = _query_cache_key("tuyển sinh", 5)
     assert a == _query_cache_key("tuyển sinh", 5)
-    assert a.startswith("q:v1:")
+    assert a.startswith("q:v3:")  # v3: graph D20 + Source.media_key (v2: published_at/section + filters)
     assert a != _query_cache_key("tuyển sinh", 8)
     assert a != _query_cache_key("tuyển sinh?", 5)
+    assert a != _query_cache_key("tuyển sinh", 5, "sections=['thong-bao']")
+    # cutover/rollback đổi collection → không trả kết quả cache của index cũ
+    assert _query_cache_key("q", 5, index="sict_text_v2|sict_image_v2|") != \
+        _query_cache_key("q", 5, index="sict_text_v3|sict_image_v3|sict_ocr_v3")
 
 
 def _minimal_data():
@@ -66,6 +70,17 @@ def test_llm_vlm_env_override(monkeypatch):
     assert s.vlm.api_base == "https://api.openai.com/v1"
     assert s.vlm.models == ["gpt-4o-mini", "qwen-vl"]
     assert s.vlm.enabled is True and s.vlm.api_key == "sk-v"
+
+
+def test_qdrant_collection_env_override(monkeypatch):
+    """Blue/green: mặc định v2; env trỏ về collection v1 để rollback API."""
+    from sict_crawler.config import _build
+
+    assert _build(_minimal_data()).qdrant.collection_text == "sict_text_v2"
+    monkeypatch.setenv("QDRANT_COLLECTION_TEXT", "sict_text")
+    monkeypatch.setenv("QDRANT_COLLECTION_IMAGE", "sict_image")
+    s = _build(_minimal_data())
+    assert (s.qdrant.collection_text, s.qdrant.collection_image) == ("sict_text", "sict_image")
 
 
 class _NoRow:
@@ -135,3 +150,15 @@ if __name__ == "__main__":
     finally:
         _api.db.get_session = _orig
     print("OK — routes /, /app.js, /media 404")
+
+
+def test_parse_completion_json_with_trailing_sse_done():
+    """Gateway LLM trả JSON thường + đuôi "data: [DONE]" → vẫn đọc được nội dung (trước đây trả "",
+    mọi lượt LLM âm thầm lùi về luật)."""
+    from sict_crawler.vlm import _parse_completion
+    body = ('{"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":"Ok!"}}]}'
+            '\ndata: [DONE]')
+    assert _parse_completion(body) == "Ok!"
+    sse = 'data: {"choices":[{"delta":{"content":"O"}}]}\ndata: {"choices":[{"delta":{"content":"k"}}]}\ndata: [DONE]'
+    assert _parse_completion(sse) == "Ok"
+    assert _parse_completion('{"choices":[{"message":{"content":"a"}}]}') == "a"

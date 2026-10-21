@@ -1,0 +1,77 @@
+# Worker nang (crawl + OCR + keyframe + subtitle).
+# LOCAL (khuyen nghi): chay gop voi infra de chung mang:
+#   docker compose -f docker-compose.yml -f docker-compose.worker.yml up -d --build
+#   (mac dinh tro ve service postgres/redis/qdrant, khong can .env dac biet)
+# VM2 rieng: docker compose -f docker-compose.worker.yml up -d --build
+#   + .env theo .env.worker.example (POSTGRES_DSN/REDIS_URL/QDRANT_HOST = IP VM1).
+services:
+  svc-ocr:
+    image: ${WORKER_IMAGE:-sict-worker:latest}   # CD đặt ghcr.io/…/sict-worker:<sha> (D10)
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      SICT_CONFIG: /app/config.yaml
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      CRAWLER_BACKEND: ${CRAWLER_BACKEND:-auto}
+      OBSCURA_BIN: /usr/local/bin/obscura
+      OBSCURA_CDP: ws://obscura:9222
+      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql+asyncpg://sict:sict@postgres:5432/sict_crawler}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_TIMEOUT: ${QDRANT_TIMEOUT:-120}
+      YT_COOKIES: ${YT_COOKIES:-/cookies/cookies.txt}
+      HF_HOME: /cache/hf
+      AWS_PROFILE: ${AWS_PROFILE:-quyen-admin}
+    volumes: [localstore:/app/_local_store, hfcache:/cache/hf, "${AWS_DIR:-${HOME}/.aws}:/home/app/.aws:ro", "./cookies:/cookies:ro"]
+    restart: "no"  # chạy 1 lần rồi thoát; cron bên dưới chạy lặp
+    mem_limit: 3000m
+    logging: {driver: json-file, options: {max-size: 20m, max-file: "3"}}
+    command: ["python", "-m", "sict_crawler.main", "--annotate-ocr", "2000"]
+
+  # Cron incremental 6h/lần — đường chạy worker DUY NHẤT trên VM2.
+  cron:
+    image: ${WORKER_IMAGE:-sict-worker:latest}   # CD đặt ghcr.io/…/sict-worker:<sha> (D10)
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      SICT_CONFIG: /app/config.yaml
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      CRAWLER_BACKEND: ${CRAWLER_BACKEND:-auto}
+      OBSCURA_BIN: /usr/local/bin/obscura
+      OBSCURA_CDP: ws://obscura:9222
+      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql+asyncpg://sict:sict@postgres:5432/sict_crawler}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_TIMEOUT: ${QDRANT_TIMEOUT:-120}
+      YT_COOKIES: ${YT_COOKIES:-/cookies/cookies.txt}
+      AWS_PROFILE: ${AWS_PROFILE:-quyen-admin}
+      CHECK_EDITS: ${CHECK_EDITS:-100}
+      CRAWL_LIMIT: ${CRAWL_LIMIT:-200}
+      ANNOTATE_OCR_N: ${ANNOTATE_OCR_N:-500}
+    volumes: [localstore:/app/_local_store, hfcache:/cache/hf, "${AWS_DIR:-${HOME}/.aws}:/home/app/.aws:ro", "./cookies:/cookies:ro"]
+    restart: unless-stopped
+    mem_limit: 3000m
+    logging: {driver: json-file, options: {max-size: 20m, max-file: "3"}}
+    depends_on: [obscura]
+    command: >
+      /bin/sh -c "while true; do
+        python -m sict_crawler.main --incremental --check-edits $$CHECK_EDITS --crawl-limit $$CRAWL_LIMIT --annotate-ocr-n $$ANNOTATE_OCR_N;
+        sleep $${CRON_INTERVAL_SEC:-21600}; done"
+
+  # Sidecar Obscura CDP cho trang JS nặng. Chỉ chạy trên VM2.
+  obscura:
+    image: h4ckf0r0day/obscura:0.2.4
+    command: ["serve", "--port", "9222"]
+    ports: ["127.0.0.1:9222:9222"]
+    restart: unless-stopped
+    mem_limit: 150m
+
+volumes:
+  localstore:
+  hfcache:

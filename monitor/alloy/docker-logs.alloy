@@ -1,0 +1,43 @@
+// Log container Docker của hệ thống — tách khỏi base.alloy vì cần đọc /var/run/docker.sock (tương đương quyền root
+// trên máy): giả lập local bật mặc định; VM thật chỉ bật khi chủ động (deploy_alloy_vm.sh --docker-logs).
+// chỉ container khớp tên trong danh sách (không gom container của dự án khác cùng máy)
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+
+  filter {
+    name   = "name"
+    values = [${DOCKER_NAMES}]
+  }
+}
+
+discovery.relabel "containers" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.process.docker.receiver]
+  labels        = {
+    instance = "${INSTANCE}",
+    job      = "sict/docker",
+  }
+}
+
+// lần đầu (hoặc sau khi mất vị trí đọc) Alloy đọc lại cả lịch sử log container; Loki Grafana Cloud từ chối dòng
+// cũ hơn ~7 ngày (HTTP 400 "timestamp too old", đo 2026-10-21) → bỏ dòng > 24 h ngay tại agent
+loki.process "docker" {
+  forward_to = [loki.write.gcloud.receiver]
+
+  stage.drop {
+    older_than          = "24h"
+    drop_counter_reason = "older_than_24h"
+  }
+}
