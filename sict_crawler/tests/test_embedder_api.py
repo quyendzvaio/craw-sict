@@ -250,13 +250,16 @@ def test_timeout_grows_with_images_in_batch(tmp_path, monkeypatch):
     seen = []
 
     def post(url, json, headers, timeout):
-        seen.append(timeout)
+        seen.append((timeout, sum(len(x.get("text", "")) for x in json["input"])))
         return _Resp(200, {"data": [{"index": i, "embedding": [1.0, 0.0, 0.0, 0.0]} for i in range(len(json["input"]))]})
     e, saved = _setup(tmp_path, monkeypatch, post)
     try:
         embedder.embed_texts(["một câu"])
         embedder.embed_image_bytes([_png(color=(i, 0, 0)) for i in range(8)])
-        assert seen[0] == e.timeout
-        assert seen[1] >= 8 * embedder.IMAGE_TIMEOUT_S > e.timeout
+        embedder.embed_texts([f"đoạn {i} " + "x" * 2000 for i in range(32)])   # lô đoạn file đính kèm
+        assert seen[0][0] == e.timeout
+        assert seen[1][0] >= 8 * embedder.IMAGE_TIMEOUT_S > e.timeout
+        t, chars = seen[2]
+        assert chars > 4000 and t >= embedder.TEXT_TIMEOUT_S_PER_KCHAR * chars / 1000 > e.timeout
     finally:
         _restore(e, saved)

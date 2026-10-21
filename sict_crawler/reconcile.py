@@ -7,7 +7,13 @@ Ghi PG và Qdrant không cùng giao dịch, nên lỗi giữa chừng để lạ
      recheck sau index lại (không tự embed ở đây).
 Cầu chì: tỉ lệ point mồ côi > MAX_ORPHAN_RATIO (VD trỏ nhầm DB rỗng) → dừng, không xoá gì.
 
+Dọn bộ khung video cũ (models.Media.frame_sets; chỉ chạy tay, sau khi bỏ hẳn collection ảnh cũ — VD đã xoá
+sict_image_v2, không còn rollback về v2): xoá dòng media khung mà KHÔNG tag nào là collection ảnh còn tồn tại.
+Mặc định chỉ in kế hoạch; --apply mới xoá. Khung chưa gắn tag chỉ bị xoá khi có --include-untagged; không bao giờ
+xoá hết khung của một video (giữ lại để lần index sau còn byte mà dựng). File khung trên store không bị xoá.
+
 Usage: python -m sict_crawler.reconcile [--dry-run]
+       python -m sict_crawler.reconcile --prune-frames [--include-untagged] [--apply]
 Callers: incremental.run_incremental (mỗi 24h, khoá Redis reconcile:last), CLI.
 """
 from __future__ import annotations
@@ -16,11 +22,11 @@ import argparse
 import asyncio
 import json
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from . import db, vector_store
 from .config import get_settings
-from .models import Document
+from .models import Document, Media
 
 MAX_ORPHAN_RATIO = 0.2
 
@@ -97,10 +103,50 @@ async def reconcile(dry_run: bool = False) -> dict:
     return stats
 
 
+def plan_frame_prune(rows: list[tuple[int, int | None, list]], live: set[str],
+                     include_untagged: bool = False) -> list[int]:
+    """rows (media id, video_id, frame_sets) → id cần xoá: không tag nào thuộc `live` (collection ảnh còn tồn
+    tại); chưa có tag thì chỉ khi include_untagged; video nào sẽ mất hết khung thì giữ nguyên cả video."""
+    def dead(sets: list) -> bool:
+        return not (set(sets or []) & live) and (bool(sets) or include_untagged)
+    by_video: dict[int | None, list[tuple[int, bool]]] = {}
+    for mid, vid, sets in rows:
+        by_video.setdefault(vid, []).append((mid, dead(sets)))
+    return sorted(mid for items in by_video.values() if not all(d for _, d in items)
+                  for mid, d in items if d)
+
+
+async def prune_frames(apply: bool = False, include_untagged: bool = False) -> dict:
+    live = {c.name for c in vector_store.get_client().get_collections().collections}
+    async with db.get_session() as s:
+        rows = (await s.execute(select(Media.id, Media.video_id, Media.frame_sets)
+                                .where(Media.kind == "video_frame"))).all()
+        ids = plan_frame_prune([tuple(r) for r in rows], live, include_untagged)
+        tags: dict[str, int] = {}
+        for _, _, sets in rows:
+            for t in (sets or ["(chưa gắn)"]):
+                tags[t] = tags.get(t, 0) + 1
+        stats = {"frames": len(rows), "by_set": tags, "live_collections": sorted(live),
+                 "prune": len(ids), "applied": apply}
+        if apply and ids:
+            for i in range(0, len(ids), 1000):
+                await s.execute(delete(Media).where(Media.id.in_(ids[i:i + 1000])))
+            await s.commit()
+    print(f"[reconcile] prune-frames {json.dumps(stats, ensure_ascii=False)}")
+    return stats
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Đối soát PG ↔ Qdrant (*_v2)")
     ap.add_argument("--dry-run", action="store_true")
-    asyncio.run(reconcile(ap.parse_args().dry_run))
+    ap.add_argument("--prune-frames", action="store_true", help="dọn bộ khung video của collection đã bỏ")
+    ap.add_argument("--include-untagged", action="store_true", help="--prune-frames: xoá cả khung chưa gắn bộ")
+    ap.add_argument("--apply", action="store_true", help="--prune-frames: xoá thật (mặc định chỉ in kế hoạch)")
+    a = ap.parse_args()
+    if a.prune_frames:
+        asyncio.run(prune_frames(a.apply, a.include_untagged))
+    else:
+        asyncio.run(reconcile(a.dry_run))
 
 
 if __name__ == "__main__":

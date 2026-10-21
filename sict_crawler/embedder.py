@@ -213,7 +213,10 @@ def _throttle(tokens: int) -> None:
         time.sleep(max(0.5, wait))
 
 
-IMAGE_TIMEOUT_S = 30   # giây chờ tối đa cho mỗi ảnh trong 1 lượt gọi (gấp ~3 lần thời gian thật trên 2 vCPU)
+# giây chờ tối đa mỗi lượt gọi, gấp ~3 lần thời gian thật trên dịch vụ tự host 2 vCPU (2026-10-21): ~9 s / ảnh,
+# ~8,4 s / 1000 ký tự chữ (đoạn file đính kèm 1000–2000 ký tự: lô 32 đoạn mất vài phút, vượt timeout 120 s cố định)
+IMAGE_TIMEOUT_S = 30
+TEXT_TIMEOUT_S_PER_KCHAR = 25
 
 
 def _post(items: list[dict]) -> list[list[float]]:
@@ -228,9 +231,9 @@ def _post(items: list[dict]) -> list[list[float]]:
         body["dimensions"] = e.dim
     last = ""
     _throttle(_estimate_tokens(items))
-    # dịch vụ tự host trên 2 vCPU: ~9 s / ảnh (2026-10-21) → lô 8 ảnh ~75 s, sát 120 s; hết timeout thì gửi lại
-    # trong khi server vẫn tính lô cũ (chồng việc) → timeout giãn theo số ảnh
-    timeout = max(e.timeout, IMAGE_TIMEOUT_S * sum("image" in it for it in items))
+    # hết timeout thì client gửi lại trong khi server vẫn tính lô cũ (chồng việc) → timeout giãn theo khối lượng
+    timeout = max(e.timeout, IMAGE_TIMEOUT_S * sum("image" in it for it in items)
+                  + TEXT_TIMEOUT_S_PER_KCHAR * sum(len(it.get("text", "")) for it in items) / 1000)
     for attempt in range(e.api_retries):
         wait = 0.0
         try:

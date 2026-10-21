@@ -216,3 +216,36 @@ def test_reconcile_guard_aborts_on_empty_pg(mem_qdrant, monkeypatch):
     with pytest.raises(reconcile.ReconcileAbort):
         asyncio.run(reconcile.reconcile())
     assert mem_qdrant.count("t_v2").count == 12                   # không xoá gì
+
+
+class _Frame:
+    def __init__(self, id_, ts, sets):
+        self.id, self.timestamp, self.frame_sets = id_, ts, sets
+
+
+def test_pick_frame_set_uses_only_serving_set():
+    """1 video mang 2 bộ khung (v2, v3) trong PG dùng chung → index lại chỉ lấy bộ của collection đang phục vụ
+    (2026-10-21: lấy hết làm doc "Giới thiệu" 10 → 23 khung trong sict_image_v3)."""
+    fr = [_Frame(1, 0.0, ["sict_image_v2"]), _Frame(2, 10.0, ["sict_image_v3"]),
+          _Frame(3, 29.7, ["sict_image_v2"]), _Frame(4, 50.0, ["sict_image_v2", "sict_image_v3"])]
+    cur, adopt = indexer.pick_frame_set(fr, "sict_image_v3")
+    assert [m.id for m in cur] == [2, 4] and not adopt
+
+
+def test_pick_frame_set_adopts_one_old_set_never_mixes():
+    fr = [_Frame(1, 5.0, []), _Frame(2, 9.0, []),                       # chưa gắn tag (DB cũ)
+          _Frame(7, 3.0, ["sict_image_v2"]), _Frame(8, 1.0, ["sict_image_v2"])]   # bộ mới nhất
+    cur, adopt = indexer.pick_frame_set(fr, "sict_image_v3")
+    assert adopt and [m.id for m in cur] == [8, 7]                      # trọn 1 bộ, theo thời điểm
+    assert indexer.pick_frame_set([], "sict_image_v3") == ([], False)
+
+
+def test_plan_frame_prune_guards():
+    from sict_crawler.reconcile import plan_frame_prune
+    rows = [(1, 10, ["sict_image_v2"]), (2, 10, ["sict_image_v3"]),      # video 10: bộ v2 đã bỏ
+            (3, 10, ["sict_image_v2", "sict_image_v3"]), (4, 10, []),
+            (5, 20, ["sict_image_v2"]), (6, 20, ["sict_image_v2"])]       # video 20 chỉ có bộ đã bỏ
+    live = {"sict_image_v3", "sict_text_v3"}
+    assert plan_frame_prune(rows, live) == [1]                          # v2-only; chưa gắn tag giữ; video 20 giữ
+    assert plan_frame_prune(rows, live, include_untagged=True) == [1, 4]
+    assert plan_frame_prune(rows, live | {"sict_image_v2"}) == []      # v2 còn (rollback) → không xoá gì
