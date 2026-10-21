@@ -71,6 +71,31 @@ def test_rrf_fuses_lists():
     assert len(fused) == 3
 
 
+def test_query_does_not_block_event_loop(monkeypatch):
+    """agent.run đồng bộ chạy trong threadpool: 3 câu hỏi cùng lúc ~ thời gian 1 câu, không cộng dồn (2026-10-21:
+    gọi thẳng trong handler async làm API tuần tự hoá, /metrics của Alloy hết thời gian → up=0 trên Grafana)."""
+    import asyncio
+    import time
+
+    import httpx
+
+    from sict_crawler import agent, api
+
+    def slow_run(question, top_k=5, image=None, filters=None):
+        time.sleep(0.4)
+        return {"context": "", "text": [], "media": [], "attempts": 1, "sufficient": True}
+    monkeypatch.setattr(agent, "run", slow_run)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url="http://t") as c:
+            t0 = time.perf_counter()
+            rs = await asyncio.gather(*[c.post("/query", json={"question": f"q{i}"}) for i in range(3)])
+            return time.perf_counter() - t0, [r.status_code for r in rs]
+    took, codes = asyncio.run(go())
+    assert codes == [200, 200, 200]
+    assert took < 0.9, took        # tuần tự = 1,2 s
+
+
 if __name__ == "__main__":
     test_media_caption_hit()
     print("OK — media_caption → Source")

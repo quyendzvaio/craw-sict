@@ -16,6 +16,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
+from starlette.concurrency import run_in_threadpool
 
 from . import citations, db, embedder, storage, vector_store
 from . import filters as F
@@ -87,9 +88,16 @@ def _cache():
     return _cache_client or None
 
 
-def _query_cache_key(question: str, top_k: int, filters_key: str = "") -> str:
+def _index_tag() -> str:
+    """Collection đang phục vụ: đổi v2 ↔ v3 (cutover / rollback) thì không lấy lại kết quả cache của index kia."""
+    q = get_settings().qdrant
+    return f"{q.collection_text}|{q.collection_image}|{q.collection_ocr}"
+
+
+def _query_cache_key(question: str, top_k: int, filters_key: str = "", index: str | None = None) -> str:
+    index = _index_tag() if index is None else index
     return "q:v3:" + hashlib.sha256(
-        f"{question}\x00{top_k}\x00{filters_key}".encode()).hexdigest()
+        f"{question}\x00{top_k}\x00{filters_key}\x00{index}".encode()).hexdigest()
 
 
 def _cache_get(key: str) -> bytes | None:
@@ -452,7 +460,9 @@ def build_context(tsrcs: list[Source], msrcs: list[Source], facts: list[str] | N
 @app.post("/query")
 async def query(q: QueryIn):
     from . import agent as _agent
-    res = _agent.run(q.question, q.top_k, q.image, q.filters)
+    # agent.run đồng bộ (Qdrant, embed, LLM): gọi thẳng trong handler async thì chặn event loop → mọi request
+    # (cả /metrics của Alloy) xếp hàng tuần tự; tải 4 luồng 2026-10-21: p50 0,4 → 1,6 s, scrape /metrics 30 s, up=0
+    res = await run_in_threadpool(_agent.run, q.question, q.top_k, q.image, q.filters)
     return {"answer": None, "context": res["context"],
             "media_mode": res.get("media_mode"), "wants_file": res.get("wants_file"),
             "media_note": res.get("media_note"), "entities": res.get("entities"),
@@ -470,7 +480,7 @@ async def chat(q: QueryIn):
     streamed LLM answer (context echo fallback if no LLM key)."""
     from . import agent as _agent
     from . import vlm
-    res = _agent.run(q.question, q.top_k, q.image, q.filters)
+    res = await run_in_threadpool(_agent.run, q.question, q.top_k, q.image, q.filters)   # xem /query
     tsrcs, msrcs, context = res["text"], res["media"], res["context"]
     if not res["sufficient"]:
         context = ("(Lưu ý: tài liệu tìm được chỉ liên quan một phần, "
@@ -548,7 +558,7 @@ async def media_by_key(key: str, request: Request) -> Response:
     if m is None or not m.s3_key:
         raise HTTPException(404, "media not found")
     if data is None:
-        data = storage.Storage().get_media(m.s3_key)
+        data = await run_in_threadpool(storage.Storage().get_media, m.s3_key)   # S3 đồng bộ: không chặn event loop
         if len(data) <= _MEDIA_MAX:
             _cache_set(f"ms:{key}", data, _MEDIA_TTL)
     ext = m.s3_key.rsplit(".", 1)[-1].lower()
@@ -582,8 +592,7 @@ async def media(media_id: int, request: Request) -> Response:
         if hit:
             data = hit
     if data is None:
-        st = storage.Storage()
-        data = st.get_media(a.s3_key)
+        data = await run_in_threadpool(storage.Storage().get_media, a.s3_key)
         if len(data) <= _MEDIA_MAX:
             _cache_set(f"m:{media_id}", data, _MEDIA_TTL)
     mt = "image/png" if a.s3_key.lower().endswith(".png") else "image/jpeg"

@@ -243,3 +243,20 @@ def test_parallel_batches_keep_order_cache_and_throttle(tmp_path, monkeypatch):
     finally:
         e.api_workers = 1
         _restore(e, saved)
+
+
+def test_timeout_grows_with_images_in_batch(tmp_path, monkeypatch):
+    """Lô ảnh trên dịch vụ tự host 2 vCPU (~9 s/ảnh) không được hết timeout rồi gửi lại khi server vẫn đang tính."""
+    seen = []
+
+    def post(url, json, headers, timeout):
+        seen.append(timeout)
+        return _Resp(200, {"data": [{"index": i, "embedding": [1.0, 0.0, 0.0, 0.0]} for i in range(len(json["input"]))]})
+    e, saved = _setup(tmp_path, monkeypatch, post)
+    try:
+        embedder.embed_texts(["một câu"])
+        embedder.embed_image_bytes([_png(color=(i, 0, 0)) for i in range(8)])
+        assert seen[0] == e.timeout
+        assert seen[1] >= 8 * embedder.IMAGE_TIMEOUT_S > e.timeout
+    finally:
+        _restore(e, saved)
