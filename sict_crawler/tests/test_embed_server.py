@@ -143,3 +143,65 @@ def test_lane_of_request():
     assert S.lane_of([{"text": "a"}, {"text": "b"}]) == S.BULK
     assert S.lane_of([{"image": "x"}, {"image": "y"}]) == S.BULK
     assert S.lane_of([{"text": "x" * S.QUERY_MAX_CHARS}]) == S.BULK
+
+
+def _toy_vision(n_grid: int = 6, patch: int = 4, dim: int = 4):
+    """Graph tối giản mang các hằng số phụ thuộc lưới như tháp ảnh jina (Conv patch, pos_embed, bảng RoPE, shape)."""
+    from onnx import TensorProto, helper, numpy_helper
+    n = n_grid * n_grid
+    cos, sin = S.rope_tables(n_grid, dim, 16)
+    rng = np.random.default_rng(0)
+    inits = [numpy_helper.from_array(rng.standard_normal((1, n + 1, 8)).astype(np.float32), "clip.vision_model.pos_embed"),
+             numpy_helper.from_array(cos.astype(np.float32), "rope_cos"),
+             numpy_helper.from_array(sin.astype(np.float32), "rope_sin"),
+             numpy_helper.from_array(np.array([-1, 8, n], dtype=np.int64), "shape_patches"),
+             numpy_helper.from_array(np.array([-1, n + 1, 2, 4], dtype=np.int64), "shape_tokens"),
+             numpy_helper.from_array(rng.standard_normal((8, 3, patch, patch)).astype(np.float32), "w")]
+    nodes = [helper.make_node("Conv", ["pixel_values", "w"], ["c"], kernel_shape=[patch, patch], strides=[patch, patch]),
+             helper.make_node("Reshape", ["c", "shape_patches"], ["out"])]
+    size = n_grid * patch
+    g = helper.make_graph(nodes, "toy", [helper.make_tensor_value_info("pixel_values", TensorProto.FLOAT, ["b", 3, size, size])],
+                          [helper.make_tensor_value_info("out", TensorProto.FLOAT, None)], inits)
+    return helper.make_model(g)
+
+
+def test_resize_vision_tower_rewrites_grid_constants():
+    pytest.importorskip("onnx")
+    from onnx import numpy_helper
+    m = _toy_vision()
+    pe0 = numpy_helper.to_array(m.graph.initializer[0]).copy()
+    assert S.resize_vision_tower(m, 16, 16) == 4                          # 24 px → 16 px, patch 4: lưới 6 → 4
+    init = {t.name: numpy_helper.to_array(t) for t in m.graph.initializer}
+    assert init["clip.vision_model.pos_embed"].shape == (1, 17, 8)
+    assert np.allclose(init["clip.vision_model.pos_embed"][0, 0], pe0[0, 0])   # token CLS giữ nguyên
+    cos, sin = S.rope_tables(4, 4, 16)
+    assert np.allclose(init["rope_cos"], cos) and np.allclose(init["rope_sin"], sin)
+    assert init["shape_patches"].tolist() == [-1, 8, 16] and init["shape_tokens"].tolist() == [-1, 17, 2, 4]
+    assert m.graph.input[0].type.tensor_type.shape.dim[2].dim_value == 16
+
+
+def test_resize_vision_tower_refuses_unknown_rope_table():
+    pytest.importorskip("onnx")
+    from onnx import numpy_helper
+    m = _toy_vision()
+    m.graph.initializer[1].CopyFrom(numpy_helper.from_array(np.zeros((36, 8), dtype=np.float32), "rope_cos"))
+    with pytest.raises(ValueError, match="RoPE"):
+        S.resize_vision_tower(m, 16, 16)
+
+
+def test_bicubic_matrix_rows_sum_to_one_and_identity_when_same_size():
+    w = S.bicubic_matrix(36, 28)
+    assert np.allclose(w.sum(1), 1.0)
+    assert np.allclose(S.bicubic_matrix(5, 5), np.eye(5))
+
+
+def test_query_image_size_routes_to_small_tower_and_validates():
+    class Sized(FakeEncoder):
+        def images(self, blobs, size=None):
+            return [np.eye(1, 1024, (size or 0) % 1000, dtype=np.float32)[0] for _ in blobs]
+    img = base64.b64encode(b"\x01").decode()
+    items = S.parse_items({"input": [{"image": img}, {"image": img, "image_size": S.QUERY_IMAGE_SIZES[0]}]})
+    vecs, _, ni = S.embed(Sized(), items, 1024)
+    assert ni == 2 and [int(np.argmax(v)) for v in vecs] == [0, S.QUERY_IMAGE_SIZES[0]]
+    with pytest.raises(ValueError, match="image_size"):
+        S.parse_items({"input": [{"image": img, "image_size": 123}]})

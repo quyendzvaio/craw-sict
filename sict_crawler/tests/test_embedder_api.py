@@ -263,3 +263,24 @@ def test_timeout_grows_with_images_in_batch(tmp_path, monkeypatch):
         assert chars > 4000 and t >= embedder.TEXT_TIMEOUT_S_PER_KCHAR * chars / 1000 > e.timeout
     finally:
         _restore(e, saved)
+
+
+def test_query_image_uses_small_tower_and_own_cache(tmp_path, monkeypatch):
+    """Ảnh truy vấn gửi "image_size" (tháp 392 của dịch vụ) và cache riêng: cùng byte ảnh nhúng cho index sau đó
+    vẫn phải gọi lại dịch vụ ở 512, không lấy vector 392 từ cache."""
+    calls = []
+    e, saved = _setup(tmp_path, monkeypatch, _echo(calls))
+    old = e.query_image_size
+    try:
+        e.query_image_size = 392
+        b64 = base64.b64encode(_png()).decode()
+        assert embedder.embed_query_image_base64([b64])
+        assert calls[-1][1]["input"][0]["image_size"] == 392
+        embedder.embed_image_base64([b64])                       # ảnh corpus, cùng byte
+        assert len(calls) == 2 and "image_size" not in calls[-1][1]["input"][0]
+        e.query_image_size = 0                                  # tắt (VD trỏ Jina cloud) → như ảnh corpus
+        embedder.embed_query_image_base64([b64])
+        assert len(calls) == 2                                  # trúng cache ảnh corpus
+    finally:
+        e.query_image_size = old
+        _restore(e, saved)

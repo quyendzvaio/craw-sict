@@ -321,13 +321,18 @@ def _api_embed_texts(texts: list[str], kind: str) -> list[list[float]]:
     return _embed_cached("t", [(pre + t).encode() for t in texts], lambda i: {"text": pre + texts[i]}, e.api_batch)
 
 
-def _api_embed_image_bytes(images: list[bytes]) -> tuple[list[list[float]], list[int]]:
-    """Khoá cache = sha256 byte gốc, nên ảnh đã có vector không phải giải mã/resize lại."""
+def _api_embed_image_bytes(images: list[bytes], query_size: int = 0) -> tuple[list[list[float]], list[int]]:
+    """Khoá cache = sha256 byte gốc, nên ảnh đã có vector không phải giải mã/resize lại. query_size > 0: ảnh truy
+    vấn, dịch vụ chạy tháp ảnh cạnh đó (embed_server.QUERY_IMAGE_SIZES); khoá cache riêng để vector ảnh truy vấn
+    không bao giờ lẫn vào corpus (cùng byte ảnh)."""
     def make(i: int) -> dict | None:
         jpg = prepare_image(images[i])
-        return {"image": base64.b64encode(jpg).decode("ascii")} if jpg else None
+        if not jpg:
+            return None
+        return {"image": base64.b64encode(jpg).decode("ascii"), **({"image_size": query_size} if query_size else {})}
 
-    vecs = _embed_cached(f"i{IMAGE_MAX_SIDE}", [hashlib.sha256(b).digest() for b in images], make,
+    kind = f"iq{query_size}" if query_size else f"i{IMAGE_MAX_SIDE}"
+    vecs = _embed_cached(kind, [hashlib.sha256(b).digest() for b in images], make,
                          get_settings().embedding.api_image_batch)
     ok = [i for i, v in enumerate(vecs) if v is not None]
     return [vecs[i] for i in ok], ok
@@ -353,6 +358,16 @@ def embed_image_bytes(images: list[bytes]) -> tuple[list[list[float]], list[int]
 
 def embed_image_base64(b64_list: list[str]) -> list[list[float]]:
     vecs, _ = embed_image_bytes([base64.b64decode(b) for b in b64_list])
+    return vecs
+
+
+def embed_query_image_base64(b64_list: list[str]) -> list[list[float]]:
+    """Ảnh người dùng gửi (truy vấn). Backend api + embedding.query_image_size: tháp ảnh cỡ nhỏ (nhanh hơn ~45 %
+    trên 2 vCPU ở 392); còn lại như ảnh corpus. Không dùng cho ảnh đưa vào index."""
+    size = get_settings().embedding.query_image_size
+    if backend() != "api" or not size:
+        return embed_image_base64(b64_list)
+    vecs, _ = _api_embed_image_bytes([base64.b64decode(b) for b in b64_list], query_size=size)
     return vecs
 
 

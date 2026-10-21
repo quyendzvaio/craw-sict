@@ -15,7 +15,7 @@ def mm(monkeypatch):
     monkeypatch.setattr(api, "_cache_get", lambda k: None)
     monkeypatch.setattr(api, "_cache_set", lambda *a, **k: None)
     monkeypatch.setattr(embedder, "embed_query", lambda q: TXT)
-    monkeypatch.setattr(embedder, "embed_image_base64", lambda b: [IMG])
+    monkeypatch.setattr(embedder, "embed_query_image_base64", lambda b: [IMG])
     monkeypatch.setattr(query_rewriter, "rewrite", lambda q: {"rewritten": q, "terms": q.split(), "route_llm": None})
     monkeypatch.setattr(query_rewriter, "rerank_text", lambda h, q, top_n=5, **k: [dict(x, raw_score=0.9) for x in h])
 
@@ -90,7 +90,7 @@ def test_u5_u6_u7_text_plus_image(mm):
 
 
 def test_broken_image_only_returns_empty(mm, monkeypatch):
-    monkeypatch.setattr(embedder, "embed_image_base64", lambda b: [])
+    monkeypatch.setattr(embedder, "embed_query_image_base64", lambda b: [])
     t, m, route = api.retrieve("", 5, "not-an-image")
     assert (t, m) == ([], []) and route.inputs == ["image"] and route.outputs == []
 
