@@ -213,6 +213,9 @@ def _throttle(tokens: int) -> None:
         time.sleep(max(0.5, wait))
 
 
+IMAGE_TIMEOUT_S = 30   # giây chờ tối đa cho mỗi ảnh trong 1 lượt gọi (gấp ~3 lần thời gian thật trên 2 vCPU)
+
+
 def _post(items: list[dict]) -> list[list[float]]:
     """POST {api_base}/embeddings (định dạng Jina: input là list {text}|{image}). Thử lại 429/5xx theo retry-after."""
     import httpx
@@ -225,10 +228,13 @@ def _post(items: list[dict]) -> list[list[float]]:
         body["dimensions"] = e.dim
     last = ""
     _throttle(_estimate_tokens(items))
+    # dịch vụ tự host trên 2 vCPU: ~9 s / ảnh (2026-10-21) → lô 8 ảnh ~75 s, sát 120 s; hết timeout thì gửi lại
+    # trong khi server vẫn tính lô cũ (chồng việc) → timeout giãn theo số ảnh
+    timeout = max(e.timeout, IMAGE_TIMEOUT_S * sum("image" in it for it in items))
     for attempt in range(e.api_retries):
         wait = 0.0
         try:
-            r = httpx.post(f"{e.api_base.rstrip('/')}/embeddings", json=body, headers=headers, timeout=e.timeout)
+            r = httpx.post(f"{e.api_base.rstrip('/')}/embeddings", json=body, headers=headers, timeout=timeout)
         except httpx.HTTPError as ex:
             last = f"{type(ex).__name__}: {ex}"
         else:

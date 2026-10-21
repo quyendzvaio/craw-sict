@@ -125,3 +125,21 @@ def test_quantize_vocab_table_matches_fp32():
     y = ort.InferenceSession(m.SerializeToString(), providers=["CPUExecutionProvider"]).run(None, {"ids": ids})[0]
     cos = (y[0] * W[ids[0]]).sum(1) / np.linalg.norm(y[0], axis=1) / np.linalg.norm(W[ids[0]], axis=1)
     assert y.shape == (1, 3, 16) and cos.min() > 0.999
+
+
+def test_query_waits_neither_for_bulk_nor_user_image():
+    """Lô hàng loạt và ảnh người dùng giữ hết slot làn của chúng → câu hỏi chữ vẫn chạy được ngay."""
+    lanes = S.Lanes(1)
+    with lanes.take(S.BULK), lanes.take(S.USER_IMAGE):
+        assert not lanes.take(S.BULK).acquire(blocking=False)   # lô thứ hai phải chờ
+        q = lanes.take(S.QUERY)
+        assert q.acquire(blocking=False)
+        q.release()
+
+
+def test_lane_of_request():
+    assert S.lane_of([{"text": "Trụ sở trường ở đâu?"}]) == S.QUERY
+    assert S.lane_of([{"image": "x"}]) == S.USER_IMAGE
+    assert S.lane_of([{"text": "a"}, {"text": "b"}]) == S.BULK
+    assert S.lane_of([{"image": "x"}, {"image": "y"}]) == S.BULK
+    assert S.lane_of([{"text": "x" * S.QUERY_MAX_CHARS}]) == S.BULK

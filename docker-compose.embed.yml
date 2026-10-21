@@ -18,7 +18,7 @@ services:
       EMBED_TEXT_MAX_LEN: ${EMBED_TEXT_MAX_LEN:-2048}
       EMBED_TOKEN_BUDGET: ${EMBED_TOKEN_BUDGET:-2048}
       EMBED_CONCURRENCY: ${EMBED_CONCURRENCY:-1}
-      EMBED_IMAGE_BATCH: ${EMBED_IMAGE_BATCH:-4}
+      EMBED_IMAGE_BATCH: ${EMBED_IMAGE_BATCH:-1}
     # D12: không mở ra internet — VM2 đặt EMBED_BIND=<IP private VM2> trong .env để API ở VM1 gọi được (SG chỉ cho VM1)
     ports: ["${EMBED_BIND:-127.0.0.1}:${EMBED_PORT:-8090}:8090"]
     volumes: [embedhf:/hf]

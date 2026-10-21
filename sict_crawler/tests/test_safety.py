@@ -38,6 +38,9 @@ def test_cache_key_stable_and_scoped():
     assert a != _query_cache_key("tuyển sinh", 8)
     assert a != _query_cache_key("tuyển sinh?", 5)
     assert a != _query_cache_key("tuyển sinh", 5, "sections=['thong-bao']")
+    # cutover/rollback đổi collection → không trả kết quả cache của index cũ
+    assert _query_cache_key("q", 5, index="sict_text_v2|sict_image_v2|") != \
+        _query_cache_key("q", 5, index="sict_text_v3|sict_image_v3|sict_ocr_v3")
 
 
 def _minimal_data():

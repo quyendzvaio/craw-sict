@@ -31,8 +31,8 @@ Chạy (cần group `embed`; đã thử local 2026-10-20 trên giới hạn 2 vC
 Env: EMBED_ONNX_REPO, EMBED_ONNX_REVISION, EMBED_ONNX_DIR (thư mục có sẵn file fp32, bỏ qua tải), EMBED_BUILD_DIR
 (nơi ghi 2 tháp đã lượng tử, mặc định $HF_HOME/sict-embed/<revision>-<quant>), EMBED_QUANT (w8 | fp32),
 EMBED_THREADS (intra-op, mặc định số CPU), EMBED_TEXT_MAX_LEN (2048), EMBED_TOKEN_BUDGET (token / 1 lượt chạy),
-EMBED_CONCURRENCY (1),
-EMBED_IMAGE_BATCH, EMBED_MEM_ARENA=1 (bật arena ORT: nhanh hơn chút, RAM giữ đỉnh).
+EMBED_CONCURRENCY (1; lượt chạy ORT cùng lúc mỗi làn — request đơn lẻ của API có làn riêng, xem Lanes),
+EMBED_IMAGE_BATCH (ảnh / 1 lượt chạy ORT), EMBED_MEM_ARENA=1 (bật arena ORT: nhanh hơn chút, RAM giữ đỉnh).
 """
 import argparse
 import base64
@@ -41,6 +41,7 @@ import json
 import os
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -63,7 +64,9 @@ RECIPE = "w8a4e8"   # đổi khi đổi công thức → build_dir mới, không
 TEXT_MAX_LEN = int(os.environ.get("EMBED_TEXT_MAX_LEN", "2048"))
 TOKEN_BUDGET = int(os.environ.get("EMBED_TOKEN_BUDGET", "2048"))   # n đoạn × độ dài (đã pad) mỗi lượt → chặn RAM
 CONCURRENCY = int(os.environ.get("EMBED_CONCURRENCY", "1"))        # lượt chạy đồng thời (2 vCPU: song song không nhanh hơn)
-IMAGE_BATCH = int(os.environ.get("EMBED_IMAGE_BATCH", "8"))
+# ảnh / lượt chạy: gộp lô trên CPU không nhanh hơn (2 vCPU, 2026-10-21: 8 ảnh 1 lượt 80,8 s; 8 lượt × 1 ảnh 73,5 s)
+IMAGE_BATCH = int(os.environ.get("EMBED_IMAGE_BATCH", "1"))
+QUERY_MAX_CHARS = 1000   # 1 đoạn chữ ngắn hơn = câu hỏi (ưu tiên + nhãn kind=query của metric)
 FULL_DIM = 1024
 MODEL_NAME = "jina-clip-v2"
 
@@ -155,8 +158,12 @@ def model_dir() -> Path:
     if os.environ.get("EMBED_ONNX_DIR"):
         return Path(os.environ["EMBED_ONNX_DIR"])
     from huggingface_hub import snapshot_download
-    return Path(snapshot_download(REPO, revision=REVISION, allow_patterns=[
-        SRC_FILE, f"{SRC_FILE}_data", "tokenizer.json", "preprocessor_config.json", "config.json"]))
+    kw = {"revision": REVISION, "allow_patterns": [
+        SRC_FILE, f"{SRC_FILE}_data", "tokenizer.json", "preprocessor_config.json", "config.json"]}
+    try:   # bản đã tải: huggingface_hub mới vẫn gọi API liệt kê file khi có allow_patterns, kể cả HF_HUB_OFFLINE=1
+        return Path(snapshot_download(REPO, local_files_only=True, **kw))
+    except Exception:   # noqa: BLE001 — chưa có trong cache (lần đầu) → tải
+        return Path(snapshot_download(REPO, **kw))
 
 
 def build_dir() -> Path:
@@ -256,6 +263,33 @@ def build_towers(src: Path, out_dir: Path) -> dict[str, tuple[Path, str]]:
     return {k: (out_dir / f"{k}.onnx", names[k]) for k in names}
 
 
+_LANE = threading.local()   # làn của request đang chạy trong luồng này (lane_of)
+QUERY, USER_IMAGE, BULK = 0, 1, 2
+
+
+def lane_of(items: list[dict]) -> int:
+    """1 câu hỏi ngắn → QUERY; 1 ảnh (người dùng gửi qua API) → USER_IMAGE; còn lại (lô incremental/compute) → BULK."""
+    if len(items) == 1 and "image" in items[0]:
+        return USER_IMAGE
+    if len(items) == 1 and len(items[0].get("text", "")) < QUERY_MAX_CHARS:
+        return QUERY
+    return BULK
+
+
+class Lanes:
+    """Ba làn chạy ORT, mỗi làn `n` lượt cùng lúc: câu hỏi chữ, ảnh người dùng gửi, lô hàng loạt. Đo 2026-10-21
+    (2 vCPU): một làn chung → câu hỏi sau request 8 ảnh chờ ~80 s, 2 lô chồng nhau làm client hết timeout 120 s rồi
+    gửi lại (server vẫn tính lô cũ); hai làn (API | lô) → câu hỏi 0,5 s cạnh lô nhưng xếp sau ảnh người dùng gửi
+    (~9 s / ảnh, tải 4 luồng: ảnh trung bình 27 s). Câu hỏi (~30 GFLOP) chạy song song chỉ làm lượt khác chậm vài
+    trăm ms; RAM cộng thêm nhỏ (1 mục ngắn / 1 ảnh)."""
+
+    def __init__(self, n: int):
+        self.lane = tuple(threading.Semaphore(n) for _ in (QUERY, USER_IMAGE, BULK))
+
+    def take(self, lane: int) -> threading.Semaphore:
+        return self.lane[lane]
+
+
 class Encoder:
     """2 InferenceSession (tháp chữ / tháp ảnh — build_towers), dùng chung giữa các luồng."""
 
@@ -270,7 +304,7 @@ class Encoder:
         # độ dài chữ đổi mỗi lượt → arena giữ đỉnh cũ và mem pattern vô dụng; tắt để RAM bám theo lượt đang chạy
         so.enable_cpu_mem_arena = os.environ.get("EMBED_MEM_ARENA", "0") == "1"
         so.enable_mem_pattern = False
-        self.slots = threading.Semaphore(CONCURRENCY)   # RAM đỉnh cộng dồn theo số lượt chạy cùng lúc
+        self.slots = Lanes(CONCURRENCY)   # RAM đỉnh cộng dồn theo số lượt chạy cùng lúc
         self.sess = {k: ort.InferenceSession(str(f), so, providers=["CPUExecutionProvider"])
                      for k, (f, _) in towers.items()}
         self.out = {k: name for k, (_, name) in towers.items()}
@@ -284,7 +318,7 @@ class Encoder:
 
     def _run(self, kind: str, feed: dict) -> np.ndarray:
         feed = {k: v for k, v in feed.items() if k in self.inputs[kind]}
-        with self.slots:
+        with self.slots.take(getattr(_LANE, "lane", BULK)):
             return np.asarray(self.sess[kind].run([self.out[kind]], feed)[0], dtype=np.float32)
 
     def texts(self, texts: list[str]) -> list[np.ndarray]:
@@ -376,12 +410,13 @@ def create_app(enc=None):
             errors_total.labels("400").inc()
             raise HTTPException(400, str(e))
         t0 = time.time()
+        _LANE.lane = lane_of(items)
         try:
             vecs, nt, ni = embed(get_enc(), items, dim)
         except Exception as e:   # ảnh hỏng, lỗi ORT → 500 có lý do; embedder phía client thử lại / báo EmbedError
             errors_total.labels("500").inc()
             raise HTTPException(500, f"{type(e).__name__}: {e}")
-        kind = "image" if ni else ("query" if nt == 1 and len(items[0]["text"]) < 1000 else "text")
+        kind = "image" if ni else ("query" if _LANE.lane == QUERY else "text")
         latency.labels(kind).observe(time.time() - t0)
         items_total.labels("image").inc(ni)
         items_total.labels("text").inc(nt)
