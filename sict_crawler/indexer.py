@@ -19,7 +19,8 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal_column, select
+from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from . import compute as C
@@ -159,13 +160,19 @@ async def upsert_documents(session, docs: list[dict], raw_key: str | None = None
 
 
 async def _upsert_returning(session, model, rows: list[dict], key: str,
-                            update: tuple[str, ...]) -> dict[str, int]:
+                            update: tuple[str, ...], union: tuple[str, ...] = ()) -> dict[str, int]:
+    """`union`: cột JSONB danh sách — hợp với giá trị đang có thay vì ghi đè."""
     out: dict[str, int] = {}
     col = getattr(model, key)
+    tbl = model.__tablename__
     for i in range(0, len(rows), 500):
         stmt = pg_insert(model).values(rows[i:i + 500])
-        stmt = stmt.on_conflict_do_update(index_elements=[key],
-                                          set_={c: stmt.excluded[c] for c in update})
+        set_ = {c: stmt.excluded[c] for c in update}
+        for c in union:
+            set_[c] = literal_column(
+                f"(SELECT coalesce(jsonb_agg(DISTINCT e), '[]'::jsonb) "
+                f"FROM jsonb_array_elements({tbl}.{c} || excluded.{c}) AS e)")
+        stmt = stmt.on_conflict_do_update(index_elements=[key], set_=set_)
         res = await session.execute(stmt.returning(model.id, col))
         out.update({k: i_ for i_, k in res.all()})
     return out
@@ -177,9 +184,42 @@ async def upsert_videos(session, rows: list[dict]) -> dict[str, int]:
 
 
 async def upsert_media(session, rows: list[dict]) -> dict[str, int]:
+    """frame_sets hợp với bộ đã có (cùng khung ở cả bộ v2 lẫn v3 → 1 dòng, 2 tag)."""
+    rows = [{"frame_sets": [], **r} for r in rows]
     return await _upsert_returning(session, Media, rows, "sha256",
                                    ("kind", "s3_key", "source_url", "ocr_text", "ocr_status",
-                                    "ocr_attempts", "video_id", "timestamp", "point_id"))
+                                    "ocr_attempts", "video_id", "timestamp", "point_id"), union=("frame_sets",))
+
+
+def frame_set_tag() -> str:
+    """Bộ khung = collection ảnh chứa point của khung (models.Media.frame_sets)."""
+    return get_settings().qdrant.collection_image
+
+
+def pick_frame_set(frames: list, tag: str) -> tuple[list, bool]:
+    """Khung (models.Media) của 1 video → (khung thuộc bộ `tag`, cần gắn tag?). Chưa có khung nào của bộ `tag`
+    (video chỉ có ở index cũ, hoặc DB nạp trước khi có frame_sets) → nhận trọn MỘT bộ cũ — bộ có dòng mới nhất —
+    chứ không trộn các bộ: trộn làm 1 video mang 2 bộ khung (2026-10-21: doc "Giới thiệu" 10 → 23 khung)."""
+    cur = [m for m in frames if tag in (m.frame_sets or [])]
+    if cur or not frames:
+        return cur, False
+    groups: dict[tuple, list] = {}
+    for m in frames:
+        groups.setdefault(tuple(sorted(m.frame_sets or [])), []).append(m)
+    best = max(groups.values(), key=lambda g: max(m.id for m in g))
+    return sorted(best, key=lambda m: m.timestamp if m.timestamp is not None else -1.0), True
+
+
+async def tag_frame_set(session, shas: list[str], tag: str) -> int:
+    """Gắn bộ `tag` cho các khung theo sha256 (DB nạp trước khi có frame_sets: loader --tag-frames)."""
+    n = 0
+    for i in range(0, len(shas), 1000):
+        res = await session.execute(sql_text(
+            "UPDATE media SET frame_sets = frame_sets || to_jsonb(CAST(:tag AS text)) "
+            "WHERE kind = 'video_frame' AND sha256 = ANY(:shas) AND NOT frame_sets ? :tag"),
+            {"tag": tag, "shas": shas[i:i + 1000]})
+        n += res.rowcount or 0
+    return n
 
 
 async def add_occurrences(session, model, rows: list[dict], cols: tuple[str, str]) -> None:
@@ -320,6 +360,7 @@ async def _index_images(session, st, doc: dict, doc_pk: int, blocks_at: dict) ->
 async def _index_videos(session, st, doc: dict, doc_pk: int, blocks_at: dict) -> list[dict]:
     from . import embedder, ocr, video
     occ: list[dict] = []
+    tag = frame_set_tag()
     for vurl in list(dict.fromkeys(doc["videos"]))[:MAX_VIDEOS_PER_PAGE]:
         key = C.video_key(vurl)
         v = await session.scalar(select(Video).where(Video.video_key == key))
@@ -350,14 +391,17 @@ async def _index_videos(session, st, doc: dict, doc_pk: int, blocks_at: dict) ->
                     rows.append({"sha256": sha, "kind": "video_frame", "s3_key": s3_key,
                                  "source_url": vurl, "ocr_text": text, "ocr_status": "done",
                                  "ocr_attempts": 1, "video_id": v.id, "timestamp": ts,
-                                 "point_id": fid})
+                                 "point_id": fid, "frame_sets": [tag]})
                     write_media_point(fid, vecs[k], media_payload(
                         "video_frame", sha, s3_key, vurl, [(doc_pk, doc)], v.title, timestamp=ts,
                         video_key=key))
                 await upsert_media(session, rows)
                 v.frames = len(rows)
-        frames_m = (await session.scalars(select(Media).where(Media.video_id == v.id)
-                                          .order_by(Media.timestamp))).all()
+        frames_m, adopt = pick_frame_set((await session.scalars(
+            select(Media).where(Media.video_id == v.id).order_by(Media.timestamp))).all(), tag)
+        if adopt:   # bộ cũ thành bộ của collection này; point dựng lại bên dưới (lost) từ byte đã lưu
+            for m in frames_m:
+                m.frame_sets = [*(m.frame_sets or []), tag]
         found = set(vector_store.attach_document([m.point_id for m in frames_m], doc_pk, doc["url"]))
         lost = [m for m in frames_m if m.point_id not in found]
         if lost:  # bài cuối cùng chứa video vừa bị gỡ (clear_document) → dựng lại point frame

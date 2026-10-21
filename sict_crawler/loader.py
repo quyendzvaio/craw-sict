@@ -15,6 +15,7 @@ Usage:
   python -m sict_crawler.loader --artifacts A --skip-media-upload   # store đã có file media
   python -m sict_crawler.loader --artifacts A --upload-media        # store S3: BẮT BUỘC có cờ mới upload
   python -m sict_crawler.loader --artifacts A --media-only --upload-media   # chỉ upload media (cutover)
+  python -m sict_crawler.loader --artifacts A --tag-frames      # chỉ gắn bộ khung (media.frame_sets) cho DB nạp trước
 Collection đích = config/env (QDRANT_COLLECTION_TEXT/IMAGE), phải là schema v2.
 Callers: CLI.
 """
@@ -177,7 +178,8 @@ class Loader:
                                    "ocr_text": ocr_by_key.get(f"frame:{f['frame_id']}", ""),
                                    "ocr_status": "done", "ocr_attempts": 1,
                                    "video_id": vid_pk.get(f["video_key"]),
-                                   "timestamp": f["timestamp"], "point_id": f["frame_id"]})
+                                   "timestamp": f["timestamp"], "point_id": f["frame_id"],
+                                   "frame_sets": [q.collection_image]})
             # sha trùng (cùng khung hình ở 2 video) → 1 dòng media; giữ dòng cuối
             media_rows = list({r["sha256"]: r for r in media_rows}.values())
             mpk = await indexer.upsert_media(s, media_rows)
@@ -276,6 +278,22 @@ class Loader:
         return self.stats
 
 
+async def tag_frames(art: Path) -> dict:
+    """Chỉ gắn bộ khung của artifact (collection ảnh đích) vào media.frame_sets — DB đã nạp trước khi có cột này.
+    Không ghi Qdrant, không upload."""
+    ld = Loader(art, None, False, False)
+    ld.check()
+    tag = ld.cfg.qdrant.collection_image
+    shas = [hashlib.sha256((art / f["path"]).read_bytes()).hexdigest() for f in _jsonl(art / "frames.jsonl")]
+    await db.init_db()
+    async with db.get_session() as s:
+        n = await indexer.tag_frame_set(s, shas, tag)
+        await s.commit()
+    stats = {"tag": tag, "frames": len(shas), "tagged": n, "ok": True}
+    ld.log(json.dumps(stats, ensure_ascii=False))
+    return stats
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Nạp artifact compute → PG + Qdrant *_v2 + S3")
     ap.add_argument("--artifacts", required=True)
@@ -287,7 +305,11 @@ def main() -> None:
                     help="cho phép upload file media lên S3 (store S3). Không có cờ này → không upload")
     ap.add_argument("--media-only", action="store_true",
                     help="chỉ upload file media (không ghi PG/Qdrant) — dùng với --upload-media")
+    ap.add_argument("--tag-frames", action="store_true",
+                    help="chỉ gắn bộ khung của artifact vào media.frame_sets (không ghi Qdrant, không upload)")
     args = ap.parse_args()
+    if args.tag_frames:
+        raise SystemExit(0 if asyncio.run(tag_frames(Path(args.artifacts)))["ok"] else 1)
     ld = Loader(Path(args.artifacts), Path(args.snapshot) if args.snapshot else None,
                 not args.skip_media_upload, args.upload_media)
     stats = ld.upload_media_only() if args.media_only else asyncio.run(ld.run(args.recreate))

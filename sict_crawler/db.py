@@ -46,6 +46,8 @@ _ADD_COLUMNS = (
     ("documents", "structure", "JSONB"), ("documents", "hash_struct", "VARCHAR(64)"),
     ("media_occurrence", "block_idx", "INTEGER"), ("media_occurrence", "heading_path", "JSONB DEFAULT '[]'::jsonb"),
     ("video_occurrence", "block_idx", "INTEGER"),
+    # bộ khung video theo collection ảnh (models.Media.frame_sets)
+    ("media", "frame_sets", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
 )
 
 

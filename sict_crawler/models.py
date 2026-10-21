@@ -5,7 +5,7 @@ nằm trong payload Qdrant. Point id = uuid5 cố định (compute.stable_id) n�
   documents(id, url, title, raw_s3_key, content_hash, meta, crawled_at,
             doc_key, section, doc_type, published_at, year, parent_url, hash_v2)
   media(id, sha256 unique, kind[image|video_frame], s3_key, source_url, ocr_text, ocr_status,
-        ocr_attempts, video_id, timestamp, point_id)          — 1 dòng / 1 file media
+        ocr_attempts, video_id, timestamp, point_id, frame_sets)  — 1 dòng / 1 file media
   media_occurrence(document_id, media_id, alt, pos, caption_point_id)  — 1 dòng / 1 lần xuất hiện
   videos(id, video_key unique [YouTube id], url, title, subs, frames, status)
   video_occurrence(document_id, video_id, caption_point_id)
@@ -127,6 +127,10 @@ class Media(Base):
         ForeignKey("videos.id", ondelete="CASCADE"), default=None, index=True)
     timestamp: Mapped[float | None] = mapped_column(Float, default=None)
     point_id: Mapped[str] = mapped_column(String(36), default="")  # point sict_image_v2
+    # khung video: collection ảnh mà khung thuộc bộ khung của nó (sict_image_v2 / sict_image_v3). PG dùng chung
+    # cho blue/green: mỗi bản compute trích khung ở thời điểm khác → 1 video mang nhiều bộ; index lại chỉ lấy
+    # bộ của collection đang phục vụ (indexer.pick_frame_set), bộ cũ dọn khi bỏ hẳn collection đó (reconcile)
+    frame_sets: Mapped[list] = mapped_column(JSONB, default=list)
 
 
 class MediaOccurrence(Base):
