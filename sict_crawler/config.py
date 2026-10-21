@@ -94,6 +94,9 @@ class EmbeddingConfig:
     api_tpm: int = 0                # giới hạn token/phút phía client (EMBED_TPM); 0 = không giới hạn
     timeout: int = 120
     cache_path: str = ""            # sqlite cache vector theo hash đầu vào; rỗng = không cache
+    # cạnh ảnh TRUY VẤN gửi dịch vụ tự host ("image_size" trong mục ảnh; EMBED_QUERY_IMAGE_SIZE); 0 = như ảnh
+    # corpus (512). Chỉ đặt khi EMBED_API_BASE là embed_server (Jina cloud không nhận khoá này). Production: 392.
+    query_image_size: int = 0
 
     def __post_init__(self):
         # EMBED_DEVICE override (VD ép cpu trên máy có GPU dùng chung)
@@ -105,7 +108,8 @@ class EmbeddingConfig:
         for env, attr in (("EMBED_BACKEND", "backend"), ("EMBED_API_BASE", "api_base"),
                           ("EMBED_API_KEY", "api_key"), ("EMBED_MODEL", "model"),
                           ("EMBED_DIM", "dim"), ("EMBED_CACHE_PATH", "cache_path"), ("EMBED_TPM", "api_tpm"),
-                          ("EMBED_WORKERS", "api_workers"), ("EMBED_IMAGE_BATCH", "api_image_batch")):
+                          ("EMBED_WORKERS", "api_workers"), ("EMBED_IMAGE_BATCH", "api_image_batch"),
+                          ("EMBED_QUERY_IMAGE_SIZE", "query_image_size")):
             v = os.environ.get(env) or os.environ.get(alt.get(attr, ""), "")
             if v.strip():   # kiểu lấy theo giá trị mặc định (dim → int)
                 setattr(self, attr, type(getattr(self, attr))(v.strip()))

@@ -266,7 +266,7 @@ def _query_image_vec(b64: str | None) -> list[float] | None:
     if not b64:
         return None
     try:
-        v = embedder.embed_image_base64([b64])
+        v = embedder.embed_query_image_base64([b64])
     except Exception:
         return None
     return v[0] if v else None

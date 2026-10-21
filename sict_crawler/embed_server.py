@@ -32,12 +32,14 @@ Env: EMBED_ONNX_REPO, EMBED_ONNX_REVISION, EMBED_ONNX_DIR (thư mục có sẵn 
 (nơi ghi 2 tháp đã lượng tử, mặc định $HF_HOME/sict-embed/<revision>-<quant>), EMBED_QUANT (w8 | fp32),
 EMBED_THREADS (intra-op, mặc định số CPU), EMBED_TEXT_MAX_LEN (2048), EMBED_TOKEN_BUDGET (token / 1 lượt chạy),
 EMBED_CONCURRENCY (1; lượt chạy ORT cùng lúc mỗi làn — request đơn lẻ của API có làn riêng, xem Lanes),
-EMBED_IMAGE_BATCH (ảnh / 1 lượt chạy ORT), EMBED_MEM_ARENA=1 (bật arena ORT: nhanh hơn chút, RAM giữ đỉnh).
+EMBED_IMAGE_BATCH (ảnh / 1 lượt chạy ORT), EMBED_MEM_ARENA=1 (bật arena ORT: nhanh hơn chút, RAM giữ đỉnh),
+EMBED_QUERY_IMAGE_SIZES (392; cạnh ảnh truy vấn có tháp riêng — mục ảnh gửi "image_size": N, resize_vision_tower).
 """
 import argparse
 import base64
 import io
 import json
+import math
 import os
 import threading
 import time
@@ -67,6 +69,10 @@ CONCURRENCY = int(os.environ.get("EMBED_CONCURRENCY", "1"))        # lượt ch�
 # ảnh / lượt chạy: gộp lô trên CPU không nhanh hơn (2 vCPU, 2026-10-21: 8 ảnh 1 lượt 80,8 s; 8 lượt × 1 ảnh 73,5 s)
 IMAGE_BATCH = int(os.environ.get("EMBED_IMAGE_BATCH", "1"))
 QUERY_MAX_CHARS = 1000   # 1 đoạn chữ ngắn hơn = câu hỏi (ưu tiên + nhãn kind=query của metric)
+# Ảnh TRUY VẤN (client gửi "image_size" trong mục ảnh) chạy tháp ảnh dựng lại cho cạnh nhỏ hơn; ảnh corpus giữ 512.
+# Đo 2026-10-22 (2 vCPU, 40 ảnh, 5.962 vector 512): 448 −37 % thời gian, 392 −52 % (ảnh gốc hạng 1: 39/40, top 5:
+# 40/40, cosine với vector 512 cùng ảnh 0,983), 336 −66 % nhưng vector lệch rõ (thấp nhất 0,94). Chủ dự án chọn 392.
+QUERY_IMAGE_SIZES = tuple(int(x) for x in os.environ.get("EMBED_QUERY_IMAGE_SIZES", "392").split(",") if x.strip())
 FULL_DIM = 1024
 MODEL_NAME = "jina-clip-v2"
 
@@ -148,6 +154,8 @@ def parse_items(body: dict) -> list[dict]:
             it = {"text": it}
         if not isinstance(it, dict) or ("text" in it) == ("image" in it):
             raise ValueError("mỗi phần tử input có đúng 1 khoá text hoặc image")
+        if "image_size" in it and it["image_size"] not in QUERY_IMAGE_SIZES:
+            raise ValueError(f"image_size {it['image_size']!r} không có tháp (EMBED_QUERY_IMAGE_SIZES={QUERY_IMAGE_SIZES})")
         out.append(it)
     return out
 
@@ -171,6 +179,95 @@ def build_dir() -> Path:
         return Path(os.environ["EMBED_BUILD_DIR"])
     home = Path(os.environ.get("HF_HOME") or Path.home() / ".cache" / "huggingface")
     return home / "sict-embed" / f"{REVISION[:12]}-{RECIPE if QUANT == 'w8' else QUANT}"
+
+
+def bicubic_matrix(n_in: int, n_out: int, a: float = -0.75) -> np.ndarray:
+    """Ma trận nội suy bicubic 1 chiều (n_out × n_in), khớp torch F.interpolate(mode="bicubic",
+    align_corners=False, antialias=False): nguồn = (i + 0.5)·n_in/n_out − 0.5, 4 điểm lân cận chặn ở biên."""
+    def k(x: float) -> float:
+        x = abs(x)
+        if x <= 1:
+            return ((a + 2) * x - (a + 3)) * x * x + 1
+        return ((a * x - 5 * a) * x + 8 * a) * x - 4 * a if x < 2 else 0.0
+    w = np.zeros((n_out, n_in), dtype=np.float64)
+    for i in range(n_out):
+        src = (i + 0.5) * n_in / n_out - 0.5
+        f = math.floor(src)
+        for j in range(-1, 3):
+            w[i, min(max(f + j, 0), n_in - 1)] += k(j - (src - f))
+    return w
+
+
+def rope_tables(grid: int, dim: int, pt_seq_len: int, theta: float = 10000.0) -> tuple[np.ndarray, np.ndarray]:
+    """(cos, sin) (grid², 2·dim) của VisionRotaryEmbeddingFast (jina-clip-implementation, intp_freq): tần số
+    theo vị trí t = arange(grid)/grid·pt_seq_len, lặp đôi, ghép trục hàng + trục cột."""
+    freqs = 1.0 / theta ** (np.arange(0, dim, 2)[: dim // 2].astype(np.float32) / dim)
+    f = np.repeat(np.outer(np.arange(grid, dtype=np.float32) / grid * pt_seq_len, freqs), 2, axis=-1)
+    both = np.concatenate([np.broadcast_to(f[:, None, :], (grid, grid, dim)),
+                           np.broadcast_to(f[None, :, :], (grid, grid, dim))], axis=-1)
+    return np.cos(both).reshape(-1, 2 * dim), np.sin(both).reshape(-1, 2 * dim)
+
+
+def resize_vision_tower(model, size: int, pt_seq_len: int) -> int:
+    """Tháp ảnh (ONNX, đã nạp trọng số) cho ảnh vuông `size` thay vì 512, sửa tại chỗ. Graph xuất ở 512 khoá cứng
+    lưới 36×36: pos_embed (1, 1 + 36², D), bảng RoPE cos/sin (36², 64), hằng số reshape 1296 / 1297 → nội suy
+    pos_embed bicubic như timm/EVA, tính lại RoPE theo lưới mới (kiểm công thức bằng cách dựng lại bảng 36×36 gốc),
+    đổi hằng số. Trả cạnh lưới mới."""
+    from onnx import numpy_helper
+    g = model.graph
+    patch = next(int(a.ints[0]) for n in g.node if n.op_type == "Conv" for a in n.attribute if a.name == "kernel_shape")
+    pe = next(t for t in g.initializer if t.name.endswith("pos_embed"))
+    n0 = pe.dims[1] - 1
+    g0, g1 = math.isqrt(n0), size // patch
+    if g0 * g0 != n0 or g1 < 2:
+        raise ValueError(f"lưới không vuông hoặc ảnh quá nhỏ: pos_embed {list(pe.dims)}, size {size}, patch {patch}")
+    if g1 == g0:
+        return g1
+    n1 = g1 * g1
+    a = numpy_helper.to_array(pe).astype(np.float64)
+    w = bicubic_matrix(g0, g1)
+    grid = np.einsum("ia,abd,jb->ijd", w, a[0, 1:].reshape(g0, g0, -1), w).reshape(1, n1, -1)
+    pe.CopyFrom(numpy_helper.from_array(np.concatenate([a[:, :1], grid], 1).astype(np.float32), pe.name))
+    rope = [t for t in g.initializer if t.data_type == 1 and len(t.dims) == 2 and t.dims[0] == n0]
+    if rope:
+        dim = rope[0].dims[1] // 2
+        old, new = rope_tables(g0, dim, pt_seq_len), rope_tables(g1, dim, pt_seq_len)
+        for t in rope:
+            arr = numpy_helper.to_array(t)
+            err = [float(np.abs(arr - o).max()) for o in old]
+            k = int(np.argmin(err))
+            if err[k] > 1e-4:
+                raise ValueError(f"bảng RoPE {t.name} không khớp công thức (sai lệch {err[k]:.2e})")
+            t.CopyFrom(numpy_helper.from_array(new[k].astype(np.float32), t.name))
+    for t in g.initializer:   # hằng số shape của Reshape/Expand: số patch, số token (+ CLS)
+        if t.data_type == 7 and len(t.dims) == 1 and t.dims[0] <= 8:
+            arr = numpy_helper.to_array(t)
+            if np.isin(arr, (n0, n0 + 1)).any():
+                t.CopyFrom(numpy_helper.from_array(
+                    np.where(arr == n0, n1, np.where(arr == n0 + 1, n1 + 1, arr)).astype(np.int64), t.name))
+    dims = g.input[0].type.tensor_type.shape.dim
+    dims[2].dim_value = dims[3].dim_value = size
+    del g.value_info[:]   # shape trung gian cũ (1296 …) — ORT tự suy lại
+    return g1
+
+
+def query_towers(src: Path, out_dir: Path) -> dict[int, Path]:
+    """Tháp ảnh cho từng cỡ ảnh truy vấn (QUERY_IMAGE_SIZES), dựng từ image.onnx đã lượng tử, lưu cạnh nó."""
+    import onnx
+    out = {}
+    for size in QUERY_IMAGE_SIZES:
+        path = out_dir / f"image_{size}.onnx"
+        if not path.exists():
+            t0 = time.time()
+            pt = json.loads((src / "config.json").read_text()).get("vision_config", {}).get("pt_hw_seq_len", 16)
+            m = onnx.load(str(out_dir / "image.onnx"))
+            resize_vision_tower(m, size, pt)
+            tmp = path.with_suffix(".onnx.tmp")
+            onnx.save(m, str(tmp))
+            tmp.replace(path)
+            print(f"[embed_server] build image_{size}: {time.time() - t0:.0f}s", flush=True)
+        out[size] = path
+    return out
 
 
 def quantize_vocab_table(model, min_rows: int = 10000) -> int:
@@ -291,13 +388,15 @@ class Lanes:
 
 
 class Encoder:
-    """2 InferenceSession (tháp chữ / tháp ảnh — build_towers), dùng chung giữa các luồng."""
+    """InferenceSession tháp chữ / tháp ảnh (build_towers) + tháp ảnh truy vấn theo cỡ (query_towers), dùng chung
+    giữa các luồng."""
 
     def __init__(self, path: Path | None = None, threads: int | None = None):
         import onnxruntime as ort
         d = path or model_dir()
         out = build_dir()
         towers = build_towers(d, out)
+        towers.update({f"image_{n}": (f, towers["image"][1]) for n, f in query_towers(d, out).items()})
         so = ort.SessionOptions()
         so.intra_op_num_threads = threads or int(os.environ.get("EMBED_THREADS", "0")) or (os.cpu_count() or 1)
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -337,11 +436,13 @@ class Encoder:
                 out[i] = v
         return out  # type: ignore[return-value]
 
-    def images(self, blobs: list[bytes]) -> list[np.ndarray]:
+    def images(self, blobs: list[bytes], size: int | None = None) -> list[np.ndarray]:
+        """size = cạnh ảnh truy vấn (QUERY_IMAGE_SIZES); None = ảnh corpus (512, tháp gốc)."""
+        kind, pre = ("image", self.pre) if size is None else (f"image_{size}", {**self.pre, "size": size})
         out: list[np.ndarray] = []
         for i in range(0, len(blobs), IMAGE_BATCH):
-            px = np.stack([preprocess_image(b, self.pre) for b in blobs[i:i + IMAGE_BATCH]])
-            out += list(self._run("image", {"pixel_values": px}))
+            px = np.stack([preprocess_image(b, pre) for b in blobs[i:i + IMAGE_BATCH]])
+            out += list(self._run(kind, {"pixel_values": px}))
         return out
 
 
@@ -353,8 +454,12 @@ def embed(enc, items: list[dict], dim: int | None) -> tuple[list[list[float]], i
     if t_idx:
         for k, v in zip(t_idx, enc.texts([items[k]["text"] for k in t_idx])):
             vecs[k] = v
-    if i_idx:
-        for k, v in zip(i_idx, enc.images([base64.b64decode(items[k]["image"]) for k in i_idx])):
+    by_size: dict[int | None, list[int]] = {}
+    for k in i_idx:
+        by_size.setdefault(items[k].get("image_size"), []).append(k)
+    for size, ks in by_size.items():
+        blobs = [base64.b64decode(items[k]["image"]) for k in ks]
+        for k, v in zip(ks, enc.images(blobs) if size is None else enc.images(blobs, size)):
             vecs[k] = v
     return [finish(v, dim) for v in vecs], len(t_idx), len(i_idx)
 
@@ -416,7 +521,8 @@ def create_app(enc=None):
         except Exception as e:   # ảnh hỏng, lỗi ORT → 500 có lý do; embedder phía client thử lại / báo EmbedError
             errors_total.labels("500").inc()
             raise HTTPException(500, f"{type(e).__name__}: {e}")
-        kind = "image" if ni else ("query" if _LANE.lane == QUERY else "text")
+        kind = ("image_query" if any("image_size" in it for it in items) else "image") if ni else \
+            ("query" if _LANE.lane == QUERY else "text")
         latency.labels(kind).observe(time.time() - t0)
         items_total.labels("image").inc(ni)
         items_total.labels("text").inc(nt)

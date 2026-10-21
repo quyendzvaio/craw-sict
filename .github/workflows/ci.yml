@@ -29,6 +29,8 @@ jobs:
       - run: uv run --locked python -m sict_crawler.tests.test_safety
       - run: uv run --locked python -m sict_crawler.tests.test_captions
       - run: uv run --locked python -m sict_crawler.tests.test_agent
+      # test cần onnx/onnxruntime (sửa graph tháp ảnh, lượng tử bảng từ vựng) bị skip ở bước trên (không có group embed)
+      - run: uv run --locked --group dev --group embed pytest sict_crawler/tests/test_embed_server.py -q
       - name: Alloy templates render
         run: |
           printf '%s\n' GCLOUD_HOSTED_METRICS_URL=https://prometheus.example/api/prom/push GCLOUD_HOSTED_METRICS_ID=1 \
