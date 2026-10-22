@@ -26,7 +26,7 @@ sudo docker run --rm -v craw-sict_hfcache:/cache/hf alpine chown -R 10000:10000 
 # chạy thử 1 mẻ nhỏ trước khi bật cron 6h (phát hiện lỗi sớm, đỡ tốn tiền chạy vô ích)
 sudo docker compose -f docker-compose.worker.yml up -d obscura
 sudo docker compose -f docker-compose.worker.yml run --rm svc-ocr \
-  python -m sict_crawler.main --incremental --check-edits 5 --crawl-limit 5 --annotate-ocr-n 20
+  python -m sict_crawler.pipeline.main --incremental --check-edits 5 --crawl-limit 5 --annotate-ocr-n 20
 echo "== mẻ thử xong, kiểm tra log trên rồi bật cron =="
 # docker compose -f docker-compose.worker.yml up -d cron
 bash scripts/monitor_2vm.sh worker

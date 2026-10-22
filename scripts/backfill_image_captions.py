@@ -14,7 +14,7 @@ sys.path.insert(0, "/app")
 
 
 def main(limit: int = 0) -> None:
-    from sict_crawler import vector_store
+    from sict_crawler.repository import vector_store
 
     cfg = vector_store.get_settings().qdrant
     client = vector_store.get_client()
@@ -55,8 +55,8 @@ def main(limit: int = 0) -> None:
 async def _pg_captions_all() -> dict[int, str]:
     from sqlalchemy import select
 
-    from sict_crawler import db
-    from sict_crawler.models import MediaAsset
+    from sict_crawler.model.orm import MediaAsset
+    from sict_crawler.repository import db
 
     out: dict[int, str] = {}
     async with db.get_session() as session:

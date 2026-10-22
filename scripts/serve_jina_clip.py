@@ -6,9 +6,9 @@ Client gọi qua EMBED_API_BASE (không cần EMBED_API_KEY). Ví dụ trên má
     uv run --group ml python scripts/serve_jina_clip.py --host 0.0.0.0 --port 8000
     # máy chạy compute:
     EMBED_BACKEND=api EMBED_API_BASE=http://127.0.0.1:8000 EMBED_DIM=1024 \
-        uv run --group ml python -m sict_crawler.compute --snapshot _snapshot/<date> --stages images,videos
+        uv run --group ml python -m sict_crawler.pipeline.compute --snapshot _snapshot/<date> --stages images,videos
 
-Hợp đồng khớp `sict_crawler/embedder.py::_post` và `sict_crawler/tests/test_embedder_api.py`:
+Hợp đồng khớp `sict_crawler/service/embedding/embedder.py::_post` và `tests/test_embedder_api.py`:
   request  {model, input:[{"text"}|{"image": <base64>}], normalized, embedding_type, dimensions}
   response {data:[{index, embedding}], usage:{total_tokens,...}}  — thứ tự theo `index`.
 

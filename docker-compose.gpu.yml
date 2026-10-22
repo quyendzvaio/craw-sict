@@ -21,7 +21,7 @@ services:
       - ./_snapshot:/app/_snapshot          # snapshot vào, artifact ra (cùng thư mục)
       - ./.hf-cache:/work/.hf-cache         # cache model, khỏi tải lại khi chạy lại
       - ./cookies:/cookies:ro               # keyframe/phụ đề YouTube (IP cloud hay bị chặn)
-    command: ["python", "-m", "sict_crawler.compute", "--snapshot", "${SNAPSHOT:-_snapshot/2026-10-12}"]
+    command: ["python", "-m", "sict_crawler.pipeline.compute", "--snapshot", "${SNAPSHOT:-_snapshot/2026-10-12}"]
     deploy:
       resources:
         reservations:
