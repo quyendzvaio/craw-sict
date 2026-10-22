@@ -20,8 +20,9 @@ os.environ.setdefault("AWS_PROFILE", "quyen-admin")
 
 from sqlalchemy import select  # noqa: E402
 
-from sict_crawler import db, storage as S  # noqa: E402
-from sict_crawler.models import Document, MediaAsset  # noqa: E402
+from sict_crawler.model.orm import Document, MediaAsset  # noqa: E402
+from sict_crawler.repository import db  # noqa: E402
+from sict_crawler.repository import storage as S
 
 
 def list_s3_keys(st, prefix: str) -> set[str]:

@@ -15,9 +15,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sict_crawler import embedder  # noqa: E402
-from sict_crawler.compute import _jsonl_read as rows  # noqa: E402   (thiếu file → [])
-from sict_crawler.config import get_settings  # noqa: E402
+from sict_crawler.core.config import get_settings  # noqa: E402
+from sict_crawler.pipeline.compute import _jsonl_read as rows  # noqa: E402   (thiếu file → [])
+from sict_crawler.service.embedding import embedder  # noqa: E402
 
 
 def main() -> None:

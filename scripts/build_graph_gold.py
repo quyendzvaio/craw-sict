@@ -22,9 +22,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import select  # noqa: E402
 
-from sict_crawler import db, graphsync  # noqa: E402
-from sict_crawler import graph as G  # noqa: E402
-from sict_crawler.models import Document  # noqa: E402
+from sict_crawler.model.orm import Document  # noqa: E402
+from sict_crawler.repository import db  # noqa: E402
+from sict_crawler.service.graph import graph as G  # noqa: E402
+from sict_crawler.service.graph import graphsync
 
 MAX_BODY = 6000
 # số bài theo nhóm mục (tổng ~150); nhóm "khac" lấy phần còn lại

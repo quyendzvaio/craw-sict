@@ -20,7 +20,7 @@ commit messages are mostly Vietnamese; keep that convention.
 - **Never commit without the owner saying so.** The working tree carries an uncommitted v3 batch (~89 modified/untracked
   files incl. `AGENTS.md`, `CLAUDE.md`); do not revert or stash it. Owner splits it into commits when ready.
 - Never copy review data into the repo: `/DATA/craw-sict-data/review/` (entity review CSV) is deliberately outside the
-  repo because it contains student names (PII). `sict_crawler/graph_catalog.yaml` is a draft that needs owner review.
+  repo because it contains student names (PII). `sict_crawler/service/graph/graph_catalog.yaml` is a draft that needs owner review.
 
 ## In-flight: v3 multimodal migration (uncommitted; index v3 not built yet)
 
@@ -41,13 +41,13 @@ commit messages are mostly Vietnamese; keep that convention.
 ```bash
 uv sync --group dev --group api                  # add --group ml for embedding/OCR/video
 docker compose up -d postgres redis qdrant        # local infra
-uv run uvicorn sict_crawler.api:app --port 8000   # API + chat UI at /
-uv run pytest sict_crawler/tests/ -q --ignore=sict_crawler/tests/smoke_incremental.py   # same as CI
-uv run pytest sict_crawler/tests/test_safety.py::test_mass_delete_guard                 # single test
-uv run python -m sict_crawler.tests.test_safety   # 3 tests also run as scripts in CI (also test_captions, test_agent)
+uv run uvicorn sict_crawler.api.routes:app --port 8000   # API + chat UI at /
+uv run pytest tests/ -q --ignore=tests/smoke_incremental.py   # same as CI
+uv run pytest tests/test_safety.py::test_mass_delete_guard                 # single test
+uv run python -m tests.test_safety   # 3 tests also run as scripts in CI (also test_captions, test_agent)
 ```
 
-Pipeline CLI (`python -m sict_crawler.main`, one mode per invocation): `--crawl-limit N`, `--full`,
+Pipeline CLI (`python -m sict_crawler.pipeline.main`, one mode per invocation): `--crawl-limit N`, `--full`,
 `--incremental --check-edits N --crawl-limit N --annotate-ocr-n N`, `--refresh`, `--reset`.
 
 Bulk (re)index path: `snapshot --out _snapshot/<date>` → `compute --snapshot S [--stages ...]` →
@@ -73,13 +73,14 @@ Bulk (re)index path: `snapshot --out _snapshot/<date>` → `compute --snapshot S
   (no Alembic yet); add new columns there.
 - `test_behavior_contract.py` / `test_retrieval_response_contract.py` are spec tests derived from
   `tests/acceptance_*.md` (stdlib `unittest`); they encode policy and do not import the real code.
-- Parser changes must ship with real-HTML fixtures in `sict_crawler/tests/fixtures/` (`test_parser_theme.py`).
+- Parser changes must ship with real-HTML fixtures in `tests/fixtures/` (`test_parser_theme.py`).
 
 ## Architecture map
 
 Ingest: `frontier` (Redis BFS) → `crawler.fetch` (httpx → Obscura → crawl4ai via `CRAWLER_BACKEND`) →
 `parser` → `chunker` → `embedder` → `vector_store` + `db`/`models` + `storage`.
 `indexer.index_page` is the single v2 write path (idempotent via `hash_v2`/`hash_struct`); `incremental.py`
-reuses it. Query: `api.py` `/query` + `/chat` (SSE) → `agent.run` (rewrite → RRF dense+BM25 → optional LLM
+reuses it. Query: `api/routes.py` `/query` + `/chat` (SSE) → `agent.run` → `retriever.retrieve` (rewrite → RRF dense+BM25 → optional LLM
 judge → answer), `router.py` media intent, `filters.py` metadata, `graph.py`/`graphsync.py` entity graph
-(PG is source of truth). `compute.py`+`indexing.py` are the shared rule set for bulk and incremental.
+(PG is source of truth). `service/index/doc_rules.py`+`indexing.py` are the shared rule set for bulk and incremental.
+Packages by responsibility (imports only point down): `core` → `model` → `repository` → `service/{crawl,index,embedding,retrieval,graph}` → `pipeline` | `api`; tests in top-level `tests/`. Full table in CLAUDE.md "Code layout".

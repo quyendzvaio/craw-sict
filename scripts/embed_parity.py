@@ -29,8 +29,8 @@ import httpx
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from sict_crawler import embedder  # noqa: E402
-from sict_crawler.config import get_settings  # noqa: E402
+from sict_crawler.core.config import get_settings  # noqa: E402
+from sict_crawler.service.embedding import embedder  # noqa: E402
 
 ART = "_snapshot/2026-10-12/artifacts/v3-jina-clip-v2"
 
