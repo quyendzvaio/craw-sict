@@ -51,9 +51,9 @@ def _write(p: Path, rows: list[dict]) -> None:
 
 # ------------------------------------------------------------------ corpus
 def cmd_corpus(a) -> None:
-    from sict_crawler import compute as C
-    from sict_crawler import indexing as ix
-    from sict_crawler.config import get_settings
+    from sict_crawler.core.config import get_settings
+    from sict_crawler.service.index import doc_rules as C
+    from sict_crawler.service.index import indexing as ix
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)

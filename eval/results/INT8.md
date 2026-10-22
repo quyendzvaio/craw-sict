@@ -1,6 +1,6 @@
 # jina-clip-v2 tự host ONNX int8 — đo 2026-10-20
 
-Dịch vụ `sict_crawler/embed_server.py` (`Dockerfile.embed`), chạy trên đúng cấu hình production dự kiến:
+Dịch vụ `sict_crawler/service/embedding/embed_server.py` (`Dockerfile.embed`), chạy trên đúng cấu hình production dự kiến:
 container `--cpus 2 --memory 8g`, `EMBED_THREADS=2`. Index đích: Qdrant v3 local (`sict_text_v3` 16.794 chunk,
 `sict_ocr_v3` 5.904 caption, `sict_image_v3` 5.962 ảnh/khung) — nhúng bằng Jina cloud (chữ) + fp32 tự host (ảnh).
 

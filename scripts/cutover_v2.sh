@@ -42,7 +42,7 @@ case "${1:-}" in
     [ -f "$PKG" ] && tar xzf "$PKG"
     docker compose build api   # chỉ build — container API đang chạy giữ image cũ tới lúc deploy
     docker compose run --rm --no-deps -v "$PWD/_snapshot:/app/_snapshot:ro" api \
-      python -m sict_crawler.loader --artifacts "$ART" --skip-media-upload
+      python -m sict_crawler.pipeline.loader --artifacts "$ART" --skip-media-upload
     ;;
   verify)
     python3 scripts/eval_api.py --api "$API" --golden eval/golden_v1.jsonl
@@ -52,7 +52,7 @@ case "${1:-}" in
       echo "Từ chối: upload S3 cần CONFIRM_S3_UPLOAD=yes (chỉ chạy khi đã được cho phép)." >&2
       exit 2
     fi
-    python -m sict_crawler.loader --artifacts "$ART" --snapshot "$SNAP" --media-only --upload-media
+    python -m sict_crawler.pipeline.loader --artifacts "$ART" --snapshot "$SNAP" --media-only --upload-media
     ;;
   rollback)
     cat <<'EOF'

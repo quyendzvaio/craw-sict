@@ -16,4 +16,4 @@ COPY sict_crawler ./sict_crawler
 ENV PATH="/app/.venv/bin:$PATH"
 USER 10000
 EXPOSE 8000
-CMD ["uvicorn", "sict_crawler.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "sict_crawler.api.routes:app", "--host", "0.0.0.0", "--port", "8000"]

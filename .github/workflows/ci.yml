@@ -25,12 +25,12 @@ jobs:
           enable-cache: true
       # --locked: fail nếu uv.lock lệch pyproject.toml (--frozen chỉ dùng lock, không kiểm)
       - run: uv sync --locked --group dev --group api
-      - run: uv run --locked pytest sict_crawler/tests/ -q --ignore=sict_crawler/tests/smoke_incremental.py
-      - run: uv run --locked python -m sict_crawler.tests.test_safety
-      - run: uv run --locked python -m sict_crawler.tests.test_captions
-      - run: uv run --locked python -m sict_crawler.tests.test_agent
+      - run: uv run --locked pytest tests/ -q --ignore=tests/smoke_incremental.py
+      - run: uv run --locked python -m tests.test_safety
+      - run: uv run --locked python -m tests.test_captions
+      - run: uv run --locked python -m tests.test_agent
       # test cần onnx/onnxruntime (sửa graph tháp ảnh, lượng tử bảng từ vựng) bị skip ở bước trên (không có group embed)
-      - run: uv run --locked --group dev --group embed pytest sict_crawler/tests/test_embed_server.py -q
+      - run: uv run --locked --group dev --group embed pytest tests/test_embed_server.py -q
       - name: Alloy templates render
         run: |
           printf '%s\n' GCLOUD_HOSTED_METRICS_URL=https://prometheus.example/api/prom/push GCLOUD_HOSTED_METRICS_ID=1 \
