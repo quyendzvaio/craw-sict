@@ -11,7 +11,7 @@ So khớp: người theo khoá giữ dấu (graph.person_key); sự kiện/CLB t
 nhau (≥ 2 từ) cũng tính; ảnh theo cặp (sha256, thực thể); vai trò trên thực thể đã khớp.
 
 Usage: python scripts/eval_graph.py --gold eval/graph_gold_v1.jsonl --pred rules [--errors 20]
-Callers: CLI, sict_crawler/tests/test_eval_graph.py (CI, bộ nhỏ gán tay).
+Callers: CLI, tests/test_eval_graph.py (CI, bộ nhỏ gán tay).
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sict_crawler import graph as G  # noqa: E402
+from sict_crawler.service.graph import graph as G  # noqa: E402
 
 KINDS = ("person", "event", "org")
 
@@ -101,7 +101,8 @@ def rules_gazetteer(items: list[dict], source: str = "auto") -> G.Gazetteer:
     try:
         import asyncio
 
-        from sict_crawler import db, graphsync
+        from sict_crawler.repository import db
+        from sict_crawler.service.graph import graphsync
 
         async def load():
             async with db.get_session() as s:

@@ -34,7 +34,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    command: uvicorn sict_crawler.api:app --host 0.0.0.0 --port 8000
+    command: uvicorn sict_crawler.api.routes:app --host 0.0.0.0 --port 8000
     ports: ["8003:8000"]  # host 8000/8001 đã bị project khác chiếm
     env_file: [{path: .env, required: false}]  # fresh clone chưa có .env vẫn up được (dùng defaults)
     environment:

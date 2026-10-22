@@ -29,7 +29,7 @@ services:
     restart: "no"  # chạy 1 lần rồi thoát; cron bên dưới chạy lặp
     mem_limit: 3000m
     logging: {driver: json-file, options: {max-size: 20m, max-file: "3"}}
-    command: ["python", "-m", "sict_crawler.main", "--annotate-ocr", "2000"]
+    command: ["python", "-m", "sict_crawler.pipeline.main", "--annotate-ocr", "2000"]
 
   # Cron incremental 6h/lần — đường chạy worker DUY NHẤT trên VM2.
   cron:
@@ -61,7 +61,7 @@ services:
     depends_on: [obscura]
     command: >
       /bin/sh -c "while true; do
-        python -m sict_crawler.main --incremental --check-edits $$CHECK_EDITS --crawl-limit $$CRAWL_LIMIT --annotate-ocr-n $$ANNOTATE_OCR_N;
+        python -m sict_crawler.pipeline.main --incremental --check-edits $$CHECK_EDITS --crawl-limit $$CRAWL_LIMIT --annotate-ocr-n $$ANNOTATE_OCR_N;
         sleep $${CRON_INTERVAL_SEC:-21600}; done"
 
   # Sidecar Obscura CDP cho trang JS nặng. Chỉ chạy trên VM2.

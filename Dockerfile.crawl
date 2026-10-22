@@ -22,4 +22,4 @@ COPY sict_crawler ./sict_crawler
 ENV PATH="/app/.venv/bin:$PATH"
 USER 10000
 # discover seeds → Redis frontier, idempotent (seen-set dedup)
-CMD ["python", "-m", "sict_crawler.discover"]
+CMD ["python", "-m", "sict_crawler.pipeline.discover"]

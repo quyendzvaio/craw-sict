@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sict_crawler import graph as G  # noqa: E402
+from sict_crawler.service.graph import graph as G  # noqa: E402
 
 
 def _ws(s: str) -> str:
