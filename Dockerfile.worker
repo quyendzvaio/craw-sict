@@ -56,4 +56,4 @@ RUN /app/.venv/bin/python -c "import pytesseract; print(pytesseract.get_tesserac
 ENV PATH="/app/.venv/bin:$PATH"
 USER 10000
 # compose override command khi chỉ backfill: --annotate-ocr 20000
-CMD ["python", "-m", "sict_crawler.main", "--incremental", "--check-edits", "100", "--crawl-limit", "200", "--annotate-ocr-n", "500"]
+CMD ["python", "-m", "sict_crawler.pipeline.main", "--incremental", "--check-edits", "100", "--crawl-limit", "200", "--annotate-ocr-n", "500"]

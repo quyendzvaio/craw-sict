@@ -31,7 +31,7 @@ api = [
     "prometheus-client>=0.20",   # GET /metrics (D13)
     "uvicorn[standard]>=0.30",
 ]
-# Dịch vụ embedding tự host (D22): jina-clip-v2 ONNX int8 trên CPU, KHÔNG torch (sict_crawler/embed_server.py).
+# Dịch vụ embedding tự host (D22): jina-clip-v2 ONNX int8 trên CPU, KHÔNG torch (sict_crawler/service/embedding/embed_server.py).
 embed = [
     "fastapi>=0.115",
     "prometheus-client>=0.20",   # GET /metrics (D13)

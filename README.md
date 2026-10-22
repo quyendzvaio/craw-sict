@@ -20,25 +20,25 @@ uv sync --group dev --group api   # thêm --group ml cho E5/CLIP/OCR/video
 #    Không có credentials → lưu local ./_local_store
 
 # 4. crawl thử 20 trang / chu kỳ incremental
-uv run python -m sict_crawler.main --crawl-limit 20
-uv run python -m sict_crawler.main --incremental --check-edits 100 --crawl-limit 200 --annotate-ocr-n 500
+uv run python -m sict_crawler.pipeline.main --crawl-limit 20
+uv run python -m sict_crawler.pipeline.main --incremental --check-edits 100 --crawl-limit 200 --annotate-ocr-n 500
 
 # 5. API + UI (http://localhost:8000)
-uv run uvicorn sict_crawler.api:app --port 8000
+uv run uvicorn sict_crawler.api.routes:app --port 8000
 
 # 6. test (giống CI)
-uv run pytest sict_crawler/tests/ -q --ignore=sict_crawler/tests/smoke_incremental.py
+uv run pytest tests/ -q --ignore=tests/smoke_incremental.py
 ```
 
 ## Index lần đầu: snapshot offline → compute (GPU) → load
 
 ```bash
 # 1. chỉ tải (CPU, mạng): HTML + ảnh vùng nội dung + file đính kèm + danh sách video; chạy lại = resume
-python -m sict_crawler.snapshot --out _snapshot/2026-10-12
+python -m sict_crawler.pipeline.snapshot --out _snapshot/2026-10-12
 # 2. tính toán nặng (máy GPU nếu có, tự rơi về CPU): parse → chunk → embed → OCR → keyframe → artifact
-python -m sict_crawler.compute --snapshot _snapshot/2026-10-12
+python -m sict_crawler.pipeline.compute --snapshot _snapshot/2026-10-12
 # 3. nạp (CPU, không embed lại): PG + Qdrant sict_text_v2/sict_image_v2 + ảnh lên S3, kiểm tra số point
-python -m sict_crawler.loader --artifacts _snapshot/2026-10-12/artifacts/v2-multilingual-e5-small
+python -m sict_crawler.pipeline.loader --artifacts _snapshot/2026-10-12/artifacts/v2-multilingual-e5-small
 ```
 
 Chuyển production sang v2: `scripts/cutover_v2.sh` (từng bước gọi tay; upload S3 cần
@@ -53,7 +53,9 @@ Artifact (`_snapshot/<ngày>/artifacts/<spec>-<model>/`) không phụ thuộc kh
 `parser` (markdown + table + img/video URLs) → `chunker` → `embedder` (E5 text 384-d, CLIP image 512-d)
 → `vector_store` (Qdrant `sict_text_v2`: E5 + BM25 sparse bỏ dấu, `sict_image_v2`: CLIP) + `db`
 (PostgreSQL: metadata + `media`/`media_occurrence`/`videos`) + `storage` (S3). Ghi index qua
-`indexer.py` (incremental) / `loader.py` (bulk) — cùng quy tắc `indexing.py` + `compute.py`.
+`indexer` (incremental) / `loader` (bulk) — cùng quy tắc `indexing` + `doc_rules`.
+
+Mã nguồn chia theo trách nhiệm (import chỉ trỏ xuống tầng dưới): `sict_crawler/core` (cấu hình, chuẩn hoá chữ, BM25) → `model` (bảng ORM, schema API) → `repository` (Postgres, Qdrant, S3, Redis) → `service/{crawl,index,embedding,retrieval,graph}` (nghiệp vụ) → `pipeline` (job/CLI) | `api` (HTTP + UI); test ở `tests/`.
 
 - Ảnh: tải → S3 `media/<sha256>.<ext>` → CLIP → `sict_image_v2` (1 point / 1 file, ảnh dùng chung
   nhiều bài giữ danh sách bài); mỗi lần xuất hiện có 1 caption = header bài + alt + OCR Tesseract

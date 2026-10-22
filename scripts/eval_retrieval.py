@@ -29,7 +29,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sict_crawler import filters as F  # noqa: E402
+from sict_crawler.service.retrieval import filters as F  # noqa: E402
 
 MODES = ("dense", "bm25", "hybrid", "hybrid+boost")
 POOL = 200          # số chunk mỗi nhánh đưa vào fusion
@@ -126,8 +126,8 @@ def main() -> None:
     assert len(chunks) == vecs.shape[0], "chunks.jsonl và chunks.npy lệch nhau"
     golden = [json.loads(x) for x in Path(args.golden).read_text(encoding="utf-8").splitlines() if x.strip()]
 
-    from sict_crawler import embedder
-    from sict_crawler.config import get_settings
+    from sict_crawler.core.config import get_settings
+    from sict_crawler.service.embedding import embedder
     get_settings().embedding.text_model = manifest["text_model"]
     print(f"model={manifest['text_model']} chunks={len(chunks)} device={embedder.get_device()}", flush=True)
 

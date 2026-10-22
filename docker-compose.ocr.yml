@@ -54,7 +54,7 @@ services:
     depends_on: [postgres, redis, qdrant]
     volumes: [localstore:/app/_local_store, hfcache:/cache/hf, "${AWS_DIR:-${HOME}/.aws}:/home/app/.aws:ro"]
     # chạy 1 lần rồi thoát; cron container bên dưới chạy lặp
-    command: ["python", "-m", "sict_crawler.main", "--annotate-ocr", "2000"]
+    command: ["python", "-m", "sict_crawler.pipeline.main", "--annotate-ocr", "2000"]
 
   # DEV-ONLY: vòng sleep-loop, mặc định TẮT (profile dev-cron).
   # Prod chạy service `cron` của docker-compose.worker.yml (VM2) — bật cả 2 sẽ double-crawl.
@@ -86,7 +86,7 @@ services:
     # mặc định 6h/lần (21600s), override bằng CRON_INTERVAL_SEC khi cần
     command: >
       /bin/sh -c "echo '0 */6 * * *' >/tmp/sched && while true; do
-        python -m sict_crawler.main --incremental --check-edits $$CHECK_EDITS --crawl-limit $$CRAWL_LIMIT --annotate-ocr-n $$ANNOTATE_OCR_N;
+        python -m sict_crawler.pipeline.main --incremental --check-edits $$CHECK_EDITS --crawl-limit $$CRAWL_LIMIT --annotate-ocr-n $$ANNOTATE_OCR_N;
         sleep $${CRON_INTERVAL_SEC:-21600}; done"
 
 volumes:

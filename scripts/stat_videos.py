@@ -4,8 +4,9 @@ from collections import Counter
 
 from sqlalchemy import select
 
-from sict_crawler import db, parser, storage
-from sict_crawler.models import Document
+from sict_crawler.model.orm import Document
+from sict_crawler.repository import db, storage
+from sict_crawler.service.crawl import parser
 
 
 def classify(u):

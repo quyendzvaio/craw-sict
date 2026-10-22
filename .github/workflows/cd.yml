@@ -155,7 +155,7 @@ jobs:
             docker compose -f docker-compose.worker.yml pull cron
             docker logout ghcr.io
             docker compose -f docker-compose.worker.yml up -d obscura cron
-            docker run --rm "$WORKER_IMAGE" python -c "import sict_crawler.agent"
+            docker run --rm "$WORKER_IMAGE" python -c "import sict_crawler.service.retrieval.agent"
             sleep 20
             docker compose -f docker-compose.worker.yml ps --format 'table {{.Name}}\t{{.Image}}\t{{.Status}}'
             docker compose -f docker-compose.worker.yml ps --status running cron | grep -q cron
@@ -197,7 +197,7 @@ jobs:
             echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
             docker compose -f docker-compose.embed.yml pull embed
             docker logout ghcr.io
-            docker compose -f docker-compose.embed.yml run --rm embed python -m sict_crawler.embed_server build
+            docker compose -f docker-compose.embed.yml run --rm embed python -m sict_crawler.service.embedding.embed_server build
             docker compose -f docker-compose.embed.yml up -d embed
             bind="$(grep '^EMBED_BIND=' .env | cut -d= -f2- || true)"; bind="${bind:-127.0.0.1}"
             for i in $(seq 1 60); do curl -sf -m 5 "http://$bind:8090/healthz" | grep -q '"ok":true' && break; sleep 5; done
