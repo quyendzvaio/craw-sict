@@ -363,7 +363,7 @@ def embed_image_base64(b64_list: list[str]) -> list[list[float]]:
 
 def embed_query_image_base64(b64_list: list[str]) -> list[list[float]]:
     """Ảnh người dùng gửi (truy vấn). Backend api + embedding.query_image_size: tháp ảnh cỡ nhỏ (nhanh hơn ~45 %
-    trên 2 vCPU ở 392); còn lại như ảnh corpus. Không dùng cho ảnh đưa vào index."""
+    trên 2 vCPU: 336 ~3,8 s, 392 ~5,3 s, 512 ~9,6 s); còn lại như ảnh corpus. Không dùng cho ảnh đưa vào index."""
     size = get_settings().embedding.query_image_size
     if backend() != "api" or not size:
         return embed_image_base64(b64_list)
