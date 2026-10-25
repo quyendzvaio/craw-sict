@@ -170,7 +170,7 @@ def test_retrieve_searches_original_and_rewritten(monkeypatch, fake_search):
     q, rw = "nganh dao tao?", "Các ngành đào tạo đại học của Trường Công nghệ thông tin và Truyền thông"
     monkeypatch.setattr(query_rewriter, "rewrite", lambda x: {"rewritten": rw, "terms": rw.split(), "route_llm": None})
     t, _, _ = retriever.retrieve(q, 5)
-    assert fake_search["sparse"] == [q, rw]                        # BM25 cho cả câu gốc lẫn câu viết lại
+    assert sorted(fake_search["sparse"]) == sorted([q, rw])        # BM25 cho cả câu gốc lẫn câu viết lại (song song)
     assert {int(v[0]) for v in fake_search["dense"]} == {len(q), len(rw)}
     assert {s.url for s in t} == {f"https://x/{len(q)}", f"https://x/{len(rw)}"}
 
