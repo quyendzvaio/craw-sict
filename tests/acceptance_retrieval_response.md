@@ -55,7 +55,7 @@
 - **AC-U5** text+image→text: RRF các danh sách {dense chữ, BM25, graph, dense ảnh}.
 - **AC-U6** text+image→image: ảnh theo vector chữ (cần thuộc bài chữ đứng đầu ở `optional`) cộng ảnh giống theo vector ảnh (không cần thuộc); gộp theo khoá media, mỗi video 1 chỗ.
 - **AC-U7** text+image→text+image: U5 và U6 cùng lúc; `inputs=["text","image"]`, `outputs` = những gì thực sự trả về.
-- **AC-U8** truy vấn CHỈ có ảnh (question rỗng): router mức `required`, ra cả ảnh lẫn chữ; judge dùng câu hỏi giả "(chỉ gửi ảnh)"; không chạy nhánh lexical; ảnh hỏng/không giải mã được và không có chữ → rỗng, không lỗi.
+- **AC-U8** truy vấn CHỈ có ảnh (question rỗng): router mức `required`, ra cả ảnh lẫn chữ; cờ `sufficient` đúng khi có nguồn (D27: không còn LLM chấm); không chạy nhánh lexical; ảnh hỏng/không giải mã được và không có chữ → rỗng, không lỗi.
 - **AC-U9** Response có `inputs`/`outputs` (thực tế); ảnh của người dùng chỉ vào LLM trả lời khi `llm.answer_with_image` bật (mặc định tắt: chỉ retrieval, LLM chỉ thấy chữ truy xuất).
 - **AC-U10** Ngưỡng tách theo cặp (`t2i_min`, `t2c_min`, `i2i_min`, `i2t_min`), điểm gốc, không dùng RRF để cắt; hiệu chỉnh bằng `eval/golden_images_v1` trước cutover (TẠM).
 - **AC-S7** (D23) hash_v2 của một trang KHÔNG đổi khi thêm tính năng cấu trúc; sửa chỉ ảnh/video/file (markdown giữ nguyên) làm `hash_struct` đổi và incremental index lại bài đó; bài chưa có `hash_struct` chỉ được ghi bù cấu trúc, không index lại.
@@ -66,3 +66,10 @@
 - **AC-S9** Nguồn là file PDF/PPTX trích dẫn kèm số trang thật ("Tên file — trang N"); trang web trích dẫn bằng tiêu đề + mục (`heading_path`) và URL; docx/xlsx không có số trang thì chỉ tên file.
 - **AC-H8** Chunk của PDF/PPTX dựng theo trang (khi `chunking.structured`): không chunk nào vắt qua ranh giới trang, trang trống giữ đúng số thứ tự, slide sắp theo số (slide2 trước slide10), PDF scan OCR theo từng trang.
 - **AC-U11** Ảnh ánh xạ về URL bài + block + mục; ngữ cảnh phụ cận lấy chunk chứa block của ảnh (hoặc chunk liền trước/sau khi ảnh ở ranh giới); chưa có vị trí block thì rơi về chunk giống vector ảnh nhất của bài.
+
+## Guardrail truy xuất không phụ thuộc LLM (D27)
+
+- **AC-S10** Câu hỏi gốc luôn được tìm (dense + BM25). Câu LLM viết lại chỉ thêm danh sách vào RRF, khi khác câu gốc sau khi bỏ dấu. Tắt LLM (không key) hoặc đổi `LLM_MODEL` không được làm golden recall@5 lệch quá 0,03 so với khi bật (`scripts/eval_api.py`, xoá cache `q:v4:*` giữa các lần đo).
+- **AC-S11** Top k không bị một bài chiếm hết: mỗi bài tối đa `retrieval.per_doc_max` đoạn. Câu hỏi liệt kê ("có những … nào", "danh sách", "gồm những ai") có ≥ `retrieval.list_top_k` nguồn, mỗi bài 1 đoạn. Độ phủ mục trên `eval/list_v1.jsonl` không được thấp hơn lần đo trước. Mốc 2026-10-25: 0,53 → xem `plan.md` D27.
+- **AC-S12** `sufficient` tính bằng luật, không gọi LLM: có nguồn, cosine tốt nhất ≥ `retrieval.min_cosine`, tỷ lệ từ nội dung của câu hỏi có trong ngữ cảnh ≥ `retrieval.min_term_cover`. Câu ngoài phạm vi website (8 câu `n*` trong `eval/list_v1.jsonl`) phải ra `sufficient=false` ở phần lớn các câu. Mỗi câu `/chat` gọi LLM đúng 2 lần: viết lại câu hỏi và trả lời.
+- **AC-S6 (bổ sung)** LLM nhận nội dung đầy đủ của đoạn (`Source.content`), cắt theo ngân sách `llm.source_chars` / `llm.context_chars` chia đều cho các nguồn. Phản hồi HTTP chỉ trả `excerpt`.

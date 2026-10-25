@@ -34,7 +34,7 @@ def test_mass_delete_guard():
 def test_cache_key_stable_and_scoped():
     a = query_cache_key("tuyển sinh", 5)
     assert a == query_cache_key("tuyển sinh", 5)
-    assert a.startswith("q:v3:")  # v3: graph D20 + Source.media_key (v2: published_at/section + filters)
+    assert a.startswith("q:v4:")  # v4 (D27): câu gốc + câu viết lại, đa dạng bài, Source.content (v3: graph D20 + media_key)
     assert a != query_cache_key("tuyển sinh", 8)
     assert a != query_cache_key("tuyển sinh?", 5)
     assert a != query_cache_key("tuyển sinh", 5, "sections=['thong-bao']")
