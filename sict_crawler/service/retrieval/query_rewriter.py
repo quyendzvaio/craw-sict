@@ -93,7 +93,8 @@ def _rrf(*hit_lists: list[dict], k: int = 60) -> list[dict]:
 def hybrid_search_text(tvec: list[float] | None, terms: list[str], limit: int = 8,
                        filter_document_id: int | None = None, query_filter=None,
                        text: str | None = None, graph_filter=None,
-                       extra_vecs: list[tuple[str, list[float]]] | None = None) -> list[dict]:
+                       extra_vecs: list[tuple[str, list[float]]] | None = None,
+                       alt_queries: list[tuple[list[float], str]] | None = None) -> list[dict]:
     """Dense E5 + keyword legs fused by RRF.
 
     Keyword leg (vector_store.keyword_search): collection v2 → BM25 sparse trên token bỏ dấu của
@@ -102,6 +103,8 @@ def hybrid_search_text(tvec: list[float] | None, terms: list[str], limit: int = 
     tvec None = truy vấn không có chữ (chỉ ảnh): bỏ nhánh dense chữ, keyword và graph.
     extra_vecs: [(via, vector)] — thêm danh sách dense cho vector khác cùng không gian (D21: vector ảnh
     truy vấn tìm trong chunk/caption); mỗi hit gắn `via`.
+    alt_queries: [(vector, chữ)] — câu hỏi khác cùng ý (D27: câu LLM viết lại khi `tvec`/`text` là câu gốc), mỗi câu
+    thêm 1 danh sách dense + 1 danh sách BM25 vào RRF: câu viết lại chỉ bổ sung, không thay câu gốc.
     """
     from sict_crawler.repository import vector_store
     dense = (vector_store.search_text(tvec, limit=limit, filter_document_id=filter_document_id,
@@ -130,7 +133,18 @@ def hybrid_search_text(tvec: list[float] | None, terms: list[str], limit: int = 
                 query_filter, gf)))
         except Exception:
             pass
-    lists = [x for x in (dense, kw_hits, *x_lists, *g_lists) if x]
+    a_lists: list[list[dict]] = []
+    for avec, atext in alt_queries or []:
+        a_dense = vector_store.search_text(avec, limit=limit, filter_document_id=filter_document_id,
+                                           query_filter=query_filter)
+        for h in a_dense:
+            h["dense_score"] = h["score"]
+        a_lists.append(a_dense)
+        try:
+            a_lists.append(vector_store.keyword_search(atext, _terms(atext), limit=limit, query_filter=query_filter))
+        except Exception:
+            pass
+    lists = [x for x in (dense, kw_hits, *x_lists, *g_lists, *a_lists) if x]
     if len(lists) <= 1:
         return lists[0] if lists else []
     return _rrf(*lists)

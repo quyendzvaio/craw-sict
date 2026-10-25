@@ -292,8 +292,11 @@ def stream_answer(question: str, context: str, image_b64: str | None = None, max
         "Trả lời ngắn gọn bằng tiếng Việt. Nếu ngữ cảnh không đủ để trả lời, nói rõ điều đó. "
         "Ngữ cảnh gồm các nguồn đánh số [1], [2]…; MỌI ý trả lời phải kết thúc bằng số nguồn dạng [n] "
         "(nguồn là file thì kèm số trang có trong nhãn), chỉ dùng số nguồn có trong ngữ cảnh. "
-        "Khi ngữ cảnh có nguồn ảnh/video, hãy nhắc người dùng xem mục Ảnh & Video.\n\n"
-        f"Ngữ cảnh:\n{context[:6000]}\n\n"
+        "Khi ngữ cảnh có nguồn ảnh/video, hãy nhắc người dùng xem mục Ảnh & Video. "
+        "Câu hỏi yêu cầu liệt kê thì kể đủ mọi mục có trong ngữ cảnh (mỗi mục kèm [n]); ngữ cảnh có thể chưa đủ "
+        "danh sách thì nói rõ.\n\n"
+        # D27: ngữ cảnh đã nằm trong ngân sách (sources.build_context: llm.source_chars / context_chars)
+        f"Ngữ cảnh:\n{context}\n\n"
         f"Câu hỏi: {question}"
     )
     body = {

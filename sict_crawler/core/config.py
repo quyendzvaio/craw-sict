@@ -178,6 +178,10 @@ class LlmConfig:
     timeout: int = 60       # giây / lượt gọi; model suy luận (VD deepseek qua gateway) cần lâu hơn
     # D21: gửi cả ảnh người dùng vào lượt trả lời (cần model hỗ trợ ảnh). Tắt = chỉ retrieval, LLM thấy chữ tìm được.
     answer_with_image: bool = False
+    # D27: ngân sách ngữ cảnh gửi LLM (ký tự) — mỗi nguồn tối đa source_chars, tổng ≈ context_chars (chia đều khi nhiều
+    # nguồn). Trước đây LLM chỉ thấy 300 ký tự đầu mỗi đoạn (excerpt hiển thị trên UI).
+    source_chars: int = 1500
+    context_chars: int = 9000
 
     def __post_init__(self):
         self.api_key = os.environ.get("LLM_API_KEY", self.api_key)
@@ -212,6 +216,15 @@ class RouterConfig:
 
 
 @dataclass
+class RetrievalConfig:
+    """Guardrail truy xuất không phụ thuộc LLM (D27). Ngưỡng TẠM — hiệu chỉnh bằng eval/golden_v1 + eval/list_v1."""
+    per_doc_max: int = 2         # tối đa N đoạn của cùng 1 bài trong top k (đoạn bị đẩy xếp sau, không mất)
+    list_top_k: int = 10         # câu hỏi liệt kê ("có những … nào"): số nguồn tối thiểu, mỗi bài 1 đoạn
+    min_cosine: float = 0.45     # sufficient: cosine câu hỏi↔đoạn tốt nhất tối thiểu (jina-clip-v2, index v3)
+    min_term_cover: float = 0.8  # sufficient: tỷ lệ từ nội dung của câu hỏi (bỏ dấu, bỏ hư từ) có trong ngữ cảnh
+
+
+@dataclass
 class Settings:
     site: SiteConfig
     crawl: CrawlConfig
@@ -227,6 +240,7 @@ class Settings:
     vlm: VlmConfig
     llm: LlmConfig
     router: RouterConfig = field(default_factory=RouterConfig)
+    retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
 
 
 def _build(data: dict[str, Any]) -> Settings:
@@ -261,6 +275,7 @@ def _build(data: dict[str, Any]) -> Settings:
     vlm = VlmConfig(**data.get("vlm", {}))
     llm = LlmConfig(**data.get("llm", {}))
     router = RouterConfig(**(data.get("router") or {}))
+    retrieval = RetrievalConfig(**(data.get("retrieval") or {}))
     redis_url = os.environ.get("REDIS_URL", data["redis"]["url"])
     return Settings(
         site=site,
@@ -277,6 +292,7 @@ def _build(data: dict[str, Any]) -> Settings:
         vlm=vlm,
         llm=llm,
         router=router,
+        retrieval=retrieval,
     )
 
 
