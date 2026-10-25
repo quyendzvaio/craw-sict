@@ -61,6 +61,7 @@ _MEDIA_TTL = 86400    # bytes ảnh theo media_id (≤1MB mới cache)
 _MEDIA_MAX = 1_000_000
 
 
+RESPONSE_EXCLUDE = {"content"}   # D27: nội dung đầy đủ chỉ dùng cho ngữ cảnh LLM, HTTP trả excerpt
 IMAGE_ONLY_QUESTION = "Người dùng gửi một ảnh, không kèm câu hỏi. Hãy cho biết thông tin liên quan đến ảnh này."
 
 
@@ -72,12 +73,13 @@ async def query(q: QueryIn):
     res = await run_in_threadpool(_agent.run, q.question, q.top_k, q.image, q.filters)
     return {"answer": None, "context": res["context"],
             "media_mode": res.get("media_mode"), "wants_file": res.get("wants_file"),
-            "media_note": res.get("media_note"), "entities": res.get("entities"),
+            "media_note": res.get("media_note"), "list_question": res.get("list_question"),
+            "entities": res.get("entities"),
             "graph_facts": res.get("graph_facts"),
             "inputs": res.get("inputs"), "outputs": res.get("outputs"),   # D21: đầu vào / đầu ra thực tế
             "citations": citations.index(res["text"] + res["media"]),     # D24: nguồn đánh số như trong context
-            "text": [s.model_dump() for s in res["text"]],
-            "media": [s.model_dump() for s in res["media"]],
+            "text": [s.model_dump(exclude=RESPONSE_EXCLUDE) for s in res["text"]],
+            "media": [s.model_dump(exclude=RESPONSE_EXCLUDE) for s in res["media"]],
             "attempts": res["attempts"], "sufficient": res["sufficient"]}
 
 
@@ -94,8 +96,8 @@ async def chat(q: QueryIn):
                    "câu trả lời có thể chưa đầy đủ.)\n\n" + context)
 
     async def gen():
-        yield f"data: {json.dumps({'status': {'attempts': res['attempts'], 'sufficient': res['sufficient'], 'media_mode': res.get('media_mode'), 'wants_file': res.get('wants_file'), 'media_note': res.get('media_note'), 'entities': res.get('entities'), 'inputs': res.get('inputs'), 'outputs': res.get('outputs')}})}\n\n"
-        yield f"data: {json.dumps({'text': [s.model_dump() for s in tsrcs], 'media': [s.model_dump() for s in msrcs]})}\n\n"
+        yield f"data: {json.dumps({'status': {'attempts': res['attempts'], 'sufficient': res['sufficient'], 'media_mode': res.get('media_mode'), 'wants_file': res.get('wants_file'), 'media_note': res.get('media_note'), 'list_question': res.get('list_question'), 'entities': res.get('entities'), 'inputs': res.get('inputs'), 'outputs': res.get('outputs')}})}\n\n"
+        yield f"data: {json.dumps({'text': [s.model_dump(exclude=RESPONSE_EXCLUDE) for s in tsrcs], 'media': [s.model_dump(exclude=RESPONSE_EXCLUDE) for s in msrcs]})}\n\n"
         import asyncio
         import queue
         import threading
