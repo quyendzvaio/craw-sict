@@ -80,7 +80,7 @@ Bulk (re)index path: `snapshot --out _snapshot/<date>` → `compute --snapshot S
 Ingest: `frontier` (Redis BFS) → `crawler.fetch` (httpx → Obscura → crawl4ai via `CRAWLER_BACKEND`) →
 `parser` → `chunker` → `embedder` → `vector_store` + `db`/`models` + `storage`.
 `indexer.index_page` is the single v2 write path (idempotent via `hash_v2`/`hash_struct`); `incremental.py`
-reuses it. Query: `api/routes.py` `/query` + `/chat` (SSE) → `agent.run` → `retriever.retrieve` (rewrite → RRF dense+BM25 → optional LLM
-judge → answer), `router.py` media intent, `filters.py` metadata, `graph.py`/`graphsync.py` entity graph
+reuses it. Query: `api/routes.py` `/query` + `/chat` (SSE) → `agent.run` → `retriever.retrieve` (câu gốc + câu viết lại → RRF dense+BM25 → đa dạng bài
+→ `sufficient` bằng luật, D27 → answer), `router.py` media intent, `filters.py` metadata, `graph.py`/`graphsync.py` entity graph
 (PG is source of truth). `service/index/doc_rules.py`+`indexing.py` are the shared rule set for bulk and incremental.
 Packages by responsibility (imports only point down): `core` → `model` → `repository` → `service/{crawl,index,embedding,retrieval,graph}` → `pipeline` | `api`; tests in top-level `tests/`. Full table in CLAUDE.md "Code layout".

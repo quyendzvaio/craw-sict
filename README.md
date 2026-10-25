@@ -73,7 +73,7 @@ Mã nguồn chia theo trách nhiệm (import chỉ trỏ xuống tầng dưới)
 - Incremental (`--incremental`): discover → recheck (so `hash_v2` markdown sạch) → drain, OCR ngay lúc
   index; chỉ xoá khi 404/410, cầu chì xoá hàng loạt,
   heartbeat Redis `incremental:last_ok`/`:last_error`.
-- Query: `/query`, `/chat` (SSE) qua agent loop (rewrite → hybrid retrieve → LLM judge → answer);
+- Query: `/query`, `/chat` (SSE) qua agent loop (rewrite → hybrid retrieve câu gốc + câu viết lại → cờ `sufficient` bằng luật → answer, D27);
   `/media/{id}`; cache Redis db 3.
 
 Hạn chế đã biết (xử lý trong `plan.md`): parser không khớp theme `irs-*` của site nên lấy cả trang
