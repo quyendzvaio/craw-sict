@@ -52,6 +52,11 @@ ml = [
     "yt-dlp>=2026.8.19",
     "playwright>=1.40",  # chỉ CDP client cho obscura sidecar; KHÔNG chạy `playwright install`
 ]
+# Đánh giá RAG bằng RAGAS (scripts/eval_ragas.py), chỉ chạy tay trên máy dev.
+eval = [
+    "langchain-community>=0.4,<0.4.2",  # ragas 0.4.3 còn import chat_models.vertexai, bị bỏ từ 0.4.2
+    "ragas>=0.4.3",
+]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
