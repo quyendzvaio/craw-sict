@@ -72,7 +72,9 @@ QUERY_MAX_CHARS = 1000   # 1 đoạn chữ ngắn hơn = câu hỏi (ưu tiên +
 # Ảnh TRUY VẤN (client gửi "image_size" trong mục ảnh) chạy tháp ảnh dựng lại cho cạnh nhỏ hơn; ảnh corpus giữ 512.
 # Đo 2026-10-22 (2 vCPU, 40 ảnh, 5.962 vector 512): 448 −37 % thời gian, 392 −52 % (ảnh gốc hạng 1: 39/40, top 5:
 # 40/40, cosine với vector 512 cùng ảnh 0,983), 336 −66 % nhưng vector lệch rõ (thấp nhất 0,94). Chủ dự án chọn 392.
-QUERY_IMAGE_SIZES = tuple(int(x) for x in os.environ.get("EMBED_QUERY_IMAGE_SIZES", "392").split(",") if x.strip())
+# Đo lại 2026-10-25 trên dịch vụ int8 (40 ảnh bị cắt + nén lại): 336 4,26 s / ảnh vs 392 6,09 s, ảnh gốc hạng 1 40/40 vs
+# 39/40, cosine thấp nhất 0,783 (> i2i_min 0,6) → chủ dự án chuyển sang 336. Đặt "336,392" để giữ cả hai khi so sánh.
+QUERY_IMAGE_SIZES = tuple(int(x) for x in os.environ.get("EMBED_QUERY_IMAGE_SIZES", "336").split(",") if x.strip())
 FULL_DIM = 1024
 MODEL_NAME = "jina-clip-v2"
 

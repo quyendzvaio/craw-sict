@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 from sict_crawler.core.config import get_settings
 from sict_crawler.core.text import fold
@@ -14,6 +15,9 @@ from sict_crawler.service.retrieval import filters as F
 from sict_crawler.service.retrieval.sources import media_sources, text_sources
 
 QUERY_TTL = 600      # kết quả retrieve theo câu hỏi (giây)
+# Tầng GIAI ĐOẠN của truy vấn song song (2026-10-25): nhúng ảnh truy vấn, nhánh media chạy cùng nhánh chữ. Tầng dưới là
+# vector_store.parallel (nhánh) → _per_collection (collection): việc ở tầng này chỉ chờ tầng dưới, không kẹt khi đầy.
+_STAGE_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="retrieve-stage")
 
 
 def index_tag() -> str:
@@ -24,7 +28,7 @@ def index_tag() -> str:
 
 def query_cache_key(question: str, top_k: int, filters_key: str = "", index: str | None = None) -> str:
     index = index_tag() if index is None else index
-    return "q:v4:" + hashlib.sha256(   # v4 (D27): câu gốc + câu viết lại, đa dạng bài, Source.content
+    return "q:v5:" + hashlib.sha256(   # v5: không LLM viết lại, ảnh truy vấn 336 (v4 D27: câu gốc + đa dạng bài)
         f"{question}\x00{top_k}\x00{filters_key}\x00{index}".encode()).hexdigest()
 
 
@@ -50,7 +54,7 @@ def _media_candidates(img_query_vecs: list[list[float]], terms: list[str], limit
 
     from sict_crawler.service.graph import graph as G
     qf = F.to_qdrant(f)
-    out: list[dict] = []
+    calls: list = []   # mỗi lượt Qdrant 1 hàm → vector_store.parallel; ghép theo đúng thứ tự cũ
     if entity_keys and img_query_vecs:
         # chuỗi sự kiện nhiều năm (IT Festival: ~140 ảnh) → hỏi kèm năm thì lấy ảnh đúng năm trước,
         # không thì top-N theo CLIP dễ toàn năm khác
@@ -64,26 +68,31 @@ def _media_candidates(img_query_vecs: list[list[float]], terms: list[str], limit
             if gf is None:
                 continue
             for yf in ((year_f, None) if year_f else (None,)):
-                try:
-                    hits = vector_store.search_images(img_query_vecs[0], limit=limit, query_filter=
-                                                      vector_store._and(qf, gf, yf))
-                except Exception:
-                    hits = []
-                out += [{**h, "modality": "graph", "raw_score": w + (0.1 if yf else 0.0)} for h in hits]
+                def graph_pass(gf=gf, w=w, yf=yf):
+                    try:
+                        hits = vector_store.search_images(img_query_vecs[0], limit=limit, query_filter=
+                                                          vector_store._and(qf, gf, yf))
+                    except Exception:
+                        hits = []
+                    return [{**h, "modality": "graph", "raw_score": w + (0.1 if yf else 0.0)} for h in hits]
+                calls.append(graph_pass)
     for modality, vecs in (("clip", img_query_vecs), ("i2i", image_vecs or [])):
         for v in vecs:
-            for h in vector_store.search_images(v, limit=limit, query_filter=qf):
-                out.append({**h, "modality": modality, "raw_score": h.get("score")})
+            calls.append(lambda v=v, modality=modality: [{**h, "modality": modality, "raw_score": h.get("score")}
+                                                         for h in vector_store.search_images(v, limit=limit,
+                                                                                             query_filter=qf)])
     cap_only = vector_store._and(qf, Filter(must=[
         FieldCondition(key="kind", match=MatchValue(value="media_caption"))]))
-    try:
-        hits = vector_store.keyword_search(text or " ".join(terms), terms[:3], limit=limit,
-                                           query_filter=cap_only, collection=vector_store.ocr_collection())
-    except Exception:
-        hits = []
-    out += [{**h, "modality": "caption_kw", "raw_score": None}
-            for h in hits if h.get("kind") == "media_caption"]
-    return out
+
+    def captions():
+        try:
+            hits = vector_store.keyword_search(text or " ".join(terms), terms[:3], limit=limit,
+                                               query_filter=cap_only, collection=vector_store.ocr_collection())
+        except Exception:
+            hits = []
+        return [{**h, "modality": "caption_kw", "raw_score": None} for h in hits if h.get("kind") == "media_caption"]
+    calls.append(captions)
+    return [h for part in vector_store.parallel(calls) for h in part]
 
 
 def _as_media(h: dict) -> dict:
@@ -215,9 +224,8 @@ def retrieve(question: str, top_k: int = 5,
                     router.Route(**d["route"]))
         except Exception:
             pass
-    ivec = _query_image_vec(query_image_b64) if unified else None
-    if query_image_b64 and ivec is None and not has_text:
-        return [], [], router.Route(media="none", source="image", inputs=["image"])   # ảnh hỏng, không có chữ
+    # ảnh truy vấn (CPU, ~4 s ở 336 px) nhúng trong lúc phần chữ chạy (luật viết tắt, graph, nhúng câu hỏi)
+    ifut = _STAGE_POOL.submit(_query_image_vec, query_image_b64) if unified and query_image_b64 else None
     if has_text:
         r = query_rewriter.rewrite(question)
         route = router.decide(question, r.get("route_llm"))
@@ -250,7 +258,25 @@ def retrieve(question: str, top_k: int = 5,
         rvec = embedder.embed_query(r["rewritten"])
         alt = [(rvec, r["rewritten"])]
     terms = list(dict.fromkeys(query_rewriter._terms(q0) + r["terms"])) if has_text else []
+    ivec = ifut.result() if ifut is not None else None
+    if query_image_b64 and ivec is None and not has_text:
+        return [], [], router.Route(media="none", source="image", inputs=["image"])   # ảnh hỏng, không có chữ
     extra = [("i2t", ivec)] if ivec is not None else []
+    # nhánh media không cần kết quả chữ để TÌM (chỉ cần khi chặn bằng router.gate) → chạy song song với nhánh chữ
+    mfut = None
+    if route.media != "none":
+        if unified:
+            img_query_vecs = [rvec] if rvec is not None else []
+            image_vecs = [ivec] if ivec is not None else []
+            clip_min, caption_min = rc.t2i_min, rc.t2c_min
+        else:
+            img_query_vecs = [embedder.embed_text_clip([r["rewritten"]])[0]]
+            image_vecs = []
+            if (qvec := _query_image_vec(query_image_b64)) is not None:
+                img_query_vecs.append(qvec)
+            clip_min, caption_min = rc.clip_min, rc.caption_min
+        mfut = _STAGE_POOL.submit(_media_candidates, img_query_vecs, r["terms"], max(top_k, 10), f, r["rewritten"],
+                                  ekeys, image_vecs)
     t_hits = query_rewriter.hybrid_search_text(tvec, terms, limit=max(k * (3 if route.list_question else 2), 10),
                                                query_filter=qf, text=q0 or None,
                                                graph_filter=[_graph_filter(ekeys, all_of=True),
@@ -267,19 +293,8 @@ def retrieve(question: str, top_k: int = 5,
     text_hits = diversify([h for h in boosted if h.get("kind") != "media_caption"], k, per_doc)
 
     kept: list[dict] = []
-    if route.media != "none":
-        if unified:
-            img_query_vecs = [rvec] if rvec is not None else []
-            image_vecs = [ivec] if ivec is not None else []
-            clip_min, caption_min = rc.t2i_min, rc.t2c_min
-        else:
-            img_query_vecs = [embedder.embed_text_clip([r["rewritten"]])[0]]
-            image_vecs = []
-            if (qvec := _query_image_vec(query_image_b64)) is not None:
-                img_query_vecs.append(qvec)
-            clip_min, caption_min = rc.clip_min, rc.caption_min
-        cands = _media_candidates(img_query_vecs, r["terms"], max(top_k, 10), f, r["rewritten"],
-                                  ekeys, image_vecs)
+    if mfut is not None:
+        cands = mfut.result()
         cands += [{**h, "modality": "caption" if has_text else "i2t"}
                   for h in boosted if h.get("kind") == "media_caption"]
         # hỏi về NGƯỜI và graph đã có ảnh của người đó → bỏ ảnh chỉ khớp CLIP/từ khoá (CLIP không

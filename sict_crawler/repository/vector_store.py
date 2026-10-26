@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -35,6 +36,24 @@ from qdrant_client.models import (
 from sict_crawler.core.config import get_settings
 
 _client = None
+
+
+# Lượt truy vấn độc lập chạy song song (2026-10-25: 1 câu hỏi = 9–20 lượt tuần tự, 0,1–3,7 s). Hai pool theo tầng:
+# nhánh (dense / BM25 / graph / câu viết lại, `parallel`) → collection (text / ocr, `_per_collection`). Việc ở một tầng
+# chỉ chờ việc của tầng dưới, nên pool có đầy cũng không kẹt (retriever có thêm tầng giai đoạn ở trên).
+_LEG_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="qdrant-leg")
+_COL_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="qdrant-col")
+
+
+def parallel(calls: list) -> list:
+    """Chạy các hàm không đối số song song, trả kết quả đúng thứ tự; lỗi của một lượt nổi lên như khi gọi tuần tự."""
+    if len(calls) <= 1:
+        return [c() for c in calls]
+    return [f.result() for f in [_LEG_POOL.submit(c) for c in calls]]
+
+
+def _per_collection(fn, names: list[str]) -> list:
+    return [fn(n) for n in names] if len(names) <= 1 else list(_COL_POOL.map(fn, names))
 
 
 def get_client() -> QdrantClient:
@@ -338,12 +357,12 @@ def search_text(query_vector: list[float], limit: int = 8,
     if filter_document_id is not None:
         doc_flt = Filter(must=[FieldCondition(key="document_id",
                                               match=MatchValue(value=filter_document_id))])
-    hits: list[dict] = []
-    for name in ([collection] if collection else text_collections()):
+    def one(name: str) -> list[dict]:
         res = client.query_points(name, query=query_vector, limit=limit,
                                   search_params=SearchParams(exact=False),
                                   query_filter=_and(doc_flt, query_filter))
-        hits += [{"score": p.score, "_pid": str(p.id), "_col": name, **p.payload} for p in res.points]
+        return [{"score": p.score, "_pid": str(p.id), "_col": name, **p.payload} for p in res.points]
+    hits = [h for part in _per_collection(one, [collection] if collection else text_collections()) for h in part]
     return sorted(hits, key=lambda h: -h["score"]) if not collection else hits
 
 
@@ -400,12 +419,11 @@ def search_sparse(text: str, limit: int = 8, query_filter=None, collection: str 
     qv = sparse.query_vector(text)
     if not qv["indices"]:
         return []
-    lists = []
-    for name in ([collection] if collection else text_collections()):
+    def one(name: str) -> list[dict]:
         res = get_client().query_points(name, query=SparseVector(**qv), using=sparse.VECTOR_NAME,
                                         limit=limit, query_filter=query_filter)
-        lists.append([{"score": p.score, "_pid": str(p.id), "_col": name, **p.payload} for p in res.points])
-    return _interleave(lists)
+        return [{"score": p.score, "_pid": str(p.id), "_col": name, **p.payload} for p in res.points]
+    return _interleave(_per_collection(one, [collection] if collection else text_collections()))
 
 
 def point_vectors(refs: list[tuple[str, str]]) -> dict[str, list[float]]:

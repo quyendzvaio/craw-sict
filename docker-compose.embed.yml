@@ -19,6 +19,7 @@ services:
       EMBED_TOKEN_BUDGET: ${EMBED_TOKEN_BUDGET:-2048}
       EMBED_CONCURRENCY: ${EMBED_CONCURRENCY:-1}
       EMBED_IMAGE_BATCH: ${EMBED_IMAGE_BATCH:-1}
+      EMBED_QUERY_IMAGE_SIZES: ${EMBED_QUERY_IMAGE_SIZES:-336}   # tháp ảnh truy vấn; API đặt EMBED_QUERY_IMAGE_SIZE cùng giá trị
     # D12: không mở ra internet — VM2 đặt EMBED_BIND=<IP private VM2> trong .env để API ở VM1 gọi được (SG chỉ cho VM1)
     ports: ["${EMBED_BIND:-127.0.0.1}:${EMBED_PORT:-8090}:8090"]
     volumes: [embedhf:/hf]
