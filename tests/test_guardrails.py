@@ -84,6 +84,21 @@ def test_context_budget_keeps_every_source():
     assert 1500 <= len(one) < 1700                                 # 1 nguồn: trần mỗi nguồn
 
 
+def test_list_question_gets_full_budget_per_source(monkeypatch):
+    # 10 nguồn, mục cần liệt kê nằm ở ký tự 1000–1400 của mỗi đoạn: ngân sách thường (9000 / 10 = 900) cắt mất
+    srcs = [_src(i, "x" * 1000 + f" MỤC-{i} " + "y" * 2000) for i in range(1, 11)]
+    monkeypatch.setattr(get_settings().llm, "source_chars", 1500)
+    monkeypatch.setattr(get_settings().llm, "context_chars", 9000)
+    monkeypatch.setattr(get_settings().llm, "list_context_chars", 15000)
+
+    def run(list_question):
+        route = router.Route(list_question=list_question)
+        monkeypatch.setattr(retriever, "retrieve", lambda *a, **k: (srcs, [], route))
+        return agent.run("Trường có những ngành nào?", 5)["context"]
+    assert all(f"MỤC-{i}" in run(True) for i in range(1, 11))
+    assert not any(f"MỤC-{i}" in run(False) for i in range(1, 11))
+
+
 def test_context_falls_back_to_excerpt_for_old_cache_entries():
     s = Source(url="u", title="t", kind="text", score=0.1, excerpt="trích ngắn", cite="t")   # bản cache cũ: không content
     assert "trích ngắn" in sources.build_context([s], [])

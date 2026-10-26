@@ -186,6 +186,10 @@ class LlmConfig:
     # nguồn). Trước đây LLM chỉ thấy 300 ký tự đầu mỗi đoạn (excerpt hiển thị trên UI).
     source_chars: int = 1500
     context_chars: int = 9000
+    # câu hỏi liệt kê (retrieval.list_top_k = 10 nguồn): 9000 / 10 = 900 ký tự / nguồn cắt mất danh sách nằm giữa đoạn
+    # (bảng ngành sau ký tự 900 của bài tuyển sinh) → ngân sách riêng, đủ source_chars cho mỗi nguồn. Đo 2026-10-26 trên
+    # eval/list_v1: độ phủ 0,724 → 0,970 (MMR khi chọn nguồn: 0,714–0,733, không giúp)
+    list_context_chars: int = 15000
 
     def __post_init__(self):
         self.api_key = os.environ.get("LLM_API_KEY", self.api_key)
