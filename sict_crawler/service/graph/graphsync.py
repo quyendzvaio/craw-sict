@@ -546,15 +546,23 @@ async def set_alias(session, kind: str, alias_key: str, entity_key: str | None, 
 
 async def review_import(session, path: str) -> dict:
     """status: merged (key là alias của target_key) | distinct (2 thực thể khác nhau) |
-    blocked (key không phải thực thể) | pending (bỏ qua)."""
+    blocked (key không phải thực thể) | pending (bỏ qua).
+
+    Dòng tìm theo id, id không có / không khớp thì theo (kind, key, reason, candidate_key): file đã duyệt
+    trên DB dev áp được lên DB khác (production dựng hàng chờ với id khác)."""
     stats = defaultdict(int)
     with open(path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
             st = (row.get("status") or "").strip()
             if st not in ("merged", "distinct", "blocked"):
                 continue
-            rev = await session.get(EntityReview, int(row["id"]))
+            rev = await session.get(EntityReview, int(row["id"])) if (row.get("id") or "").strip() else None
+            if rev is None or rev.key != row["key"] or rev.candidate_key != row["candidate_key"]:
+                rev = await session.scalar(select(EntityReview).where(
+                    EntityReview.kind == row["kind"], EntityReview.key == row["key"],
+                    EntityReview.reason == row["reason"], EntityReview.candidate_key == row["candidate_key"]))
             if rev is None:
+                stats["missing"] += 1
                 continue
             if st == "merged":
                 await set_alias(session, rev.kind, rev.key, row.get("target_key") or rev.candidate_key,

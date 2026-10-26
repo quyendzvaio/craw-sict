@@ -95,7 +95,7 @@ class EmbeddingConfig:
     timeout: int = 120
     cache_path: str = ""            # sqlite cache vector theo hash đầu vào; rỗng = không cache
     # cạnh ảnh TRUY VẤN gửi dịch vụ tự host ("image_size" trong mục ảnh; EMBED_QUERY_IMAGE_SIZE); 0 = như ảnh
-    # corpus (512). Chỉ đặt khi EMBED_API_BASE là embed_server (Jina cloud không nhận khoá này). Production: 392.
+    # corpus (512). Chỉ đặt khi EMBED_API_BASE là embed_server (Jina cloud không nhận khoá này). Production: 336 (2026-10-25; trước đó 392).
     query_image_size: int = 0
 
     def __post_init__(self):
@@ -178,6 +178,18 @@ class LlmConfig:
     timeout: int = 60       # giây / lượt gọi; model suy luận (VD deepseek qua gateway) cần lâu hơn
     # D21: gửi cả ảnh người dùng vào lượt trả lời (cần model hỗ trợ ảnh). Tắt = chỉ retrieval, LLM thấy chữ tìm được.
     answer_with_image: bool = False
+    # Lượt LLM viết lại câu hỏi + đoán media (vlm.rewrite_and_route). Tắt mặc định (2026-10-25): tốn 2–11 s / câu mà không
+    # đo được lợi ích (golden recall@5 0,985 cả hai; MRR 0,898 không viết lại vs 0,888; media_mode 0,871 vs 0,886)
+    # → chỉ còn luật viết tắt (query_rewriter._rule_rewrite) + luật router. Bật lại: LLM_REWRITE_QUERY=1.
+    rewrite_query: bool = False
+    # D27: ngân sách ngữ cảnh gửi LLM (ký tự) — mỗi nguồn tối đa source_chars, tổng ≈ context_chars (chia đều khi nhiều
+    # nguồn). Trước đây LLM chỉ thấy 300 ký tự đầu mỗi đoạn (excerpt hiển thị trên UI).
+    source_chars: int = 1500
+    context_chars: int = 9000
+    # câu hỏi liệt kê (retrieval.list_top_k = 10 nguồn): 9000 / 10 = 900 ký tự / nguồn cắt mất danh sách nằm giữa đoạn
+    # (bảng ngành sau ký tự 900 của bài tuyển sinh) → ngân sách riêng, đủ source_chars cho mỗi nguồn. Đo 2026-10-26 trên
+    # eval/list_v1: độ phủ 0,724 → 0,970 (MMR khi chọn nguồn: 0,714–0,733, không giúp)
+    list_context_chars: int = 15000
 
     def __post_init__(self):
         self.api_key = os.environ.get("LLM_API_KEY", self.api_key)
@@ -193,6 +205,8 @@ class LlmConfig:
             self.timeout = int(os.environ["LLM_TIMEOUT"])
         if os.environ.get("LLM_ANSWER_WITH_IMAGE"):
             self.answer_with_image = _env_bool(os.environ["LLM_ANSWER_WITH_IMAGE"])
+        if os.environ.get("LLM_REWRITE_QUERY"):
+            self.rewrite_query = _env_bool(os.environ["LLM_REWRITE_QUERY"])
 
 
 @dataclass
@@ -212,6 +226,15 @@ class RouterConfig:
 
 
 @dataclass
+class RetrievalConfig:
+    """Guardrail truy xuất không phụ thuộc LLM (D27). Ngưỡng TẠM — hiệu chỉnh bằng eval/golden_v1 + eval/list_v1."""
+    per_doc_max: int = 2         # tối đa N đoạn của cùng 1 bài trong top k (đoạn bị đẩy xếp sau, không mất)
+    list_top_k: int = 10         # câu hỏi liệt kê ("có những … nào"): số nguồn tối thiểu, mỗi bài 1 đoạn
+    min_cosine: float = 0.45     # sufficient: cosine câu hỏi↔đoạn tốt nhất tối thiểu (jina-clip-v2, index v3)
+    min_term_cover: float = 0.8  # sufficient: tỷ lệ từ nội dung của câu hỏi (bỏ dấu, bỏ hư từ) có trong ngữ cảnh
+
+
+@dataclass
 class Settings:
     site: SiteConfig
     crawl: CrawlConfig
@@ -227,6 +250,7 @@ class Settings:
     vlm: VlmConfig
     llm: LlmConfig
     router: RouterConfig = field(default_factory=RouterConfig)
+    retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
 
 
 def _build(data: dict[str, Any]) -> Settings:
@@ -261,6 +285,7 @@ def _build(data: dict[str, Any]) -> Settings:
     vlm = VlmConfig(**data.get("vlm", {}))
     llm = LlmConfig(**data.get("llm", {}))
     router = RouterConfig(**(data.get("router") or {}))
+    retrieval = RetrievalConfig(**(data.get("retrieval") or {}))
     redis_url = os.environ.get("REDIS_URL", data["redis"]["url"])
     return Settings(
         site=site,
@@ -277,6 +302,7 @@ def _build(data: dict[str, Any]) -> Settings:
         vlm=vlm,
         llm=llm,
         router=router,
+        retrieval=retrieval,
     )
 
 

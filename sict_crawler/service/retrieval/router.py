@@ -43,6 +43,16 @@ _FILE = re.compile(
     r"\btai ve\b|\btai xuong\b|\btai file\b|\bdownload\b|\bfile\b|\bbieu mau\b|\bmau don\b"
     r"|\bquy che\b|\bquy dinh\b|\btien do dao tao\b|\blich thuc hanh\b|\bthoi khoa bieu\b"
     r"|\bke hoach dao tao\b|\blop hoc phan\b|\bquyet dinh\b")
+# D27: câu hỏi liệt kê — đáp án rải trên nhiều bài, không đoạn nào chứa đủ ("có những ngành nào", "danh sách PGS")
+# → retrieve lấy rộng hơn, mỗi bài 1 đoạn. Nhận nhầm chỉ làm truy xuất rộng hơn, không hỏng câu trả lời.
+_LIST = re.compile(
+    r"\b(?:nhung|cac)\b.{0,60}?\bnao\b|\bnhung (?:ai|gi)\b|\b(?:gom|bao gom) nhung\b"
+    r"|\bdanh sach\b|\bliet ke\b|\bke ten\b"
+    r"|\bco (?:bao nhieu|may) (?:nganh|khoa|chuong trinh|cau lac bo|clb|phong|trung tam|doi|nhom|phuong thuc)\b")
+
+
+def is_list_question(question: str) -> bool:
+    return bool(_LIST.search(fold(question or "")))
 
 
 @dataclass
@@ -54,6 +64,7 @@ class Route:
     facts: list[str] = field(default_factory=list)     # dữ kiện graph (thực thể liên quan) cho LLM
     inputs: list[str] = field(default_factory=list)    # D21: đầu vào thực tế của truy vấn: text | image
     outputs: list[str] = field(default_factory=list)   # D21: đầu ra thực tế: text | image
+    list_question: bool = False                         # D27: câu hỏi liệt kê (is_list_question) → truy xuất rộng
 
     def to_dict(self) -> dict:
         return asdict(self)

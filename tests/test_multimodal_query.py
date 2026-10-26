@@ -22,7 +22,7 @@ def mm(monkeypatch):
     monkeypatch.setattr(query_rewriter, "rerank_text", lambda h, q, top_n=5, **k: [dict(x, raw_score=0.9) for x in h])
 
     def hybrid(tvec, terms, limit=8, filter_document_id=None, query_filter=None, text=None,
-               graph_filter=None, extra_vecs=None):
+               graph_filter=None, extra_vecs=None, alt_queries=None):
         calls["hybrid"].append((tvec, extra_vecs))
         out = []
         if tvec is not None:

@@ -1,56 +1,51 @@
-"""Agentic RAG loop: retrieve → judge context → adapt retrieval → answer.
+"""RAG loop: retrieve → ngữ cảnh → cờ "đủ bằng chứng" (D27: không phụ thuộc LLM).
 
-Thay multi-retrieval mù (luôn trả những gì tìm được) bằng vòng lặp có kiểm tra:
-  attempt 1: retrieve chuẩn (E5+CLIP, top_k)
-  judge (LLM nhỏ, nhanh): context đủ trả lời? nếu chưa →
-  attempt 2: top_k x2 + nới media
-  attempt 3: fallback từ vựng (keyword scroll, không cần vector)
-  cuối: trả context tốt nhất + cờ sufficient (caller tự thêm ghi chú
-  "tài liệu hạn chế" khi insufficient).
+  1 lượt truy xuất (retriever.retrieve: câu gốc + câu LLM viết lại, đa dạng bài, câu liệt kê lấy rộng);
+  không ra hit nào → fallback từ vựng (BM25, không cần vector);
+  `sufficient` = luật xác định (`evidence`): có nguồn, cosine câu hỏi↔đoạn tốt nhất ≥ retrieval.min_cosine, tỷ lệ từ
+  nội dung của câu hỏi có trong ngữ cảnh ≥ retrieval.min_term_cover. Caller thêm ghi chú "tài liệu hạn chế" khi false.
 
-Không có LLM key → bỏ judge, 1 attempt duy nhất (hành vi cũ).
+Trước D27 một LLM chấm ngữ cảnh rồi thử lại tối đa 3 lượt: nó không thấy phần không tìm được (chấm "đủ" khi danh sách
+thiếu), chấm "đủ" cả câu ngoài phạm vi, đổi theo model và tốn 1–3 lượt gọi LLM / câu (eval/list_v1, 2026-10-25).
 Callers: api/routes.py (/chat SSE + /query).
 """
 from __future__ import annotations
 
-import json
-
+from sict_crawler.core import sparse
+from sict_crawler.core.config import get_settings
 from sict_crawler.service.retrieval import retriever, sources
 
-MAX_ATTEMPTS = 3
-JUDGE_MAX_TOKENS = 120
+# hư từ / từ hỏi (đã bỏ dấu) — không tính vào độ phủ từ của câu hỏi
+_STOP = frozenset("""
+a ai bao bi biet cac cach cai cho chu co cua da dang de den deu do duoc gi gom hay hoac hoi khi khong la lam luc
+ma minh mot muon nao nay neu nhe nhieu nhu nhung noi o oi ra roi sao se tai the thi thoi toi trong tu va ve vi voi xin
+xem em anh chi ban hien duoc nay ay kia
+""".split())
 
 
-def judge_context(question: str, context: str) -> dict:
-    """LLM chấm context: {sufficient: bool, reason: str}.
+def question_terms(question: str) -> list[str]:
+    """Từ nội dung của câu hỏi (token BM25 bỏ dấu, bỏ hư từ), giữ thứ tự, không trùng."""
+    return list(dict.fromkeys(t for t in sparse.tokens(question) if t not in _STOP))
 
-    Không key / call fail → {"sufficient": True} để giữ hành vi cũ
-    (không chặn response khi thiếu judge).
-    """
-    from sict_crawler.core.config import get_settings
-    from sict_crawler.service.retrieval import vlm
 
-    if not get_settings().llm.api_key:
-        return {"sufficient": True, "reason": "no-judge (no key)"}
-    if not (context or "").strip():
-        return {"sufficient": False, "reason": "empty context"}
-    prompt = (
-        "Bạn kiểm tra chất lượng ngữ cảnh cho hệ hỏi-đáp. "
-        "Câu hỏi: " + question[:300] + "\n"
-        "Ngữ cảnh:\n" + context[:2500] + "\n"
-        "Ngữ cảnh có chứa thông tin TRỰC TIẾP trả lời câu hỏi không "
-        "(không tính nội dung chung chung)? "
-        'Chỉ trả JSON: {"sufficient": true/false, "reason": "ngắn gọn"}'
-    )
-    try:
-        raw = vlm._text_call(get_settings().llm.model, prompt)
-        obj = json.JSONDecoder().raw_decode(raw[raw.find("{"):] if "{" in raw else raw)[0]
-        suf = obj.get("sufficient")
-        if isinstance(suf, str):
-            suf = suf.lower() in ("true", "1", "yes", "có", "du")
-        return {"sufficient": bool(suf), "reason": str(obj.get("reason", ""))[:200]}
-    except Exception:
-        return {"sufficient": True, "reason": "judge-parse-fail"}
+def evidence(question: str, tsrcs: list, msrcs: list, context: str) -> dict:
+    """Cờ "đủ bằng chứng" bằng luật (thay LLM chấm, D27) → {sufficient, cosine, cover, reason}.
+
+    Chỉ là tín hiệu thô (không biết danh sách còn thiếu mục nào — không bộ chấm nào biết khi chỉ thấy ngữ cảnh), nhưng
+    ổn định, đo được và không đổi theo LLM. Truy vấn chỉ có ảnh: đủ khi có nguồn."""
+    if not (tsrcs or msrcs):
+        return {"sufficient": False, "cosine": None, "cover": 0.0, "reason": "không có nguồn"}
+    if not question.strip():
+        return {"sufficient": True, "cosine": None, "cover": None, "reason": "chỉ ảnh, có nguồn"}
+    cfg = get_settings().retrieval
+    cos = max((s.cosine for s in tsrcs + msrcs if s.cosine is not None), default=None)
+    terms = question_terms(question)
+    have = set(sparse.tokens(context))
+    cover = round(sum(t in have for t in terms) / len(terms), 3) if terms else 1.0
+    low = [x for x, bad in (("cosine", cos is not None and cos < cfg.min_cosine),
+                            ("từ khoá", cover < cfg.min_term_cover)) if bad]
+    return {"sufficient": not low, "cosine": None if cos is None else round(cos, 3), "cover": cover,
+            "reason": ("thấp: " + ", ".join(low)) if low else "ok"}
 
 
 def _unpack(res) -> tuple[list, list, object]:
@@ -60,34 +55,23 @@ def _unpack(res) -> tuple[list, list, object]:
 
 def run(question: str, top_k: int = 5,
         query_image_b64: str | None = None, filters: dict | None = None) -> dict:
-    """Chạy loop agentic. Trả {text, media, context, attempts, sufficient, log, media_mode,
-    wants_file, media_note}."""
+    """1 lượt truy xuất (+ fallback từ vựng khi rỗng). Trả {text, media, context, attempts, sufficient, log,
+    media_mode, wants_file, media_note, list_question, …}."""
     from sict_crawler.service.retrieval import router as _router
 
-    log: list[str] = []
-    tsrcs, msrcs, route = [], [], None
-    judge_q = question.strip() or "(người dùng chỉ gửi một ảnh, không kèm câu hỏi)"   # D21 truy vấn chỉ có ảnh
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        if attempt == 1:
-            tsrcs, msrcs, route = _unpack(retriever.retrieve(question, top_k, query_image_b64, filters))
-            log.append(f"attempt1: top_k={top_k}")
-        elif attempt == 2:
-            tsrcs, msrcs, r2 = _unpack(retriever.retrieve(question, top_k * 2, query_image_b64, filters))
-            route = r2 or route
-            log.append(f"attempt2: top_k={top_k * 2} (mở rộng)")
-        else:
-            if not question.strip():
-                break   # chỉ có ảnh: không có từ khoá để tìm bằng nhánh lexical
-            route = route or _router.classify_rules(question)
-            tsrcs, msrcs = _lexical_fallback(question, top_k * 2, filters, route)
-            log.append("attempt3: lexical fallback")
-        ctx = sources.build_context(tsrcs, msrcs, getattr(route, "facts", None))
-        verdict = judge_context(judge_q, ctx)
-        log.append(f"judge{attempt}: {verdict}")
-        if verdict.get("sufficient"):
-            return _result(tsrcs, msrcs, ctx, attempt, True, log, route)
-    ctx = sources.build_context(tsrcs, msrcs, getattr(route, "facts", None))
-    return _result(tsrcs, msrcs, ctx, MAX_ATTEMPTS, False, log, route)
+    tsrcs, msrcs, route = _unpack(retriever.retrieve(question, top_k, query_image_b64, filters))
+    log = [f"attempt1: top_k={top_k}" + (" (câu liệt kê)" if getattr(route, "list_question", False) else "")]
+    attempts = 1
+    if not (tsrcs or msrcs) and question.strip():
+        route = route or _router.classify_rules(question)
+        tsrcs, msrcs = _lexical_fallback(question, top_k * 2, filters, route)
+        attempts = 2
+        log.append("attempt2: lexical fallback (không có hit)")
+    budget = get_settings().llm.list_context_chars if getattr(route, "list_question", False) else None
+    ctx = sources.build_context(tsrcs, msrcs, getattr(route, "facts", None), context_chars=budget)
+    ev = evidence(question, tsrcs, msrcs, ctx)
+    log.append(f"evidence: {ev}")
+    return _result(tsrcs, msrcs, ctx, attempts, ev["sufficient"], log, route)
 
 
 def _result(tsrcs, msrcs, ctx, attempts, sufficient, log, route) -> dict:
@@ -100,6 +84,7 @@ def _result(tsrcs, msrcs, ctx, attempts, sufficient, log, route) -> dict:
             "inputs": list(getattr(route, "inputs", []) or []),
             "outputs": list(getattr(route, "outputs", []) or []),
             "entities": list(getattr(route, "entities", []) or []),
+            "list_question": bool(getattr(route, "list_question", False)),
             "graph_facts": list(getattr(route, "facts", []) or [])}
 
 

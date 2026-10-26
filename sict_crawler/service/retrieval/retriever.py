@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 from sict_crawler.core.config import get_settings
+from sict_crawler.core.text import fold
 from sict_crawler.model.schemas import Source
 from sict_crawler.repository import cache, vector_store
 from sict_crawler.service.embedding import embedder
@@ -13,6 +15,9 @@ from sict_crawler.service.retrieval import filters as F
 from sict_crawler.service.retrieval.sources import media_sources, text_sources
 
 QUERY_TTL = 600      # kết quả retrieve theo câu hỏi (giây)
+# Tầng GIAI ĐOẠN của truy vấn song song (2026-10-25): nhúng ảnh truy vấn, nhánh media chạy cùng nhánh chữ. Tầng dưới là
+# vector_store.parallel (nhánh) → _per_collection (collection): việc ở tầng này chỉ chờ tầng dưới, không kẹt khi đầy.
+_STAGE_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="retrieve-stage")
 
 
 def index_tag() -> str:
@@ -23,7 +28,7 @@ def index_tag() -> str:
 
 def query_cache_key(question: str, top_k: int, filters_key: str = "", index: str | None = None) -> str:
     index = index_tag() if index is None else index
-    return "q:v3:" + hashlib.sha256(
+    return "q:v5:" + hashlib.sha256(   # v5: không LLM viết lại, ảnh truy vấn 336 (v4 D27: câu gốc + đa dạng bài)
         f"{question}\x00{top_k}\x00{filters_key}\x00{index}".encode()).hexdigest()
 
 
@@ -49,7 +54,7 @@ def _media_candidates(img_query_vecs: list[list[float]], terms: list[str], limit
 
     from sict_crawler.service.graph import graph as G
     qf = F.to_qdrant(f)
-    out: list[dict] = []
+    calls: list = []   # mỗi lượt Qdrant 1 hàm → vector_store.parallel; ghép theo đúng thứ tự cũ
     if entity_keys and img_query_vecs:
         # chuỗi sự kiện nhiều năm (IT Festival: ~140 ảnh) → hỏi kèm năm thì lấy ảnh đúng năm trước,
         # không thì top-N theo CLIP dễ toàn năm khác
@@ -63,26 +68,31 @@ def _media_candidates(img_query_vecs: list[list[float]], terms: list[str], limit
             if gf is None:
                 continue
             for yf in ((year_f, None) if year_f else (None,)):
-                try:
-                    hits = vector_store.search_images(img_query_vecs[0], limit=limit, query_filter=
-                                                      vector_store._and(qf, gf, yf))
-                except Exception:
-                    hits = []
-                out += [{**h, "modality": "graph", "raw_score": w + (0.1 if yf else 0.0)} for h in hits]
+                def graph_pass(gf=gf, w=w, yf=yf):
+                    try:
+                        hits = vector_store.search_images(img_query_vecs[0], limit=limit, query_filter=
+                                                          vector_store._and(qf, gf, yf))
+                    except Exception:
+                        hits = []
+                    return [{**h, "modality": "graph", "raw_score": w + (0.1 if yf else 0.0)} for h in hits]
+                calls.append(graph_pass)
     for modality, vecs in (("clip", img_query_vecs), ("i2i", image_vecs or [])):
         for v in vecs:
-            for h in vector_store.search_images(v, limit=limit, query_filter=qf):
-                out.append({**h, "modality": modality, "raw_score": h.get("score")})
+            calls.append(lambda v=v, modality=modality: [{**h, "modality": modality, "raw_score": h.get("score")}
+                                                         for h in vector_store.search_images(v, limit=limit,
+                                                                                             query_filter=qf)])
     cap_only = vector_store._and(qf, Filter(must=[
         FieldCondition(key="kind", match=MatchValue(value="media_caption"))]))
-    try:
-        hits = vector_store.keyword_search(text or " ".join(terms), terms[:3], limit=limit,
-                                           query_filter=cap_only, collection=vector_store.ocr_collection())
-    except Exception:
-        hits = []
-    out += [{**h, "modality": "caption_kw", "raw_score": None}
-            for h in hits if h.get("kind") == "media_caption"]
-    return out
+
+    def captions():
+        try:
+            hits = vector_store.keyword_search(text or " ".join(terms), terms[:3], limit=limit,
+                                               query_filter=cap_only, collection=vector_store.ocr_collection())
+        except Exception:
+            hits = []
+        return [{**h, "modality": "caption_kw", "raw_score": None} for h in hits if h.get("kind") == "media_caption"]
+    calls.append(captions)
+    return [h for part in vector_store.parallel(calls) for h in part]
 
 
 def _as_media(h: dict) -> dict:
@@ -166,6 +176,26 @@ def _linked_doc_hits(ivec: list[float], kept: list[dict], qf) -> list[dict]:
     return linked
 
 
+def diversify(hits: list[dict], top_k: int, per_doc: int) -> list[dict]:
+    """D27: top k không bị một bài chiếm hết — mỗi `document_id` tối đa `per_doc` đoạn trong top k, giữ thứ tự RRF;
+    đoạn bị đẩy ra xếp sau (không mất: thiếu bài khác thì chúng lấp chỗ). Đoạn quanh ảnh người dùng gửi (`i2i-doc`)
+    không tính giới hạn (U4 cố ý lấy nhiều đoạn của một bài)."""
+    if per_doc <= 0:
+        return hits
+    head: list[dict] = []
+    rest: list[dict] = []
+    seen: dict = {}
+    for h in hits:
+        d = h.get("document_id")
+        key = tuple(d) if isinstance(d, list) else (d if d is not None else h.get("url"))
+        if len(head) < top_k and (h.get("via") == "i2i-doc" or seen.get(key, 0) < per_doc):
+            head.append(h)
+            seen[key] = seen.get(key, 0) + 1
+        else:
+            rest.append(h)
+    return head + rest
+
+
 def retrieve(question: str, top_k: int = 5,
              query_image_b64: str | None = None, filters: dict | None = None):
     """→ (text_sources, media_sources, route). Text: rewrite → dense + keyword RRF → rerank → ưu tiên
@@ -194,12 +224,12 @@ def retrieve(question: str, top_k: int = 5,
                     router.Route(**d["route"]))
         except Exception:
             pass
-    ivec = _query_image_vec(query_image_b64) if unified else None
-    if query_image_b64 and ivec is None and not has_text:
-        return [], [], router.Route(media="none", source="image", inputs=["image"])   # ảnh hỏng, không có chữ
+    # ảnh truy vấn (CPU, ~4 s ở 336 px) nhúng trong lúc phần chữ chạy (luật viết tắt, graph, nhúng câu hỏi)
+    ifut = _STAGE_POOL.submit(_query_image_vec, query_image_b64) if unified and query_image_b64 else None
     if has_text:
         r = query_rewriter.rewrite(question)
         route = router.decide(question, r.get("route_llm"))
+        route.list_question = router.is_list_question(question)
     else:   # chỉ ảnh (D21 U3+U4)
         r = {"rewritten": "", "terms": [], "route_llm": None}
         route = router.Route(media="required", source="image")
@@ -214,28 +244,29 @@ def retrieve(question: str, top_k: int = 5,
     if route.wants_file:
         f.prefer_doc_types = ["attachment"]
 
-    # text leg: hybrid (dense + BM25 sparse + dense của ảnh truy vấn, RRF) → ưu tiên mềm metadata
-    tvec = embedder.embed_query(r["rewritten"]) if has_text else None
+    # D27: câu hỏi liệt kê → nhiều nguồn hơn, mỗi bài 1 đoạn; còn lại tối đa per_doc_max đoạn / bài
+    gc = get_settings().retrieval
+    k = max(top_k, gc.list_top_k) if route.list_question else top_k
+    per_doc = 1 if route.list_question else gc.per_doc_max
+    # text leg: hybrid (dense + BM25 sparse + dense của ảnh truy vấn, RRF) → ưu tiên mềm metadata.
+    # D27: luôn tìm bằng CÂU GỐC; câu LLM viết lại (nếu khác sau khi bỏ dấu) chỉ thêm danh sách vào RRF → đổi/tắt LLM
+    # không đổi hẳn kết quả. Nhánh media vẫn dùng vector câu viết lại (rvec) như trước.
+    q0 = question.strip()
+    tvec = embedder.embed_query(q0) if has_text else None
+    rvec, alt = tvec, []
+    if has_text and fold(r["rewritten"]).strip() != fold(q0):
+        rvec = embedder.embed_query(r["rewritten"])
+        alt = [(rvec, r["rewritten"])]
+    terms = list(dict.fromkeys(query_rewriter._terms(q0) + r["terms"])) if has_text else []
+    ivec = ifut.result() if ifut is not None else None
+    if query_image_b64 and ivec is None and not has_text:
+        return [], [], router.Route(media="none", source="image", inputs=["image"])   # ảnh hỏng, không có chữ
     extra = [("i2t", ivec)] if ivec is not None else []
-    t_hits = query_rewriter.hybrid_search_text(tvec, r["terms"], limit=max(top_k * 2, 10),
-                                               query_filter=qf, text=r["rewritten"],
-                                               graph_filter=[_graph_filter(ekeys, all_of=True),
-                                                             _graph_filter(ekeys)],
-                                               extra_vecs=extra)
-    if has_text:
-        # raw_score = cosine câu hỏi↔đoạn (ngưỡng caption của router). v2: giữ thứ tự RRF dense+BM25
-        # (xem rerank_text); v1: xếp lại theo cosine như cũ.
-        reranked = query_rewriter.rerank_text(t_hits, r["rewritten"], top_n=len(t_hits),
-                                              reorder=not vector_store.has_sparse(), qvec=tvec)
-    else:   # chỉ ảnh: danh sách duy nhất là cosine ảnh↔chữ → lọc theo i2t_min, điểm gốc = cosine
-        reranked = [{**h, "raw_score": h["score"]} for h in t_hits if h["score"] >= rc.i2t_min]
-    boosted = F.apply_boost(reranked, f)
-    text_hits = [h for h in boosted if h.get("kind") != "media_caption"]
-
-    kept: list[dict] = []
+    # nhánh media không cần kết quả chữ để TÌM (chỉ cần khi chặn bằng router.gate) → chạy song song với nhánh chữ
+    mfut = None
     if route.media != "none":
         if unified:
-            img_query_vecs = [tvec] if tvec is not None else []
+            img_query_vecs = [rvec] if rvec is not None else []
             image_vecs = [ivec] if ivec is not None else []
             clip_min, caption_min = rc.t2i_min, rc.t2c_min
         else:
@@ -244,8 +275,26 @@ def retrieve(question: str, top_k: int = 5,
             if (qvec := _query_image_vec(query_image_b64)) is not None:
                 img_query_vecs.append(qvec)
             clip_min, caption_min = rc.clip_min, rc.caption_min
-        cands = _media_candidates(img_query_vecs, r["terms"], max(top_k, 10), f, r["rewritten"],
+        mfut = _STAGE_POOL.submit(_media_candidates, img_query_vecs, r["terms"], max(top_k, 10), f, r["rewritten"],
                                   ekeys, image_vecs)
+    t_hits = query_rewriter.hybrid_search_text(tvec, terms, limit=max(k * (3 if route.list_question else 2), 10),
+                                               query_filter=qf, text=q0 or None,
+                                               graph_filter=[_graph_filter(ekeys, all_of=True),
+                                                             _graph_filter(ekeys)],
+                                               extra_vecs=extra, alt_queries=alt)
+    if has_text:
+        # raw_score = cosine câu hỏi↔đoạn (ngưỡng caption của router). v2: giữ thứ tự RRF dense+BM25
+        # (xem rerank_text); v1: xếp lại theo cosine như cũ.
+        reranked = query_rewriter.rerank_text(t_hits, r["rewritten"], top_n=len(t_hits),
+                                              reorder=not vector_store.has_sparse(), qvec=tvec)
+    else:   # chỉ ảnh: danh sách duy nhất là cosine ảnh↔chữ → lọc theo i2t_min, điểm gốc = cosine
+        reranked = [{**h, "raw_score": h["score"]} for h in t_hits if h["score"] >= rc.i2t_min]
+    boosted = F.apply_boost(reranked, f)
+    text_hits = diversify([h for h in boosted if h.get("kind") != "media_caption"], k, per_doc)
+
+    kept: list[dict] = []
+    if mfut is not None:
+        cands = mfut.result()
         cands += [{**h, "modality": "caption" if has_text else "i2t"}
                   for h in boosted if h.get("kind") == "media_caption"]
         # hỏi về NGƯỜI và graph đã có ảnh của người đó → bỏ ảnh chỉ khớp CLIP/từ khoá (CLIP không
@@ -264,7 +313,7 @@ def retrieve(question: str, top_k: int = 5,
         lead = [h for h in linked if linked and h.get("document_id") == linked[0].get("document_id")]
         rest = [h for h in linked if h not in lead]
         text_hits = query_rewriter.dedupe_hits(linked + text_hits if not has_text else lead + text_hits + rest)
-    tsrcs = text_sources(text_hits[:top_k])
+    tsrcs = text_sources(text_hits[:k])
     route.inputs = [x for x, on in (("text", bool(question.strip())), ("image", bool(query_image_b64))) if on]
     route.outputs = [x for x, on in (("text", bool(tsrcs)), ("image", bool(msrcs))) if on]
     cache.put(ck, json.dumps(

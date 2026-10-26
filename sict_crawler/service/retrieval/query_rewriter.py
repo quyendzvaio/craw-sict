@@ -52,11 +52,13 @@ def _terms(text: str) -> list[str]:
 
 
 def rewrite(question: str) -> dict:
-    """LLM rewrite + ý định router trong CÙNG 1 lượt gọi (vlm.rewrite_and_route), fallback
-    rule-based. Trả {rewritten, terms, route_llm} — route_llm None khi không có LLM/JSON lỗi
-    (router.decide dùng luật từ khoá)."""
+    """Câu tìm kiếm phụ: mặc định luật viết tắt (CNTT → công nghệ thông tin…). `llm.rewrite_query` bật → LLM viết lại
+    + ý định router trong CÙNG 1 lượt gọi (vlm.rewrite_and_route), lỗi thì quay về luật. Trả {rewritten, terms,
+    route_llm} — route_llm None khi không dùng/không có LLM hay JSON lỗi (router.decide dùng luật từ khoá).
+    retrieve luôn tìm bằng câu gốc; câu này chỉ thêm danh sách RRF khi khác câu gốc (D27)."""
+    from sict_crawler.core.config import get_settings
     from sict_crawler.service.retrieval import vlm
-    llm = vlm.rewrite_and_route(question)
+    llm = vlm.rewrite_and_route(question) if get_settings().llm.rewrite_query else None
     rewritten = (llm or {}).get("rewritten") or _rule_rewrite(question)
     route_llm = {k: llm[k] for k in ("media", "wants_file")} if llm and llm.get("media") else None
     return {"rewritten": rewritten, "terms": _terms(rewritten), "route_llm": route_llm}
@@ -93,7 +95,8 @@ def _rrf(*hit_lists: list[dict], k: int = 60) -> list[dict]:
 def hybrid_search_text(tvec: list[float] | None, terms: list[str], limit: int = 8,
                        filter_document_id: int | None = None, query_filter=None,
                        text: str | None = None, graph_filter=None,
-                       extra_vecs: list[tuple[str, list[float]]] | None = None) -> list[dict]:
+                       extra_vecs: list[tuple[str, list[float]]] | None = None,
+                       alt_queries: list[tuple[list[float], str]] | None = None) -> list[dict]:
     """Dense E5 + keyword legs fused by RRF.
 
     Keyword leg (vector_store.keyword_search): collection v2 → BM25 sparse trên token bỏ dấu của
@@ -102,35 +105,51 @@ def hybrid_search_text(tvec: list[float] | None, terms: list[str], limit: int = 
     tvec None = truy vấn không có chữ (chỉ ảnh): bỏ nhánh dense chữ, keyword và graph.
     extra_vecs: [(via, vector)] — thêm danh sách dense cho vector khác cùng không gian (D21: vector ảnh
     truy vấn tìm trong chunk/caption); mỗi hit gắn `via`.
+    alt_queries: [(vector, chữ)] — câu hỏi khác cùng ý (D27: câu LLM viết lại khi `tvec`/`text` là câu gốc), mỗi câu
+    thêm 1 danh sách dense + 1 danh sách BM25 vào RRF: câu viết lại chỉ bổ sung, không thay câu gốc.
     """
     from sict_crawler.repository import vector_store
-    dense = (vector_store.search_text(tvec, limit=limit, filter_document_id=filter_document_id,
-                                      query_filter=query_filter) if tvec is not None else [])
-    for h in dense:   # cosine câu hỏi↔điểm, giữ qua RRF → rerank_text không phải nhúng lại (raw_score)
-        h["dense_score"] = h["score"]
-    try:
-        kw_hits = (vector_store.keyword_search(text or " ".join(terms), terms, limit=limit,
-                                               query_filter=query_filter)
-                   if (text or terms) else [])
-    except Exception:
-        kw_hits = []  # keyword leg is best-effort; dense already returned
-    x_lists: list[list[dict]] = []
+
+    def dense_of(vec):
+        def run():
+            hits = vector_store.search_text(vec, limit=limit, filter_document_id=filter_document_id,
+                                            query_filter=query_filter)
+            for h in hits:   # cosine câu hỏi↔điểm, giữ qua RRF → rerank_text không phải nhúng lại (raw_score)
+                h["dense_score"] = h["score"]
+            return hits
+        return run
+
+    def best_effort(fn):   # nhánh phụ (BM25, graph): lỗi → danh sách rỗng, nhánh dense vẫn trả kết quả
+        def run():
+            try:
+                return fn()
+            except Exception:
+                return []
+        return run
+
+    # mỗi nhánh 1 lượt gọi, chạy song song (vector_store.parallel); thứ tự danh sách giữ nguyên như khi tuần tự
+    # (dense câu gốc đứng đầu → hit trùng giữ bản có dense_score)
+    legs = []
+    if tvec is not None:
+        legs.append(dense_of(tvec))
+    if text or terms:
+        legs.append(best_effort(lambda: vector_store.keyword_search(text or " ".join(terms), terms, limit=limit,
+                                                                    query_filter=query_filter)))
     for via, v in extra_vecs or []:
-        x_lists.append([{**h, "via": via} for h in vector_store.search_text(
+        legs.append(lambda via=via, v=v: [{**h, "via": via} for h in vector_store.search_text(
             v, limit=limit, filter_document_id=filter_document_id, query_filter=query_filter)])
     # graph (D20): câu hỏi nêu người/sự kiện/CLB → thêm 1 danh sách dense chỉ trong chunk/caption
     # gắn thực thể đó, gộp RRF (không lọc cứng: tên nhận sai không làm mất kết quả thường)
     # graph_filter: 1 filter hoặc danh sách (VD [cả 2 thực thể (AND), bất kỳ (OR)]) → mỗi filter 1 danh sách
-    g_lists: list[list[dict]] = []
     for gf in (graph_filter if isinstance(graph_filter, list) else [graph_filter]):
-        if gf is None or tvec is None:
-            continue
-        try:
-            g_lists.append(vector_store.search_text(tvec, limit=limit, query_filter=vector_store._and(
-                query_filter, gf)))
-        except Exception:
-            pass
-    lists = [x for x in (dense, kw_hits, *x_lists, *g_lists) if x]
+        if gf is not None and tvec is not None:
+            legs.append(best_effort(lambda gf=gf: vector_store.search_text(
+                tvec, limit=limit, query_filter=vector_store._and(query_filter, gf))))
+    for avec, atext in alt_queries or []:
+        legs.append(dense_of(avec))
+        legs.append(best_effort(lambda atext=atext: vector_store.keyword_search(
+            atext, _terms(atext), limit=limit, query_filter=query_filter)))
+    lists = [x for x in vector_store.parallel(legs) if x]
     if len(lists) <= 1:
         return lists[0] if lists else []
     return _rrf(*lists)
