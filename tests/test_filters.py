@@ -29,6 +29,17 @@ def test_infer_sections_years_recency():
     assert "an-toan-thong-tin" in F.infer("Ngành an toàn thông tin học gì?", TODAY).prefer_sections
 
 
+def test_infer_latest_only_when_question_is_section_plus_recency():
+    for q in ["Thông báo mới nhất của trường là gì?", "thong bao moi nhat", "Lịch thi mới nhất",
+              "Tin tức gần đây nhất của SICT"]:
+        assert F.infer(q, TODAY).latest, q
+    # còn nội dung riêng (học bổng, năm, học phí) → chỉ ưu tiên mềm như cũ, tìm theo nghĩa
+    for q in ["Thông báo mới nhất về học bổng", "Thông báo mới nhất năm 2026", "Học phí mới nhất bao nhiêu?",
+              "Thông báo tuyển sinh", "Quy chế đào tạo hiện hành"]:
+        assert not F.infer(q, TODAY).latest, q
+    assert F.merge(F.from_request(None), F.infer("thông báo mới nhất", TODAY)).latest
+
+
 def test_from_request_validates():
     f = F.from_request({"sections": ["thong-bao", "DROP TABLE", 5], "doc_types": ["attachment", "x"],
                         "year_from": 2024, "year_to": "2026", "evil": 1})

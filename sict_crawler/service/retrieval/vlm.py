@@ -289,7 +289,8 @@ def stream_answer(question: str, context: str, image_b64: str | None = None, max
     prompt = (
         "Bạn là trợ lý ảo của Trường CNTT & Truyền thông, Đại học Công nghiệp Hà Nội (HaUI). "
         "Trả lời câu hỏi của người dùng CHỈ dựa vào ngữ cảnh được cung cấp. "
-        "Trả lời ngắn gọn bằng tiếng Việt. Nếu ngữ cảnh không đủ để trả lời, nói rõ điều đó. "
+        "Trả lời ngắn gọn bằng tiếng Việt. Ngữ cảnh chỉ có một phần thông tin thì trả lời phần có (kèm [n]) rồi nói rõ "
+        "phần còn thiếu; chỉ nói không có thông tin khi không nguồn nào liên quan đến câu hỏi. "
         "Ngữ cảnh gồm các nguồn đánh số [1], [2]…; MỌI ý trả lời phải kết thúc bằng số nguồn dạng [n] "
         "(nguồn là file thì kèm số trang có trong nhãn), chỉ dùng số nguồn có trong ngữ cảnh. "
         "Khi ngữ cảnh có nguồn ảnh/video, hãy nhắc người dùng xem mục Ảnh & Video. "
@@ -309,6 +310,7 @@ def stream_answer(question: str, context: str, image_b64: str | None = None, max
         "temperature": 0.2,
         "stream": True,
     }
+    wrote = thought = 0
     try:
         with _client(cfg) as c:
             with c.stream("POST", "/chat/completions", json=body) as r:
@@ -325,8 +327,14 @@ def stream_answer(question: str, context: str, image_b64: str | None = None, max
                         continue
                     for ch in chunk.get("choices", []):
                         delta = ch.get("delta") or {}
+                        thought += len(delta.get("reasoning_content") or delta.get("reasoning") or "")
                         if delta.get("content"):
+                            wrote += 1
                             yield delta["content"]
+        if thought and not wrote:
+            # model suy luận dùng hết max_tokens cho phần suy nghĩ → caller echo ngữ cảnh
+            print(f"[llm] stream_answer: chỉ có {thought} ký tự suy luận, không có câu trả lời — tăng llm.max_new_tokens "
+                  f"(hiện {body['max_tokens']})")
     except Exception as e:
         print(f"[llm] stream_answer fail: {e}")
         return
