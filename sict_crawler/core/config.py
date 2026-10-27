@@ -174,7 +174,7 @@ class LlmConfig:
     api_base: str = "http://localhost:20128/v1"
     api_key: str = ""  # set via LLM_API_KEY env var
     model: str = "sict"
-    max_new_tokens: int = 256
+    max_new_tokens: int = 2048  # gồm cả token suy luận của model suy luận (config.yaml)
     timeout: int = 60       # giây / lượt gọi; model suy luận (VD deepseek qua gateway) cần lâu hơn
     # D21: gửi cả ảnh người dùng vào lượt trả lời (cần model hỗ trợ ảnh). Tắt = chỉ retrieval, LLM thấy chữ tìm được.
     answer_with_image: bool = False
@@ -230,6 +230,11 @@ class RetrievalConfig:
     """Guardrail truy xuất không phụ thuộc LLM (D27). Ngưỡng TẠM — hiệu chỉnh bằng eval/golden_v1 + eval/list_v1."""
     per_doc_max: int = 2         # tối đa N đoạn của cùng 1 bài trong top k (đoạn bị đẩy xếp sau, không mất)
     list_top_k: int = 10         # câu hỏi liệt kê ("có những … nào"): số nguồn tối thiểu, mỗi bài 1 đoạn
+    # bài áp đảo: chiếm ≥ dominant_min trong 10 hit đầu (trước diversify) = câu hỏi nhắm đúng bài đó (VD "Chiến lược
+    # 2021-2025 là gì?", "Danh sách đề tài NCKH 2022" — 1 bảng dài) → bài đó được tối đa dominant_doc_max đoạn thay vì
+    # per_doc_max / 1; 0 = tắt
+    dominant_min: int = 6
+    dominant_doc_max: int = 4
     min_cosine: float = 0.45     # sufficient: cosine câu hỏi↔đoạn tốt nhất tối thiểu (jina-clip-v2, index v3)
     min_term_cover: float = 0.8  # sufficient: tỷ lệ từ nội dung của câu hỏi (bỏ dấu, bỏ hư từ) có trong ngữ cảnh
 

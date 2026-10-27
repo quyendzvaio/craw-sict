@@ -37,6 +37,23 @@ def test_diversify_does_not_cap_image_linked_chunks():
     assert [h["chunk_id"] for h in out] == ["5-1", "5-2", "5-3", "6-1"]
 
 
+def test_dominant_doc_needs_majority_of_top_hits():
+    hits = [_hit(7, i) for i in range(6)] + [_hit(i, 1) for i in range(1, 5)]
+    assert retriever.dominant_doc(hits, min_hits=6) == 7
+    assert retriever.dominant_doc(hits, min_hits=7) is None
+    assert retriever.dominant_doc(hits, min_hits=0) is None                        # 0 = tắt
+    assert retriever.dominant_doc([_hit(1, 1)] + hits, min_hits=6) is None          # đứng đầu phải là bài áp đảo
+
+
+def test_diversify_lets_dominant_doc_take_more_chunks():
+    hits = [_hit(7, i) for i in range(1, 7)] + [_hit(1, 1), _hit(2, 1), _hit(3, 1)]
+    out = retriever.diversify(hits, top_k=5, per_doc=2, dominant=7, dominant_max=4)
+    assert [h["chunk_id"] for h in out[:5]] == ["7-1", "7-2", "7-3", "7-4", "1-1"]
+    listq = retriever.diversify(hits, top_k=5, per_doc=1, dominant=7, dominant_max=4)    # câu liệt kê: các bài khác 1 đoạn
+    assert [h["chunk_id"] for h in listq[:5]] == ["7-1", "7-2", "7-3", "7-4", "1-1"]
+    assert [h["chunk_id"] for h in retriever.diversify(hits, 5, 2)[:5]] == ["7-1", "7-2", "1-1", "2-1", "3-1"]
+
+
 def test_diversify_media_points_with_doc_lists():
     hits = [{"document_id": [1, 2], "chunk_id": "a"}, {"document_id": [1, 2], "chunk_id": "b"}, _hit(3, 1)]
     out = retriever.diversify(hits, top_k=2, per_doc=1)
@@ -198,6 +215,23 @@ def test_retrieve_single_pass_when_rewrite_equals_question(monkeypatch, fake_sea
     assert fake_search["sparse"] == [q] and len(fake_search["dense"]) == 1   # giống nhau sau khi bỏ dấu → 1 lượt
 
 
+def test_retrieve_puts_latest_docs_first_for_section_plus_recency(monkeypatch, fake_search):
+    monkeypatch.setattr(query_rewriter, "rewrite", lambda x: {"rewritten": x, "terms": [], "route_llm": None})
+    seen = {}
+
+    def latest(sections, limit=10, since_year=None):
+        seen.update(sections=sections, limit=limit)
+        return [{"url": f"https://x/new{i}", "title": f"Mới {i}", "content": "c", "score": 0.0, "document_id": 900 + i,
+                 "chunk_id": f"n{i}", "kind": "text", "published_at": f"2026-10-0{9 - i}"} for i in range(3)]
+    monkeypatch.setattr(vector_store, "latest_text", latest)
+    t, _, _ = retriever.retrieve("Thông báo mới nhất của trường là gì?", 5)
+    assert [s.url for s in t[:3]] == ["https://x/new0", "https://x/new1", "https://x/new2"]
+    assert seen["sections"] == ["thong-bao"] and t[0].via == "latest"
+    seen.clear()
+    retriever.retrieve("Học phí năm 2025", 5)
+    assert not seen                                                # câu có nội dung riêng: không đụng tới theo ngày
+
+
 def test_retrieve_widens_list_questions(monkeypatch, fake_search):
     monkeypatch.setattr(query_rewriter, "rewrite", lambda x: {"rewritten": x, "terms": [], "route_llm": None})
     monkeypatch.setattr(get_settings().retrieval, "list_top_k", 10)
@@ -205,3 +239,43 @@ def test_retrieve_widens_list_questions(monkeypatch, fake_search):
     assert route.list_question
     _, _, route2 = retriever.retrieve("Học phí năm 2025", 5)
     assert not route2.list_question
+
+
+# --- model suy luận: hết max_tokens trong phần suy nghĩ ----------------------------------------------------------
+
+def _fake_stream(monkeypatch, lines):
+    from sict_crawler.service.retrieval import vlm
+
+    class R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def iter_lines(self):
+            return iter(lines)
+
+    class C(R):
+        def stream(self, *a, **k):
+            return R()
+    monkeypatch.setattr(get_settings().llm, "api_key", "k")
+    monkeypatch.setattr(vlm, "_client", lambda *a, **k: C())
+    return vlm
+
+
+def test_stream_answer_reasoning_only_yields_nothing_and_says_why(monkeypatch, capsys):
+    import json
+    think = 'data: ' + json.dumps({"choices": [{"delta": {"reasoning_content": "đang nghĩ…"}}]})
+    vlm = _fake_stream(monkeypatch, [think, think, "data: [DONE]"])
+    assert list(vlm.stream_answer("q", "ctx")) == []                    # caller echo ngữ cảnh như khi lỗi
+    assert "max_new_tokens" in capsys.readouterr().out
+
+
+def test_stream_answer_skips_reasoning_and_yields_content(monkeypatch, capsys):
+    import json
+    vlm = _fake_stream(monkeypatch, [
+        'data: ' + json.dumps({"choices": [{"delta": {"reasoning_content": "nghĩ"}}]}),
+        'data: ' + json.dumps({"choices": [{"delta": {"content": "Trả lời [1]."}}]}), "data: [DONE]"])
+    assert list(vlm.stream_answer("q", "ctx")) == ["Trả lời [1]."]
+    assert "max_new_tokens" not in capsys.readouterr().out
