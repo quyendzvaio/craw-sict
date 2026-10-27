@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 
 from sict_crawler.core.config import get_settings
 from sict_crawler.core.text import fold
@@ -28,7 +29,7 @@ def index_tag() -> str:
 
 def query_cache_key(question: str, top_k: int, filters_key: str = "", index: str | None = None) -> str:
     index = index_tag() if index is None else index
-    return "q:v5:" + hashlib.sha256(   # v5: không LLM viết lại, ảnh truy vấn 336 (v4 D27: câu gốc + đa dạng bài)
+    return "q:v6:" + hashlib.sha256(   # v6: bài áp đảo + "mới nhất" theo ngày (v5: không LLM viết lại, ảnh 336)
         f"{question}\x00{top_k}\x00{filters_key}\x00{index}".encode()).hexdigest()
 
 
@@ -176,19 +177,34 @@ def _linked_doc_hits(ivec: list[float], kept: list[dict], qf) -> list[dict]:
     return linked
 
 
-def diversify(hits: list[dict], top_k: int, per_doc: int) -> list[dict]:
+def _doc_key(h: dict):
+    d = h.get("document_id")
+    return tuple(d) if isinstance(d, list) else (d if d is not None else h.get("url"))
+
+
+def dominant_doc(hits: list[dict], min_hits: int, window: int = 10):
+    """Bài của hit đầu nếu nó chiếm ≥ `min_hits` trong `window` hit đầu (thứ tự RRF, trước diversify) → câu hỏi nhắm
+    đúng bài đó; None nếu không có bài nào áp đảo hoặc min_hits ≤ 0."""
+    if min_hits <= 0 or not hits:
+        return None
+    key = _doc_key(hits[0])
+    return key if sum(_doc_key(h) == key for h in hits[:window]) >= min_hits else None
+
+
+def diversify(hits: list[dict], top_k: int, per_doc: int, dominant=None, dominant_max: int = 0) -> list[dict]:
     """D27: top k không bị một bài chiếm hết — mỗi `document_id` tối đa `per_doc` đoạn trong top k, giữ thứ tự RRF;
     đoạn bị đẩy ra xếp sau (không mất: thiếu bài khác thì chúng lấp chỗ). Đoạn quanh ảnh người dùng gửi (`i2i-doc`)
-    không tính giới hạn (U4 cố ý lấy nhiều đoạn của một bài)."""
+    không tính giới hạn (U4 cố ý lấy nhiều đoạn của một bài). Bài áp đảo (`dominant`, xem dominant_doc) được tối đa
+    `dominant_max` đoạn."""
     if per_doc <= 0:
         return hits
     head: list[dict] = []
     rest: list[dict] = []
     seen: dict = {}
     for h in hits:
-        d = h.get("document_id")
-        key = tuple(d) if isinstance(d, list) else (d if d is not None else h.get("url"))
-        if len(head) < top_k and (h.get("via") == "i2i-doc" or seen.get(key, 0) < per_doc):
+        key = _doc_key(h)
+        cap = max(per_doc, dominant_max) if dominant is not None and key == dominant else per_doc
+        if len(head) < top_k and (h.get("via") == "i2i-doc" or seen.get(key, 0) < cap):
             head.append(h)
             seen[key] = seen.get(key, 0) + 1
         else:
@@ -290,7 +306,13 @@ def retrieve(question: str, top_k: int = 5,
     else:   # chỉ ảnh: danh sách duy nhất là cosine ảnh↔chữ → lọc theo i2t_min, điểm gốc = cosine
         reranked = [{**h, "raw_score": h["score"]} for h in t_hits if h["score"] >= rc.i2t_min]
     boosted = F.apply_boost(reranked, f)
-    text_hits = diversify([h for h in boosted if h.get("kind") != "media_caption"], k, per_doc)
+    if f.latest and has_text:
+        # "thông báo mới nhất?": thứ tự theo nghĩa không biết ngày → bài mới nhất của mục lên đầu (năm nay và năm trước)
+        latest = vector_store.latest_text(f.prefer_sections, limit=k, since_year=date.today().year - 1)
+        got = {_doc_key(h) for h in latest}
+        boosted = [{**h, "via": "latest"} for h in latest] + [h for h in boosted if _doc_key(h) not in got]
+    chunks = [h for h in boosted if h.get("kind") != "media_caption"]
+    text_hits = diversify(chunks, k, per_doc, dominant_doc(chunks, gc.dominant_min), gc.dominant_doc_max)
 
     kept: list[dict] = []
     if mfut is not None:

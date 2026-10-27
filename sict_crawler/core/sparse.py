@@ -8,7 +8,7 @@ vàng), nên hybrid trên Qdrant khớp hybrid lúc eval:
 Thay `text_folded` + full-text index trong bản nháp D8: lọc full-text chỉ trả tập khớp theo thứ tự
 scroll (không xếp hạng), còn sparse BM25 trả điểm xếp hạng được để đưa vào RRF.
 
-Callers: indexer (point), vector_store.search_sparse (query).
+Callers: indexer (point), vector_store.search_sparse (query); question_terms: agent.evidence, filters.infer.
 """
 from __future__ import annotations
 
@@ -30,6 +30,19 @@ _TOKEN = re.compile(r"[a-z0-9]+")
 
 def tokens(text: str) -> list[str]:
     return [t for t in _TOKEN.findall(fold(text)) if len(t) >= 2]
+
+
+# hư từ / từ hỏi (đã bỏ dấu) — không phải từ nội dung của câu hỏi (agent.evidence, filters.infer)
+QUESTION_STOP = frozenset("""
+a ai bao bi biet cac cach cai cho chu co cua da dang de den deu do duoc gi gom hay hoac hoi khi khong la lam luc
+ma minh mot muon nao nay neu nhe nhieu nhu nhung noi o oi ra roi sao se tai the thi thoi toi trong tu va ve vi voi xin
+xem em anh chi ban hien duoc nay ay kia
+""".split())
+
+
+def question_terms(question: str) -> list[str]:
+    """Từ nội dung của câu hỏi (token BM25 bỏ dấu, bỏ hư từ), giữ thứ tự, không trùng."""
+    return list(dict.fromkeys(t for t in tokens(question) if t not in QUESTION_STOP))
 
 
 def token_index(tok: str) -> int:

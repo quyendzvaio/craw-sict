@@ -29,6 +29,7 @@ from qdrant_client.models import (
     MatchAny,
     MatchValue,
     PointStruct,
+    Range,
     SearchParams,
     VectorParams,
 )
@@ -382,6 +383,32 @@ def scroll_text(query_filter, limit: int = 200, collection: str | None = None) -
         points, _ = get_client().scroll(name, scroll_filter=query_filter, limit=limit, with_payload=True)
         out += [{"score": 0.0, **p.payload} for p in points]
     return out
+
+
+def latest_text(sections: list[str], limit: int = 10, since_year: int | None = None,
+                max_points: int = 2000) -> list[dict]:
+    """Bài mới nhất của các mục (`published_at` giảm dần), mỗi bài 1 hit = đoạn đầu (`idx` nhỏ nhất); bỏ file đính kèm
+    (là con của bài). Payload không có index ngày → lọc mục + năm (có index) rồi sắp phía client: mục "thong-bao" từ
+    năm trước tới nay ~350 điểm, 0,02 s. Dùng cho câu hỏi chỉ gồm "mục + mới nhất" (filters.QueryFilters.latest)."""
+    must = [FieldCondition(key="section", match=MatchAny(any=sections))]
+    if since_year:
+        must.append(FieldCondition(key="year", range=Range(gte=since_year)))
+    flt = Filter(must=must, must_not=[FieldCondition(key="doc_type", match=MatchValue(value="attachment")),
+                                      FieldCondition(key="kind", match=MatchValue(value="media_caption"))])
+    first: dict = {}
+    for name in text_collections():
+        offset, seen = None, 0
+        while seen < max_points:
+            points, offset = get_client().scroll(name, scroll_filter=flt, limit=256, offset=offset, with_payload=True)
+            seen += len(points)
+            for p in points:
+                pl = p.payload
+                d, idx = pl.get("document_id"), pl.get("idx") or 0
+                if pl.get("published_at") and (d not in first or idx < (first[d].get("idx") or 0)):
+                    first[d] = {"score": 0.0, "_pid": str(p.id), "_col": name, **pl}
+            if offset is None:
+                break
+    return sorted(first.values(), key=lambda h: h["published_at"], reverse=True)[:limit]
 
 
 def scroll_text_by_content(term: str, limit: int = 8, query_filter=None) -> list[dict]:
