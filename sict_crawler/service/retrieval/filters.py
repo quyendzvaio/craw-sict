@@ -16,6 +16,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 
+from sict_crawler.core.sparse import question_terms
 from sict_crawler.core.text import fold
 
 DOC_TYPES = {"article", "page", "attachment"}
@@ -56,6 +57,8 @@ _SECTION_HINTS: list[tuple[str, list[str]]] = [
 ]
 _RECENT = re.compile(r"\bmoi nhat\b|\bgan day\b|\bvua qua\b|\bhien nay\b|\bhien hanh\b|"
                      r"\bsap toi\b|\btuan nay\b|\bthang nay\b|\bhoc ky nay\b|\bky nay\b")
+# từ chung, không làm câu "mục + mới nhất" có nội dung riêng ("thông báo mới nhất của trường là gì")
+_GENERIC = frozenset("truong nha khoa sict haui cntt tt dai hoc cong nghiep ha noi nghe thong tin truyen nhat".split())
 _YEAR = re.compile(r"\b(20\d{2})\b")
 _SCHOOL_YEAR = re.compile(r"\b(20\d{2})\s*[-–/]\s*(20\d{2})\b")
 
@@ -77,6 +80,9 @@ class QueryFilters:
     prefer_sections: list[str] = field(default_factory=list)
     prefer_years: list[int] = field(default_factory=list)
     recency: bool = False
+    # câu hỏi chỉ gồm mục + "mới nhất" ("thông báo mới nhất?"): tìm theo nghĩa không sắp được theo ngày → retriever
+    # đặt các bài mới nhất của mục lên đầu (vector_store.latest_text)
+    latest: bool = False
     prefer_doc_types: list[str] = field(default_factory=list)  # router wants_file → ["attachment"]
 
     def has_hard(self) -> bool:
@@ -109,9 +115,11 @@ def infer(question: str, today: date | None = None) -> QueryFilters:
     today = today or date.today()
     q = fold(question)
     f = QueryFilters()
+    rest = q
     for pat, secs in _SECTION_HINTS:
         if re.search(pat, q):
             f.prefer_sections += [x for x in secs if x not in f.prefer_sections]
+            rest = re.sub(pat, " ", rest)
     years: list[int] = []
     for a, b in _SCHOOL_YEAR.findall(q):
         years += [int(a), int(b)]
@@ -122,6 +130,8 @@ def infer(question: str, today: date | None = None) -> QueryFilters:
         years.append(today.year - 1)
     f.prefer_years = sorted({y for y in years if 2000 <= y <= today.year + 2})
     f.recency = bool(_RECENT.search(q)) or (bool(re.search(r"\bnam nay\b", q)) and not f.prefer_years)
+    left = [t for t in question_terms(_RECENT.sub(" ", rest)) if t not in _GENERIC]
+    f.latest = bool(_RECENT.search(q)) and bool(f.prefer_sections) and not left
     return f
 
 
@@ -130,6 +140,7 @@ def merge(explicit: QueryFilters, inferred: QueryFilters) -> QueryFilters:
     out.prefer_sections = inferred.prefer_sections
     out.prefer_years = inferred.prefer_years
     out.recency = inferred.recency
+    out.latest = inferred.latest
     return out
 
 

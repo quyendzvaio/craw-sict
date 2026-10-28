@@ -13,19 +13,8 @@ from __future__ import annotations
 
 from sict_crawler.core import sparse
 from sict_crawler.core.config import get_settings
+from sict_crawler.core.sparse import question_terms
 from sict_crawler.service.retrieval import retriever, sources
-
-# hư từ / từ hỏi (đã bỏ dấu) — không tính vào độ phủ từ của câu hỏi
-_STOP = frozenset("""
-a ai bao bi biet cac cach cai cho chu co cua da dang de den deu do duoc gi gom hay hoac hoi khi khong la lam luc
-ma minh mot muon nao nay neu nhe nhieu nhu nhung noi o oi ra roi sao se tai the thi thoi toi trong tu va ve vi voi xin
-xem em anh chi ban hien duoc nay ay kia
-""".split())
-
-
-def question_terms(question: str) -> list[str]:
-    """Từ nội dung của câu hỏi (token BM25 bỏ dấu, bỏ hư từ), giữ thứ tự, không trùng."""
-    return list(dict.fromkeys(t for t in sparse.tokens(question) if t not in _STOP))
 
 
 def evidence(question: str, tsrcs: list, msrcs: list, context: str) -> dict:
