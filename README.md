@@ -1,105 +1,202 @@
-# SICT Multi-Modal Crawler
+# SICT Multimodal RAG
 
-Crawl `https://sict.haui.edu.vn/vn` (toàn bộ tree) → text + table + image + video keyframes
-→ PostgreSQL + Qdrant + AWS S3 → RAG Q&A API + Chat UI.
+Hệ thống hỏi đáp trên toàn bộ nội dung website Trường Công nghệ Thông tin và Truyền thông —
+Đại học Công nghiệp Hà Nội ([sict.haui.edu.vn](https://sict.haui.edu.vn/vn)): crawl cây trang →
+tách chữ, bảng, ảnh, keyframe video, file đính kèm → PostgreSQL + Qdrant + kho đối tượng (S3/MinIO)
+→ API RAG (`/query`, `/chat` stream SSE) kèm giao diện chat.
 
-> Đang thực hiện **production hardening (Đợt 3)** — quyết định, lộ trình, verify/rollback ở
-> [`plan.md`](plan.md). Phần dưới mô tả **trạng thái hiện tại**; mục "Kiến trúc mục tiêu" mô tả
-> đích đến đã chốt.
+Hỏi được bằng chữ, bằng ảnh, hoặc cả hai; câu trả lời có trích dẫn `[n]` trỏ về bài viết / file
+(kèm số trang) và ảnh, video liên quan khi câu hỏi cần.
+
+> Dự án đang ở giai đoạn production hardening. Mọi quyết định thiết kế (D1–D30), lộ trình và cách
+> verify/rollback nằm ở [`plan.md`](plan.md); tiêu chí nghiệm thu ở `tests/acceptance_*.md`.
+> [`CLAUDE.md`](CLAUDE.md) là tài liệu kỹ thuật chi tiết nhất về từng thành phần.
+
+## Tính năng
+
+- **Crawl đủ cây trang**: hàng đợi BFS trên Redis (dedup, giãn cách theo host), giữ độ sâu khi phân
+  trang, backend `httpx` → Obscura (trang dựng bằng JS) → crawl4ai. Parser khớp theme `irs-*` của
+  site, bỏ sidebar, bộ đếm lượt xem.
+- **Đa phương thức**: ảnh vùng nội dung (dedupe theo sha256), keyframe video bằng ffmpeg (≤ 20 khung,
+  lọc trùng), phụ đề YouTube có sẵn (không ASR), OCR Tesseract tiếng Việt cho ảnh và PDF scan, file
+  đính kèm PDF / DOCX / XLSX / PPTX / DOC / XLS (nhận dạng theo magic bytes vì site đặt sai đuôi).
+- **Index có cấu trúc**: chunk theo khối DOM (heading, đoạn, bảng lặp hàng tiêu đề, danh sách), mỗi
+  chunk mang `heading_path`; file đính kèm chunk theo trang để trích dẫn được "trang N".
+- **Tìm kiếm lai**: dense + BM25 trên chữ đã bỏ dấu (sparse vector Qdrant, IDF), gộp RRF; câu gốc
+  luôn được tìm, câu viết lại chỉ bổ sung. Ưu tiên mềm theo mục, năm, "mới nhất" suy từ câu hỏi;
+  lọc cứng khi người gọi truyền `filters`.
+- **Graph thực thể bằng luật** (người, sự kiện, CLB): lọc chữ và ảnh/video theo thực thể nêu trong
+  câu hỏi ("ảnh thầy X ở CLB Y"), thêm dữ kiện quan hệ vào ngữ cảnh. Không dùng LLM để trích.
+- **Guardrail không phụ thuộc LLM**: đa dạng tài liệu trong top k, câu liệt kê lấy rộng hơn, bài áp
+  đảo được thêm đoạn, cờ `sufficient` tính bằng luật (cosine + độ phủ từ khoá). Đổi model LLM không
+  đổi kết quả truy xuất.
+- **Router media**: chỉ kèm ảnh/video khi câu hỏi cần (`none | optional | required`) và khi có bằng
+  chứng (ngưỡng điểm thô theo từng cặp phương thức).
+- **Cập nhật tăng dần an toàn**: phát hiện bài mới / bài sửa theo hash nội dung đã làm sạch, chỉ xoá
+  khi HTTP 404/410, cầu chì xoá hàng loạt, reconcile Postgres ↔ Qdrant hằng đêm.
+
+## Kiến trúc
+
+```
+                 ┌──────────── ingest (worker) ────────────┐
+sict.haui.edu.vn → frontier → crawler → parser → indexing/chunk → embedder ─┐
+                   (Redis)              │                                   │
+                                        ├→ PostgreSQL  (documents, chunks, media, graph — nguồn sự thật)
+                                        ├→ S3 / MinIO  (HTML gốc, ảnh, file đính kèm)
+                                        └→ Qdrant      (text / image / ocr: dense + BM25) ←┘
+
+câu hỏi (+ ảnh) → /query, /chat → agent: rewrite (luật) → retrieve (hybrid + graph + media router)
+                                        → dựng ngữ cảnh đánh số [n] → LLM (stream) → trích dẫn
+```
+
+Hai đường ghi index dùng **cùng một bộ luật** (`service/index/indexing.py`, `doc_rules.py`, id điểm
+uuid5 cố định nên nạp lại là ghi đè, không nhân bản):
+
+- **Bulk** (D16): `snapshot` (chỉ tải, resume được) → `compute` (parse, chunk, embed, OCR, keyframe →
+  artifact `.jsonl` + `.npy`, chạy được trên máy GPU thuê) → `loader` (nạp PG + Qdrant, không embed lại).
+- **Incremental**: `pipeline.main --incremental` chạy định kỳ trên worker, ghi qua `indexer.index_page`.
+
+### Embedding
+
+| Index | Backend | Mô hình | Ghi chú |
+|---|---|---|---|
+| v2 (`*_v2`, mặc định cấu hình) | `torch` | multilingual-e5-small 384-d (chữ) + CLIP ViT-B/32 512-d (ảnh) | |
+| v3 (`*_v3`) | `api` | jina-clip-v2 1024-d, chữ và ảnh chung một không gian | dịch vụ tự host ONNX int8 trên CPU (`embed_server.py`, cổng 8090), cosine so với fp32: chữ 0,999, ảnh 1,000 |
+
+Chuyển giữa hai bên chỉ là cấu hình (`embedding.backend`, `QDRANT_COLLECTION_*`); cutover kiểu
+blue/green, rollback = trỏ API về collection cũ.
+
+## Cấu trúc mã nguồn
+
+Import tuyệt đối và chỉ trỏ xuống tầng dưới; `api` và `pipeline` là hai tầng trên cùng, không import nhau.
+
+| Gói | Nội dung |
+|---|---|
+| `sict_crawler/core/` | cấu hình (yaml + env → dataclass), bỏ dấu, tokenizer BM25 |
+| `sict_crawler/model/` | bảng SQLAlchemy, schema pydantic (`QueryIn`, `Source`) |
+| `sict_crawler/repository/` | Postgres, Qdrant, S3 / kho local, hàng đợi Redis, cache Redis |
+| `sict_crawler/service/crawl/` | crawler, parser HTML → markdown + khối, phân loại URL |
+| `sict_crawler/service/index/` | luật index v2, chunker, OCR, video, đường ghi `indexer` |
+| `sict_crawler/service/embedding/` | client embedding (torch / HTTP), dịch vụ ONNX tự host |
+| `sict_crawler/service/retrieval/` | retriever, agent, router media, bộ lọc, trích dẫn, gọi LLM |
+| `sict_crawler/service/graph/` | luật trích thực thể, `graphsync`, catalog CLB / sự kiện |
+| `sict_crawler/pipeline/` | CLI: crawl, incremental, snapshot, compute, loader, reconcile |
+| `sict_crawler/api/` | FastAPI, `/metrics`, giao diện chat tĩnh |
+| `tests/` | pytest, fixture HTML thật, Gherkin, tiêu chí nghiệm thu |
+| `scripts/` | đánh giá, nghiệm thu qua HTTP, cutover, giám sát |
+| `eval/` | bộ câu hỏi vàng, bộ câu liệt kê, bộ vàng graph, kết quả đo |
 
 ## Chạy local
 
+Yêu cầu: Docker, [uv](https://docs.astral.sh/uv/) (dependency **chỉ** quản lý bằng uv, không pip),
+Python ≥ 3.10. Nhóm dependency: `dev` (pytest), `api` (FastAPI), `ml` (torch CPU, sentence-transformers,
+OCR, yt-dlp), `embed` (dịch vụ ONNX), `eval` (RAGAS).
+
 ```bash
-# 1. hạ tầng
-docker compose up -d postgres redis qdrant
+cp .env.example .env                         # điền LLM_API_BASE / LLM_MODEL / LLM_API_KEY nếu cần câu trả lời sinh
+docker compose up -d postgres redis qdrant   # hạ tầng
+uv sync --group dev --group api              # thêm --group ml để embed / OCR / video
 
-# 2. python deps — chỉ dùng uv (không pip/requirements.txt)
-uv sync --group dev --group api   # thêm --group ml cho E5/CLIP/OCR/video
-
-# 3. S3: AWS_PROFILE hoặc AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY.
-#    Không có credentials → lưu local ./_local_store
-
-# 4. crawl thử 20 trang / chu kỳ incremental
+# crawl thử 20 trang, hoặc một chu kỳ incremental
 uv run python -m sict_crawler.pipeline.main --crawl-limit 20
-uv run python -m sict_crawler.pipeline.main --incremental --check-edits 100 --crawl-limit 200 --annotate-ocr-n 500
+uv run python -m sict_crawler.pipeline.main --incremental --check-edits 100 --crawl-limit 200
 
-# 5. API + UI (http://localhost:8000)
+# API + giao diện chat tại http://localhost:8000
 uv run uvicorn sict_crawler.api.routes:app --port 8000
-
-# 6. test (giống CI)
-uv run pytest tests/ -q --ignore=tests/smoke_incremental.py
 ```
 
-## Index lần đầu: snapshot offline → compute (GPU) → load
+Không có thông tin AWS thì file lưu vào `./_local_store`. Không có khoá LLM thì `/chat` trả lại
+ngữ cảnh đã truy xuất thay vì câu trả lời sinh.
+
+Index hàng loạt từ đầu:
 
 ```bash
-# 1. chỉ tải (CPU, mạng): HTML + ảnh vùng nội dung + file đính kèm + danh sách video; chạy lại = resume
-python -m sict_crawler.pipeline.snapshot --out _snapshot/2026-10-12
-# 2. tính toán nặng (máy GPU nếu có, tự rơi về CPU): parse → chunk → embed → OCR → keyframe → artifact
-python -m sict_crawler.pipeline.compute --snapshot _snapshot/2026-10-12
-# 3. nạp (CPU, không embed lại): PG + Qdrant sict_text_v2/sict_image_v2 + ảnh lên S3, kiểm tra số point
-python -m sict_crawler.pipeline.loader --artifacts _snapshot/2026-10-12/artifacts/v2-multilingual-e5-small
+python -m sict_crawler.pipeline.snapshot --out _snapshot/2026-10-12        # chạy lại = resume
+python -m sict_crawler.pipeline.compute  --snapshot _snapshot/2026-10-12   # stages docs,text,images,videos
+python -m sict_crawler.pipeline.loader   --artifacts _snapshot/2026-10-12/artifacts/v2-multilingual-e5-small
+python -m sict_crawler.service.graph.graphsync rebuild                      # graph thực thể
+python -m sict_crawler.pipeline.reconcile --dry-run                         # kiểm PG ↔ Qdrant
 ```
 
-Chuyển production sang v2: `scripts/cutover_v2.sh` (từng bước gọi tay; upload S3 cần
-`CONFIRM_S3_UPLOAD=yes`), kiểm tra bằng `python3 scripts/eval_api.py --api http://<VM1>:8003`.
+## API
 
-Artifact (`_snapshot/<ngày>/artifacts/<spec>-<model>/`) không phụ thuộc kho vector, id cố định (uuid5)
-— nạp lại ghi đè, không nhân bản. Incremental về sau chạy trên CPU qua cùng quy tắc (`indexer.py`).
+| Endpoint | Mô tả |
+|---|---|
+| `POST /query` | `{question, top_k, image?, filters?}` → nguồn chữ, media, route, `sufficient`, trích dẫn |
+| `POST /chat` | cùng đầu vào, trả SSE: `status` → `sources` → các mảnh câu trả lời → `citations` → `[DONE]` |
+| `GET /media/s/{sha256}` | ảnh / keyframe (index v2/v3) |
+| `GET /media/{id}` | ảnh index v1 |
+| `GET /metrics` | Prometheus: request, độ trễ, heartbeat pipeline, số tài liệu, hàng đợi |
+| `GET /` | giao diện chat |
 
-## Kiến trúc hiện tại
+`image` là base64 (không tiền tố `data:`); `filters` nhận `sections`, `doc_types`, `year_from`, `year_to`.
 
-`frontier` (Redis BFS, dedup, politeness) → `crawler` (httpx → Obscura → crawl4ai) →
-`parser` (markdown + table + img/video URLs) → `chunker` → `embedder` (E5 text 384-d, CLIP image 512-d)
-→ `vector_store` (Qdrant `sict_text_v2`: E5 + BM25 sparse bỏ dấu, `sict_image_v2`: CLIP) + `db`
-(PostgreSQL: metadata + `media`/`media_occurrence`/`videos`) + `storage` (S3). Ghi index qua
-`indexer` (incremental) / `loader` (bulk) — cùng quy tắc `indexing` + `doc_rules`.
+```bash
+curl -s localhost:8000/query -H 'content-type: application/json' \
+  -d '{"question": "Trường có những ngành đào tạo nào?"}'
+```
 
-Mã nguồn chia theo trách nhiệm (import chỉ trỏ xuống tầng dưới): `sict_crawler/core` (cấu hình, chuẩn hoá chữ, BM25) → `model` (bảng ORM, schema API) → `repository` (Postgres, Qdrant, S3, Redis) → `service/{crawl,index,embedding,retrieval,graph}` (nghiệp vụ) → `pipeline` (job/CLI) | `api` (HTTP + UI); test ở `tests/`.
+## Cấu hình
 
-- Ảnh: tải → S3 `media/<sha256>.<ext>` → CLIP → `sict_image_v2` (1 point / 1 file, ảnh dùng chung
-  nhiều bài giữ danh sách bài); mỗi lần xuất hiện có 1 caption = header bài + alt + OCR Tesseract
-  → E5 → `sict_text_v2` (để hỏi bằng chữ ra ảnh). UI lấy ảnh qua `/media/s/<sha256>`.
-- Graph thực thể (`graph.py`): người / sự kiện / CLB trích bằng luật từ tiêu đề, thân bài, alt riêng,
-  đoạn văn sát ảnh, OCR → Postgres `entities`/`entity_links` (kèm đoạn trích bằng chứng) + payload
-  Qdrant `entities`. Câu hỏi nêu "thầy X", "IT Festival 2023", "CLB HIT" → lọc thẳng chữ + ảnh/video
-  gắn thực thể đó. Cạnh thực thể ↔ thực thể (`entity_relations`, suy từ cùng ảnh / cùng tiêu đề) cho
-  câu tổng hợp ("thầy X tham gia sự kiện nào") và câu nêu 2 thực thể ("ảnh thầy X ở CLB Y").
-  Dựng / cập nhật graph qua 1 đường duy nhất `graphsync` (Postgres là nguồn sự thật, payload Qdrant
-  sinh lại từ PG); alias / chặn đã duyệt lưu ở `entity_aliases`, tên gần giống vào hàng chờ
-  `entity_review`; graph chỉ dựng bằng luật (đã gỡ trích LLM `graph_llm`, 2026-10-18). Bộ vàng `eval/graph_gold_v1.jsonl` + `scripts/eval_graph.py`.
-- Video: keyframe ffmpeg (≤20, dedupe CLIP) → xử lý như ảnh; transcript chỉ lấy phụ đề có sẵn
-  (không ASR); không lưu video gốc.
-- Incremental (`--incremental`): discover → recheck (so `hash_v2` markdown sạch) → drain, OCR ngay lúc
-  index; chỉ xoá khi 404/410, cầu chì xoá hàng loạt,
-  heartbeat Redis `incremental:last_ok`/`:last_error`.
-- Query: `/query`, `/chat` (SSE) qua agent loop (rewrite → hybrid retrieve câu gốc + câu viết lại → cờ `sufficient` bằng luật → answer, D27);
-  `/media/{id}`; cache Redis db 3.
+`config.yaml` (đổi đường dẫn bằng `SICT_CONFIG`) nạp vào dataclass ở `core/config.py`; biến môi
+trường ghi đè khi triển khai:
 
-Hạn chế đã biết (xử lý trong `plan.md`): parser không khớp theme `irs-*` của site nên lấy cả trang
-(ảnh/video sidebar bị nhân bản), hash tính trên raw HTML, endpoint API chặn event loop, LLM chỉ nhận
-300 ký tự mỗi chunk.
+| Biến | Dùng cho |
+|---|---|
+| `POSTGRES_DSN`, `REDIS_URL`, `QDRANT_HOST` / `QDRANT_PORT` / `QDRANT_GRPC_PORT` | kết nối hạ tầng |
+| `QDRANT_COLLECTION_TEXT` / `_IMAGE` / `_OCR` | collection đang phục vụ (`*_v2`, `*_v3`) |
+| `LLM_API_BASE`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_MAX_NEW_TOKENS` | LLM trả lời, API tương thích OpenAI |
+| `EMBED_API_BASE`, `EMBED_MODEL`, `EMBED_DIM`, `EMBED_API_KEY` | backend embedding `api` |
+| `AWS_PROFILE` hoặc `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, `S3_ENDPOINT_URL` | kho đối tượng (S3 / MinIO) |
+| `CRAWLER_BACKEND` | `auto` \| `httpx` \| `obscura` \| `crawl4ai` |
 
-## Triển khai hiện tại (2 VM, c7i-flex.large 2 vCPU / 4 GB)
+Model suy luận (glm, deepseek…) tốn 300–700 token để "nghĩ" trước khi trả lời, nên giữ
+`llm.max_new_tokens` ≥ 2048.
 
-- VM1 `docker-compose.yml`: postgres, redis, qdrant, api (:8003), nginx edge cache (:8080).
-- VM2 `docker-compose.worker.yml`: worker incremental (`cron`, 6h/lần), `svc-ocr`, Obscura sidecar;
-  trỏ về VM1 qua `.env` (xem `.env.worker.example`).
-- CD: GitHub Actions `workflow_dispatch` (tar + scp + build trên VM).
+## Kiểm thử và đánh giá
 
-## Kiến trúc mục tiêu (đã chốt, xem `plan.md`)
+```bash
+uv run pytest tests/ -q --ignore=tests/smoke_incremental.py   # giống CI
+uv run python -m tests.test_safety                             # 3 script này CI chạy riêng
+uv run python -m tests.test_captions
+uv run python -m tests.test_agent
+```
 
-- Parser khớp theme hiện tại; media dedupe (`media` + `media_occurrence`, video khoá theo YouTube id).
-- **Qdrant** giữ vai trò kho vector (point id cố định, cutover blue/green bằng collection `*_v2`); tìm từ khoá
-  không dấu qua payload `text_folded` + full-text index; Postgres giữ metadata/quan hệ.
-- Embedding **ONNX Runtime int8**, không torch; CLIP text đa ngôn ngữ cho câu hỏi tiếng Việt.
-- API không chặn event loop, LLM nhận full chunk, agent có deadline.
-- Lọc metadata (mục, loại tài liệu, năm; ưu tiên mềm theo câu hỏi) và router thành phần câu trả lời
-  (ý định + bằng chứng): không phải câu hỏi nào cũng kèm ảnh.
-- Image build trong CI → GHCR (tag SHA); VM2 Spot/lịch bật-tắt; swap, pin version, bind cổng private.
+| Bộ | Script | Kết quả gần nhất (index v3) |
+|---|---|---|
+| `eval/golden_v1.jsonl` (70 câu, URL đáp án, chế độ media) | `scripts/eval_retrieval.py` (offline), `scripts/eval_api.py` (HTTP) | recall@5 0,985 · MRR@10 0,898 · chế độ media 0,871 |
+| `eval/list_v1.jsonl` (12 câu liệt kê + 8 câu ngoài phạm vi) | `scripts/eval_api.py --list` | độ phủ mục 0,970 · `sufficient` đúng 0,95 |
+| RAGAS trên golden + list | `scripts/eval_ragas.py collect / score` | faithfulness 0,884 · answer relevancy 0,750 · context precision 0,735 · context recall (list) 0,937 |
+| `eval/graph_gold_v1.jsonl` (150 tài liệu, nhãn còn ở dạng draft) | `scripts/eval_graph.py`, CI gate `tests/test_eval_graph.py` | chờ người duyệt nhãn (`eval/GRAPH_ANNOTATION.md`) |
+| Nghiệm thu U1–U6 qua HTTP | `scripts/accept_api.py --api URL` | 54/54 |
 
-## Config
+Chạy đánh giá trước khi đổi model, ngưỡng hay luật chunk. Lịch sử số đo ở `eval/RESULTS.md` và
+`eval/results/`.
 
-`config.yaml` — seed URLs, connections, chunk budget, video threshold.
-Override path: `SICT_CONFIG=/path/to/config.yaml`. Biến môi trường (`POSTGRES_DSN`, `REDIS_URL`,
-`QDRANT_*`, `LLM_*`, `VLM_*`, `AWS_*`, `S3_ENDPOINT_URL`) ghi đè yaml khi deploy.
+## Triển khai
+
+Hai VM, Docker Compose (không k8s, D15):
+
+- **VM1** `docker-compose.yml`: postgres, redis, qdrant, api (cổng 8003), nginx cache (8080).
+- **VM2** `docker-compose.worker.yml`: `cron` chạy incremental mỗi 6 giờ, OCR, Obscura sidecar;
+  dịch vụ embedding `docker-compose.embed.yml`. Trỏ về VM1 qua `.env` (`.env.worker.example`).
+- **CI/CD**: `ci.yml` chạy test và build thử image trên mọi PR; `release.yml` đẩy
+  `ghcr.io/<owner>/sict-{api,worker,embed}:<sha>` khi merge vào `main`; `cd.yml` (chạy tay, chỉ
+  `main`) kéo image theo SHA về VM, không build trên VM.
+- **Giám sát**: Grafana Alloy trên mỗi host đẩy metric + log lên Grafana Cloud; dashboard sinh từ
+  code (`scripts/grafana_dashboards.py`).
+
+Postgres, Redis, Qdrant trong compose mở cổng để worker ở VM2 kết nối: chỉ cho phép mạng private
+(security group / firewall) và đổi mật khẩu mặc định `sict` trước khi chạy thật.
+
+## Quy ước đóng góp
+
+- Nhánh `feat/…` / `fix/…` / `docs/…` → PR vào `develop` → CI xanh → merge; `main` chỉ nhận bản phát hành.
+- Comment, tài liệu, commit viết tiếng Việt.
+- Thay đổi parser phải kèm fixture HTML thật (`tests/fixtures/`).
+- Không commit `.env`, cookie YouTube, khoá; ví dụ cấu hình nằm ở `.env.example`.
+
+## Dữ liệu
+
+Nội dung crawl thuộc về Trường CNTT&TT — Đại học Công nghiệp Hà Nội. Repo chỉ chứa mã nguồn và các
+bộ câu hỏi đánh giá; dữ liệu crawl, snapshot và index không nằm trong repo.

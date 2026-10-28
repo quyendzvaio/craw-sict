@@ -147,7 +147,7 @@ class VideoConfig:
 
 @dataclass
 class VlmConfig:
-    api_base: str = "http://13.236.133.54:20128/v1"
+    api_base: str = "http://localhost:20128/v1"
     api_key: str = ""  # set via VLM_API_KEY env var
     models: list[str] = field(default_factory=lambda: ["VLM"])
     max_new_tokens: int = 128
@@ -171,7 +171,7 @@ class VlmConfig:
 @dataclass
 class LlmConfig:
     """Text LLM for query rewriting (and later answers)."""
-    api_base: str = "http://13.236.133.54:20128/v1"
+    api_base: str = "http://localhost:20128/v1"
     api_key: str = ""  # set via LLM_API_KEY env var
     model: str = "sict"
     max_new_tokens: int = 2048  # gồm cả token suy luận của model suy luận (config.yaml)

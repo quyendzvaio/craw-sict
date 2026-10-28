@@ -96,7 +96,7 @@ video:
 
 vlm:
   enabled: false        # annotate dùng OCR local; VLM chỉ bật lại khi upstream ổn
-  api_base: "http://13.236.133.54:20128/v1"
+  api_base: "http://localhost:20128/v1"
   models:
     - "VLM"
   max_new_tokens: 128
@@ -104,7 +104,7 @@ vlm:
   per_page_limit: 10
 
 llm:
-  api_base: "http://13.236.133.54:20128/v1"
+  api_base: "http://localhost:20128/v1"
   model: "sict"
   # model suy luận (glm-5.3, deepseek…) tiêu 300–700 token "suy nghĩ" trước khi trả lời: 256 → không còn chữ nào,
   # /chat rơi về echo ngữ cảnh (đo 2026-10-27, glm-5.3-flash-sale qua kiraai; tham số tắt suy luận bị bỏ qua)
