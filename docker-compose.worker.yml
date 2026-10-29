@@ -31,7 +31,7 @@ services:
     logging: {driver: json-file, options: {max-size: 20m, max-file: "3"}}
     command: ["python", "-m", "sict_crawler.pipeline.main", "--annotate-ocr", "2000"]
 
-  # Cron incremental 6h/lần — đường chạy worker DUY NHẤT trên VM2.
+  # Cron incremental 12h/lần, ngân sách 5 phút / lượt (crawl.cycle_budget_sec) — đường chạy worker DUY NHẤT trên VM2.
   cron:
     image: ${WORKER_IMAGE:-sict-worker:latest}   # CD đặt ghcr.io/…/sict-worker:<sha> (D10)
     build:
@@ -51,9 +51,11 @@ services:
       QDRANT_TIMEOUT: ${QDRANT_TIMEOUT:-120}
       YT_COOKIES: ${YT_COOKIES:-/cookies/cookies.txt}
       AWS_PROFILE: ${AWS_PROFILE:-quyen-admin}
-      CHECK_EDITS: ${CHECK_EDITS:-100}
+      CHECK_EDITS: ${CHECK_EDITS:-50}
       CRAWL_LIMIT: ${CRAWL_LIMIT:-200}
       ANNOTATE_OCR_N: ${ANNOTATE_OCR_N:-500}
+      CYCLE_BUDGET_SEC: ${CYCLE_BUDGET_SEC:-300}
+      CRON_INTERVAL_SEC: ${CRON_INTERVAL_SEC:-43200}
     volumes: [localstore:/app/_local_store, hfcache:/cache/hf, "${AWS_DIR:-${HOME}/.aws}:/home/app/.aws:ro", "./cookies:/cookies:ro"]
     restart: unless-stopped
     mem_limit: 3000m
@@ -61,8 +63,8 @@ services:
     depends_on: [obscura]
     command: >
       /bin/sh -c "while true; do
-        python -m sict_crawler.pipeline.main --incremental --check-edits $$CHECK_EDITS --crawl-limit $$CRAWL_LIMIT --annotate-ocr-n $$ANNOTATE_OCR_N;
-        sleep $${CRON_INTERVAL_SEC:-21600}; done"
+        python -m sict_crawler.pipeline.main --incremental --check-edits $$CHECK_EDITS --crawl-limit $$CRAWL_LIMIT --annotate-ocr-n $$ANNOTATE_OCR_N --budget-sec $$CYCLE_BUDGET_SEC;
+        sleep $$CRON_INTERVAL_SEC; done"
 
   # Sidecar Obscura CDP cho trang JS nặng. Chỉ chạy trên VM2.
   obscura:

@@ -70,6 +70,18 @@ class Frontier:
         pipe.execute()
         return True
 
+    def mark_seen(self, urls) -> int:
+        """Đánh dấu URL đã biết (bài đã có trong DB) là seen, không xếp hàng → link tới chúng không bị
+        tải lại ở drain (bài sửa / xoá do recheck lo). Bài nạp qua snapshot → loader chưa từng qua frontier
+        nên không có trong seen: mỗi bài mới kéo theo vài chục link bài cũ ("unchanged", 1,4 s / bài).
+        Trả số URL vừa thêm."""
+        before = self.r.scard("frontier:seen")
+        pipe = self.r.pipeline()
+        for u in urls:
+            pipe.sadd("frontier:seen", canonicalize(u))
+        pipe.execute()
+        return self.r.scard("frontier:seen") - before
+
     def pop(self) -> tuple[str, int] | None:
         """Pop next URL respecting per-host delay. Returns (url, depth) or None."""
         host_key = "frontier:host_ts"
