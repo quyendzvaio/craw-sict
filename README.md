@@ -99,7 +99,7 @@ uv sync --group dev --group api              # thêm --group ml để embed / OC
 
 # crawl thử 20 trang, hoặc một chu kỳ incremental
 uv run python -m sict_crawler.pipeline.main --crawl-limit 20
-uv run python -m sict_crawler.pipeline.main --incremental --check-edits 100 --crawl-limit 200
+uv run python -m sict_crawler.pipeline.main --incremental --check-edits 50 --crawl-limit 200 --budget-sec 300
 
 # API + giao diện chat tại http://localhost:8000
 uv run uvicorn sict_crawler.api.routes:app --port 8000
@@ -178,7 +178,7 @@ Chạy đánh giá trước khi đổi model, ngưỡng hay luật chunk. Lịch
 Hai VM, Docker Compose (không k8s, D15):
 
 - **VM1** `docker-compose.yml`: postgres, redis, qdrant, api (cổng 8003), nginx cache (8080).
-- **VM2** `docker-compose.worker.yml`: `cron` chạy incremental mỗi 6 giờ, OCR, Obscura sidecar;
+- **VM2** `docker-compose.worker.yml`: `cron` chạy incremental mỗi 12 giờ, tối đa 5 phút / lượt (D31), OCR, Obscura sidecar;
   dịch vụ embedding `docker-compose.embed.yml`. Trỏ về VM1 qua `.env` (`.env.worker.example`).
 - **CI/CD**: `ci.yml` chạy test và build thử image trên mọi PR; `release.yml` đẩy
   `ghcr.io/<owner>/sict-{api,worker,embed}:<sha>` khi merge vào `main`; `cd.yml` (chạy tay, chỉ

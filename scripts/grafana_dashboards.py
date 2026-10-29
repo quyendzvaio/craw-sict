@@ -5,7 +5,7 @@
     python scripts/grafana_dashboards.py --push          # nạp lên stack: GRAFANA_URL + GRAFANA_SA_TOKEN (Editor) trong .env
 
 Dashboard máy chủ (CPU/RAM/đĩa) đã có sẵn từ integration Linux Server — ở đây chỉ phần riêng của hệ thống:
-tổng quan up, API (/metrics), pipeline (heartbeat incremental > 7 h là có vấn đề — plan.md), Postgres, Redis, Qdrant,
+tổng quan up, API (/metrics), pipeline (heartbeat incremental > 13 h là có vấn đề: cron 12h/lần — plan.md), Postgres, Redis, Qdrant,
 dịch vụ embed. Biến: datasource Prometheus, instance (sict-vm1, sict-vm2, sict-vm1-local…). Không in token.
 """
 import argparse
@@ -29,7 +29,7 @@ ROWS = [
     ("Tổng quan", [
         ("Thành phần đang chạy (up)", "stat", "none", [("{{job}}", f"max by (job) (up{{{I}}})")], [(0, "red"), (1, "green")]),
         ("Heartbeat incremental (tuổi)", "stat", "s",
-         [("tuổi", f"time() - max(sict_incremental_last_ok_timestamp_seconds{{{I}}})")], [(0, "green"), (25200, "red")]),
+         [("tuổi", f"time() - max(sict_incremental_last_ok_timestamp_seconds{{{I}}})")], [(0, "green"), (46800, "red")]),
         ("Lượt incremental gần nhất lỗi?", "stat", "none",
          [("lỗi mới hơn OK", f"max(sict_incremental_last_error_timestamp_seconds{{{I}}}) > bool max(sict_incremental_last_ok_timestamp_seconds{{{I}}})")],
          [(0, "green"), (1, "red")]),

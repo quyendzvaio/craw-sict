@@ -289,8 +289,10 @@ def main():
                     help="OCR-only caption N pending media (title+OCR, no face/VLM) and exit")
     ap.add_argument("--incremental", action="store_true",
                     help="cron job: discover new + recheck edits/deletes + drain + OCR")
-    ap.add_argument("--check-edits", type=int, default=100,
+    ap.add_argument("--check-edits", type=int, default=50,
                     help="docs re-fetched per incremental run (oldest first)")
+    ap.add_argument("--budget-sec", type=int, default=None,
+                    help="incremental: ngân sách thời gian drain + recheck (giây, mặc định crawl.cycle_budget_sec, 0 = không giới hạn)")
     ap.add_argument("--annotate-ocr-n", type=int, default=500,
                     help="OCR assets per incremental run")
     ap.add_argument("--videos-backfill", type=int, default=None, metavar="N",
@@ -314,7 +316,7 @@ def main():
         limit = args.crawl_limit if args.crawl_limit is not None else 200
         asyncio.run(run_incremental(
             check_edits=args.check_edits, crawl_limit=limit,
-            annotate_ocr=args.annotate_ocr_n))
+            annotate_ocr=args.annotate_ocr_n, budget_sec=args.budget_sec))
         return
     if args.videos_backfill is not None:
         asyncio.run(run_video_backfill(args.videos_backfill))

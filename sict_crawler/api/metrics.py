@@ -7,7 +7,7 @@ Pipeline (tính lúc scrape, cache 30 s — Alloy scrape 60 s/lần):
   sict_incremental_last_run{field}                      số liệu lượt incremental gần nhất (discovered, drained, changed…)
   sict_documents_total                                  số bài trong PG (tăng trong 24 h = bài mới)
   sict_frontier_{queue,retry,failed}                    hàng đợi / URL chờ thử lại / URL tải lỗi tạm thời
-Dashboard: tuổi heartbeat = time() - sict_incremental_last_ok_timestamp_seconds (> 7 h là có vấn đề, plan.md).
+Dashboard: tuổi heartbeat = time() - sict_incremental_last_ok_timestamp_seconds (> 13 h là có vấn đề: cron 12h/lần, plan.md).
 """
 from __future__ import annotations
 
