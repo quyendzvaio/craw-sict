@@ -58,7 +58,9 @@ services:
       CRON_INTERVAL_SEC: ${CRON_INTERVAL_SEC:-43200}
     volumes: [localstore:/app/_local_store, hfcache:/cache/hf, "${AWS_DIR:-${HOME}/.aws}:/home/app/.aws:ro", "./cookies:/cookies:ro"]
     restart: unless-stopped
-    mem_limit: 3000m
+    # Đỉnh đo 2026-10-29 (chạy thử 2 vCPU, cả lượt tồn đọng 12 bài mới): 408 MiB, rỗi ~62 MiB. 1 GB chừa
+    # ~2,5×; phần còn lại của VM2 để embed (6 GB) — tổng mem_limit VM2 ≤ 8 GB.
+    mem_limit: ${CRON_MEM_LIMIT:-1024m}
     logging: {driver: json-file, options: {max-size: 20m, max-file: "3"}}
     depends_on: [obscura]
     command: >
