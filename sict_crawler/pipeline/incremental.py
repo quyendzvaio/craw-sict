@@ -1,7 +1,9 @@
 """Incremental crawl: chỉ xử lý thay đổi (thêm/sửa/xóa), không crawl lại đồ cũ.
 
 Pipeline mỗi lần cron chạy (12h/lần, ngân sách `crawl.cycle_budget_sec` tính từ đầu lượt cho drain +
-recheck; hết giờ → dừng giữa chừng, phần còn lại để lượt sau — frontier nằm ở Redis nên không mất gì):
+recheck; hết giờ → dừng giữa chừng, phần còn lại để lượt sau — frontier nằm ở Redis nên không mất gì).
+Đầu lượt chờ Postgres / Redis / Qdrant trả lời (`wait_for_services`, tối đa `crawl.startup_wait_sec`):
+  máy vừa khởi động thì worker lên trước các store vài phút; trước đây lượt đó lỗi rồi ngủ 12h.
   0. URL mọi bài đã có trong DB → frontier:seen (`mark_known_seen`): link tới bài cũ không vào hàng đợi.
   1. discover: re-fetch seed pages → frontier.push (seen trong Redis nên URL cũ tự skip, chỉ URL mới
      được queue).
@@ -291,7 +293,7 @@ async def drain_queue(crawl_limit: int = 200, deadline: float | None = None) -> 
 def _heartbeat(ok: bool, summary: dict) -> None:
     """Dead-man switch: redis incremental:last_ok / :last_error (JSON).
 
-    Monitor: key last_ok quá cũ (>7h) hoặc last_error mới hơn last_ok
+    Monitor: key last_ok quá cũ (> 13h, cron 12h — D31) hoặc last_error mới hơn last_ok
     nghĩa là chu kỳ fail. Best effort, không block pipeline.
     """
     import datetime as dt
@@ -310,6 +312,54 @@ def _heartbeat(ok: bool, summary: dict) -> None:
               payload)
     except Exception as e:
         print(f"[incremental] heartbeat skipped: {e}")
+
+
+PROBE_TIMEOUT_S = 30
+
+
+async def _probe_postgres() -> None:
+    from sqlalchemy import text
+    async with db.get_engine().connect() as conn:
+        await conn.execute(text("select 1"))
+
+
+async def _probe_redis() -> None:
+    await asyncio.to_thread(lambda: _redis().ping())
+
+
+async def _probe_qdrant() -> None:
+    await asyncio.to_thread(lambda: vector_store.get_client().get_collections())
+
+
+SERVICE_PROBES = {"postgres": _probe_postgres, "redis": _probe_redis, "qdrant": _probe_qdrant}
+
+
+async def wait_for_services(timeout: float, interval: float = 10.0, probes: dict | None = None) -> list[str]:
+    """Hỏi từng store tới khi trả lời hoặc hết `timeout` giây. Trả "tên: lỗi cuối" của store vẫn chưa lên
+    (rỗng = sẵn sàng). Store đã trả lời thì không hỏi lại. Đo 2026-10-31 trên máy dev sau reboot:
+    Postgres nhận kết nối sau ~5 phút, Qdrant còn khôi phục collection tới ~6 phút."""
+    pending = dict(probes or SERVICE_PROBES)
+    errors: dict[str, str] = {}
+    end = time.monotonic() + timeout
+    while True:
+        for name, probe in list(pending.items()):
+            try:
+                await asyncio.wait_for(probe(), PROBE_TIMEOUT_S)
+                pending.pop(name)
+            except Exception as e:
+                errors[name] = (str(e) or type(e).__name__)[:300]
+        if not pending or time.monotonic() >= end:
+            return [f"{name}: {errors[name]}" for name in pending]
+        print(f"[incremental/startup] chờ {', '.join(pending)}…")
+        await asyncio.sleep(interval)
+
+
+def _abort_startup(errors: list[str]) -> None:
+    summary = {"stage_errors": [f"startup: {e}" for e in errors]}
+    print(f"[incremental] bỏ lượt: {summary}")
+    _heartbeat(False, summary)
+    _notify("crawl.incremental_error", summary)
+    raise RuntimeError(f"incremental startup: {errors}")
 
 
 RECONCILE_EVERY_SEC = 20 * 3600
@@ -373,15 +423,23 @@ async def run_incremental(check_edits: int = 50, crawl_limit: int = 200,
 
     Mỗi stage cách ly lỗi: stage fail ghi errors + notify nhưng các stage
     còn lại vẫn chạy, cuối chu kỳ luôn heartbeat + summary. `budget_sec` (mặc định
-    `crawl.cycle_budget_sec`, 0 = không giới hạn) tính từ đầu lượt, áp cho drain và recheck.
+    `crawl.cycle_budget_sec`, 0 = không giới hạn) tính từ lúc các store đã sẵn sàng, áp cho drain và
+    recheck. Store không lên kịp / khởi tạo lỗi → bỏ lượt, ghi heartbeat lỗi.
     """
     from sict_crawler.core.config import get_settings
     from sict_crawler.service.index.annotate_ocr import run_annotate_ocr
 
-    budget = get_settings().crawl.cycle_budget_sec if budget_sec is None else budget_sec
+    cfg = get_settings().crawl
+    down = await wait_for_services(cfg.startup_wait_sec)
+    if down:
+        _abort_startup(down)
+    budget = cfg.cycle_budget_sec if budget_sec is None else budget_sec
     deadline = time.monotonic() + budget if budget > 0 else None
-    await db.init_db()
-    vector_store.ensure_collections()
+    try:
+        await db.init_db()
+        vector_store.ensure_collections()
+    except Exception as e:
+        _abort_startup([f"init: {e}"])
     summary: dict = {"stage_errors": []}
     try:
         summary["known_marked"] = await mark_known_seen()

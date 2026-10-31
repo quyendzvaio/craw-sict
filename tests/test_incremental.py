@@ -302,13 +302,64 @@ async def _test_new_posts_drain_before_recheck_with_one_deadline(monkeypatch):
     monkeypatch.setattr(I, "_maybe_reconcile", lambda: stage("reconcile", None))
     monkeypatch.setattr(I, "_heartbeat", lambda ok, s: None)
     monkeypatch.setattr(I, "_notify", lambda *a: None)
+
+    async def wait(timeout):                                           # chờ dịch vụ không ăn vào ngân sách
+        await asyncio.sleep(0.05)
+        return []
+    monkeypatch.setattr(I, "wait_for_services", wait)
     t0 = I.time.monotonic()
     await I.run_incremental(check_edits=5, crawl_limit=5, annotate_ocr=0, budget_sec=300)
     assert calls == ["known", "discover", "listings", "drain", "recheck", "graph", "reconcile"]
-    assert seen["drain"] == seen["recheck"] and t0 + 299 < seen["drain"] <= I.time.monotonic() + 300
+    assert seen["drain"] == seen["recheck"] and t0 + 300.04 < seen["drain"] <= I.time.monotonic() + 300
     calls.clear()
     await I.run_incremental(check_edits=5, crawl_limit=5, annotate_ocr=0, budget_sec=0)
     assert seen["drain"] is None and seen["recheck"] is None              # 0 = không giới hạn
+
+
+def test_wait_for_services_retries_until_up():
+    """Máy vừa khởi động: Postgres/Qdrant lên chậm hơn worker vài phút → thử lại tới khi trả lời."""
+    tries = {"postgres": 0, "qdrant": 0}
+
+    async def pg():
+        tries["postgres"] += 1
+        if tries["postgres"] < 3:
+            raise ConnectionError("connection refused")
+
+    async def qd():
+        tries["qdrant"] += 1
+    down = asyncio.run(I.wait_for_services(60, interval=0, probes={"postgres": pg, "qdrant": qd}))
+    assert down == [] and tries == {"postgres": 3, "qdrant": 1}        # dịch vụ đã lên thì không hỏi lại
+
+
+def test_wait_for_services_gives_up_after_timeout():
+    async def qd():
+        raise ConnectionError("Socket closed")
+
+    async def ok(): pass
+    down = asyncio.run(I.wait_for_services(0, interval=0, probes={"redis": ok, "qdrant": qd}))
+    assert down == ["qdrant: Socket closed"]
+
+
+def test_services_down_writes_error_heartbeat_and_skips_cycle(monkeypatch):
+    asyncio.run(_test_services_down_writes_error_heartbeat_and_skips_cycle(monkeypatch))
+
+
+async def _test_services_down_writes_error_heartbeat_and_skips_cycle(monkeypatch):
+    """Hết thời gian chờ: không chạy stage nào, ghi heartbeat lỗi (trước đây traceback, không heartbeat)."""
+    beats, called = [], []
+
+    async def wait(timeout):
+        return ["qdrant: Socket closed"]
+
+    async def init_db(): called.append("init_db")
+    monkeypatch.setattr(I, "wait_for_services", wait)
+    monkeypatch.setattr(I.db, "init_db", init_db)
+    monkeypatch.setattr(I, "_heartbeat", lambda ok, s: beats.append((ok, s)))
+    monkeypatch.setattr(I, "_notify", lambda *a: None)
+    with pytest.raises(RuntimeError, match="startup"):
+        await I.run_incremental(check_edits=5, crawl_limit=5, annotate_ocr=0, budget_sec=300)
+    assert called == []
+    assert beats == [(False, {"stage_errors": ["startup: qdrant: Socket closed"]})]
 
 
 def test_listing_root():

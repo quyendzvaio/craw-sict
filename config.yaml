@@ -46,6 +46,7 @@ crawl:
   listing_max_pages: 5   # incremental: trang danh sách tối đa / mục / lượt (dừng sớm khi 1 trang hết bài lạ)
   max_fetch_retries: 3   # incremental: URL tải lỗi tạm thời được thử lại ở các lượt sau, tối đa N lần
   cycle_budget_sec: 300  # incremental: drain + recheck tối đa 5 phút / lượt; hết giờ → phần còn lại để lượt sau (0 = không giới hạn)
+  startup_wait_sec: 900  # incremental: đầu lượt chờ Postgres / Redis / Qdrant tối đa 15 phút (máy vừa khởi động), hết giờ → bỏ lượt
 
 postgres:
   dsn: "postgresql+asyncpg://sict:sict@localhost:5432/sict_crawler"
