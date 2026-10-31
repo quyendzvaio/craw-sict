@@ -178,7 +178,7 @@ async def _test_transient_failure_is_retried_next_run(env, monkeypatch):
     I.Frontier().push(url, 1)
     site[url] = ("", 0)                                                    # lỗi tạm thời
     st = await I.drain_queue(10)
-    assert st == {"processed": 0, "failed": 1, "gave_up": 0, "requeued": 0}
+    assert st == {"processed": 0, "failed": 1, "gave_up": 0, "requeued": 0, "left": 0}
     assert fake.hgetall("frontier:retry") == {url: "1"} and fake.llen("frontier:list") == 0
 
     site[url] = (page(), 200)                                              # lượt sau site đã ổn
@@ -225,6 +225,141 @@ async def _test_processing_error_is_retried(env, monkeypatch):
     site[url] = (page(), 200)
     st = await I.drain_queue(10)
     assert st["failed"] == 1 and fake.hgetall("frontier:retry") == {url: "1"}
+
+
+def test_known_doc_urls_are_never_requeued(env):
+    asyncio.run(_test_known_doc_urls_are_never_requeued(env))
+
+
+async def _test_known_doc_urls_are_never_requeued(env):
+    """Bài nạp qua loader chưa có trong frontier:seen → link tới chúng từng bị tải lại ("unchanged")
+    mỗi khi có bài mới. mark_known_seen đưa URL bài trong DB vào seen (dạng chuẩn hoá)."""
+    known = f"{H}/vn/tin-tuc/cu/1"
+    env["state"]["doc_urls"] = [f"http://sict.haui.edu.vn/vn/tin-tuc/cu/1/"]
+    assert await I.mark_known_seen() == 1 and await I.mark_known_seen() == 0
+    f = I.Frontier()
+    assert not f.push(known, 2) and f.push(f"{H}/vn/tin-tuc/moi/2", 2)
+    assert _queued(env["redis"]) == [f"{H}/vn/tin-tuc/moi/2"]
+
+
+def test_drain_and_recheck_stop_at_deadline(env, monkeypatch):
+    asyncio.run(_test_drain_and_recheck_stop_at_deadline(env, monkeypatch))
+
+
+async def _test_drain_and_recheck_stop_at_deadline(env, monkeypatch):
+    """Hết ngân sách thời gian → drain dừng, URL còn nguyên trong hàng đợi cho lượt sau; recheck không tải gì."""
+    fake, site = env["redis"], env["site"]
+    done = []
+
+    async def process(session, st, url, depth, frontier, html):
+        done.append(url)
+        return "new"
+    monkeypatch.setattr(I, "_process_page", process)
+    urls = [f"{H}/vn/tin-tuc/a/{i}" for i in range(3)]
+    for u in urls:
+        I.Frontier().push(u, 1)
+        site[u] = (page(), 200)
+    passed = I.time.monotonic() - 1
+    st = await I.drain_queue(10, passed)
+    assert st["processed"] == 0 and st["left"] == 3 and done == []
+    env["state"]["doc_urls"] = [1, 2]                                      # id bài cũ nhất
+    assert (await I.recheck_edits(10, passed))["checked"] == 0 and env["fetched"] == []
+    st = await I.drain_queue(10, I.time.monotonic() + 60)
+    assert st["processed"] == 3 and st["left"] == 0 and done == urls
+
+
+def test_new_posts_drain_before_recheck_with_one_deadline(monkeypatch):
+    asyncio.run(_test_new_posts_drain_before_recheck_with_one_deadline(monkeypatch))
+
+
+async def _test_new_posts_drain_before_recheck_with_one_deadline(monkeypatch):
+    """Bài mới (drain) chạy trước recheck và cả hai dùng chung 1 hạn chót tính từ đầu lượt."""
+    calls = []
+
+    async def stage(name, ret):
+        calls.append(name)
+        return ret
+
+    async def noop(): pass
+    monkeypatch.setattr(I.db, "init_db", noop)
+    monkeypatch.setattr(I.vector_store, "ensure_collections", lambda: None)
+    monkeypatch.setattr(I.vector_store, "has_sparse", lambda: True)
+    monkeypatch.setattr(I, "mark_known_seen", lambda: stage("known", 0))
+    monkeypatch.setattr(I, "discover_new", lambda: stage("discover", 0))
+    monkeypatch.setattr(I, "refresh_listings", lambda: stage("listings", {}))
+    seen = {}
+
+    def drain(limit, deadline):
+        seen["drain"] = deadline
+        return stage("drain", {"processed": 0})
+
+    def recheck(limit, deadline):
+        seen["recheck"] = deadline
+        return stage("recheck", {})
+    monkeypatch.setattr(I, "drain_queue", drain)
+    monkeypatch.setattr(I, "recheck_edits", recheck)
+    monkeypatch.setattr(I, "_graph_stage", lambda: stage("graph", None))
+    monkeypatch.setattr(I, "_maybe_reconcile", lambda: stage("reconcile", None))
+    monkeypatch.setattr(I, "_heartbeat", lambda ok, s: None)
+    monkeypatch.setattr(I, "_notify", lambda *a: None)
+
+    async def wait(timeout):                                           # chờ dịch vụ không ăn vào ngân sách
+        await asyncio.sleep(0.05)
+        return []
+    monkeypatch.setattr(I, "wait_for_services", wait)
+    t0 = I.time.monotonic()
+    await I.run_incremental(check_edits=5, crawl_limit=5, annotate_ocr=0, budget_sec=300)
+    assert calls == ["known", "discover", "listings", "drain", "recheck", "graph", "reconcile"]
+    assert seen["drain"] == seen["recheck"] and t0 + 300.04 < seen["drain"] <= I.time.monotonic() + 300
+    calls.clear()
+    await I.run_incremental(check_edits=5, crawl_limit=5, annotate_ocr=0, budget_sec=0)
+    assert seen["drain"] is None and seen["recheck"] is None              # 0 = không giới hạn
+
+
+def test_wait_for_services_retries_until_up():
+    """Máy vừa khởi động: Postgres/Qdrant lên chậm hơn worker vài phút → thử lại tới khi trả lời."""
+    tries = {"postgres": 0, "qdrant": 0}
+
+    async def pg():
+        tries["postgres"] += 1
+        if tries["postgres"] < 3:
+            raise ConnectionError("connection refused")
+
+    async def qd():
+        tries["qdrant"] += 1
+    down = asyncio.run(I.wait_for_services(60, interval=0, probes={"postgres": pg, "qdrant": qd}))
+    assert down == [] and tries == {"postgres": 3, "qdrant": 1}        # dịch vụ đã lên thì không hỏi lại
+
+
+def test_wait_for_services_gives_up_after_timeout():
+    async def qd():
+        raise ConnectionError("Socket closed")
+
+    async def ok(): pass
+    down = asyncio.run(I.wait_for_services(0, interval=0, probes={"redis": ok, "qdrant": qd}))
+    assert down == ["qdrant: Socket closed"]
+
+
+def test_services_down_writes_error_heartbeat_and_skips_cycle(monkeypatch):
+    asyncio.run(_test_services_down_writes_error_heartbeat_and_skips_cycle(monkeypatch))
+
+
+async def _test_services_down_writes_error_heartbeat_and_skips_cycle(monkeypatch):
+    """Hết thời gian chờ: không chạy stage nào, ghi heartbeat lỗi (trước đây traceback, không heartbeat)."""
+    beats, called = [], []
+
+    async def wait(timeout):
+        return ["qdrant: Socket closed"]
+
+    async def init_db(): called.append("init_db")
+    monkeypatch.setattr(I, "wait_for_services", wait)
+    monkeypatch.setattr(I.db, "init_db", init_db)
+    monkeypatch.setattr(I, "_heartbeat", lambda ok, s: beats.append((ok, s)))
+    monkeypatch.setattr(I, "_notify", lambda *a: None)
+    with pytest.raises(RuntimeError, match="startup"):
+        await I.run_incremental(check_edits=5, crawl_limit=5, annotate_ocr=0, budget_sec=300)
+    assert called == []
+    assert beats == [(False, {"stage_errors": ["startup: qdrant: Socket closed"]})]
 
 
 def test_listing_root():

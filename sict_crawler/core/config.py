@@ -36,6 +36,11 @@ class CrawlConfig:
     listing_max_pages: int = 5
     # tải lỗi tạm thời (timeout, 5xx, thân rỗng): thử lại ở các lượt sau, tối đa N lần rồi bỏ
     max_fetch_retries: int = 3
+    # incremental: ngân sách thời gian 1 lượt (giây) cho drain + recheck; hết giờ → dừng giữa chừng,
+    # phần còn lại nằm trong frontier / chờ recheck lượt sau. 0 = không giới hạn
+    cycle_budget_sec: int = 300
+    # incremental: đầu lượt chờ Postgres / Redis / Qdrant tối đa N giây (máy vừa khởi động), hết giờ → bỏ lượt
+    startup_wait_sec: int = 900
 
 
 @dataclass
