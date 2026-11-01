@@ -1,12 +1,15 @@
 // VM1 (infra + serve): Postgres, Redis, Qdrant, API /metrics (HTTP + pipeline: heartbeat, frontier, số bài) — chỉ thêm vào cấu hình của role vm1 (scripts/render_alloy.py).
 // DSN Postgres có mật khẩu → đọc qua sys.env("POSTGRES_EXPORTER_DSN") cùng file bí mật với token.
+// D12: Redis requirepass + Qdrant API key cũng lấy từ file bí mật (REDIS_PASSWORD, QDRANT_API_KEY; rỗng = store
+// không khoá như máy dev). Qdrant khoá cả /metrics → scrape Qdrant riêng, gửi Bearer.
 
 prometheus.exporter.postgres "pg" {
   data_source_names = [sys.env("POSTGRES_EXPORTER_DSN")]
 }
 
 prometheus.exporter.redis "redis" {
-  redis_addr = "${REDIS_ADDR}"
+  redis_addr     = "${REDIS_ADDR}"
+  redis_password = sys.env("REDIS_PASSWORD")
 }
 
 discovery.relabel "pg" {
@@ -42,11 +45,6 @@ prometheus.scrape "services" {
     discovery.relabel.pg.output,
     discovery.relabel.redis.output,
     [{
-      __address__ = "${QDRANT_ADDR}",
-      instance    = "${INSTANCE}",
-      job         = "sict/qdrant",
-    }],
-    [{
       __address__ = "${API_ADDR}",
       instance    = "${INSTANCE}",
       job         = "sict/api",
@@ -54,6 +52,21 @@ prometheus.scrape "services" {
   )
   scrape_interval = "${GCLOUD_SCRAPE_INTERVAL}"
   forward_to      = [prometheus.relabel.services.receiver]
+}
+
+prometheus.scrape "qdrant" {
+  targets = [{
+    __address__ = "${QDRANT_ADDR}",
+    instance    = "${INSTANCE}",
+    job         = "sict/qdrant",
+  }]
+  scrape_interval = "${GCLOUD_SCRAPE_INTERVAL}"
+  forward_to      = [prometheus.relabel.services.receiver]
+
+  authorization {
+    type        = "Bearer"
+    credentials = sys.env("QDRANT_API_KEY")
+  }
 }
 
 // chỉ giữ metric dùng cho dashboard (pg_stat theo từng bảng / redis theo lệnh sinh hàng nghìn chuỗi)

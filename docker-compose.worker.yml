@@ -18,9 +18,10 @@ services:
       CRAWLER_BACKEND: ${CRAWLER_BACKEND:-auto}
       OBSCURA_BIN: /usr/local/bin/obscura
       OBSCURA_CDP: ws://obscura:9222
-      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql+asyncpg://sict:sict@postgres:5432/sict_crawler}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql+asyncpg://sict:${POSTGRES_PASSWORD:-sict}@postgres:5432/sict_crawler}
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD:-}@redis:6379/0}
       QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       QDRANT_TIMEOUT: ${QDRANT_TIMEOUT:-120}
       YT_COOKIES: ${YT_COOKIES:-/cookies/cookies.txt}
       HF_HOME: /cache/hf
@@ -48,9 +49,10 @@ services:
       CRAWLER_BACKEND: ${CRAWLER_BACKEND:-auto}
       OBSCURA_BIN: /usr/local/bin/obscura
       OBSCURA_CDP: ws://obscura:9222
-      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql+asyncpg://sict:sict@postgres:5432/sict_crawler}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql+asyncpg://sict:${POSTGRES_PASSWORD:-sict}@postgres:5432/sict_crawler}
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD:-}@redis:6379/0}
       QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       QDRANT_TIMEOUT: ${QDRANT_TIMEOUT:-120}
       YT_COOKIES: ${YT_COOKIES:-/cookies/cookies.txt}
       AWS_PROFILE: ${AWS_PROFILE:-quyen-admin}

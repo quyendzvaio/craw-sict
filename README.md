@@ -186,8 +186,18 @@ Hai VM, Docker Compose (không k8s, D15):
 - **Giám sát**: Grafana Alloy trên mỗi host đẩy metric + log lên Grafana Cloud; dashboard sinh từ
   code (`scripts/grafana_dashboards.py`).
 
-Postgres, Redis, Qdrant trong compose mở cổng để worker ở VM2 kết nối: chỉ cho phép mạng private
-(security group / firewall) và đổi mật khẩu mặc định `sict` trước khi chạy thật.
+**Khoá store (D12).** Postgres, Redis, Qdrant lấy mật khẩu / API key từ `.env` (`POSTGRES_PASSWORD`,
+`REDIS_PASSWORD`, `QDRANT_API_KEY`) và chỉ mở cổng trên `STORE_BIND` (mặc định `127.0.0.1`). Lần đầu trên VM1:
+
+```bash
+scripts/store_auth.sh init-env          # sinh 3 bí mật ngẫu nhiên + STORE_BIND=0.0.0.0 vào .env (không in ra)
+scripts/store_auth.sh sync-pg           # đặt mật khẩu mới cho DB đã có dữ liệu
+docker compose up -d                    # redis / qdrant bật khoá, API dùng mật khẩu mới
+```
+
+Chép cùng giá trị sang `.env` VM2 (`POSTGRES_DSN`, `REDIS_URL`, `QDRANT_API_KEY`, xem `.env.worker.example`).
+Security Group của VM1 chỉ cho SG của VM2 vào 5432 / 6379 / 6333-6334. CD chạy `store_auth.sh check vm1|vm2`
+và dừng nếu thiếu. Máy dev để trống các biến này: store không khoá, chỉ nghe localhost.
 
 ## Quy ước đóng góp
 

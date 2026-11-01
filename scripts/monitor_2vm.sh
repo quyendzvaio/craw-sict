@@ -3,6 +3,9 @@
 # VM1: ./scripts/monitor_2vm.sh infra  |  VM2: ./scripts/monitor_2vm.sh worker
 set -u
 ROLE="${1:-infra}"
+# D12: mật khẩu Redis / khoá Qdrant đọc từ .env của stack (thư mục chạy hoặc ~/craw-sict), không in ra
+envv() { grep -hE "^$1=" .env ~/craw-sict/.env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"'"; }
+export REDISCLI_AUTH="$(envv REDIS_PASSWORD)"; QKEY="$(envv QDRANT_API_KEY)"   # -e TÊN (không =giá trị) → không lộ qua ps
 echo "=== [$(date '+%F %T')] role=$ROLE host=$(hostname) ==="
 echo "--- docker ps ---"
 docker ps --format 'table {{.Names}}\t{{.Status}}' 2>&1 | head -15
@@ -12,16 +15,16 @@ echo "--- mem ---"
 free -h | head -2
 if [ "$ROLE" = "infra" ]; then
   echo "--- heartbeat incremental (redis) ---"
-  docker exec "$(docker ps -q --filter name=redis | head -1)" \
+  docker exec -e REDISCLI_AUTH "$(docker ps -q --filter name=redis | head -1)" \
     redis-cli --raw GET "incremental:last_ok" 2>&1 | head -c 500; echo
-  docker exec "$(docker ps -q --filter name=redis | head -1)" \
+  docker exec -e REDISCLI_AUTH "$(docker ps -q --filter name=redis | head -1)" \
     redis-cli --raw GET "incremental:last_error" 2>&1 | head -c 500; echo
   echo "--- postgres counts ---"
   docker exec "$(docker ps -q --filter name=postgres | head -1)" \
     psql -U sict -d sict_crawler -c \
     "SELECT (SELECT count(*) FROM documents) docs, (SELECT count(*) FROM media_assets) media, (SELECT count(*) FROM media_assets WHERE caption='') no_cap;" 2>&1 | head -8
   echo "--- qdrant collections ---"
-  curl -s localhost:6333/collections 2>&1 | head -c 500; echo
+  curl -s -H @<(printf 'api-key: %s' "$QKEY") localhost:6333/collections 2>&1 | head -c 500; echo
   echo "--- api health ---"
   curl -s -m 5 -o /dev/null -w "http=%{http_code} " localhost:8003/ 2>&1; echo
   echo "--- nginx edge (8080) ---"

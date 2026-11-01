@@ -43,7 +43,7 @@ VM2 = 7.150 MB (svc-ocr chỉ chạy tay). Số đo thật ở mục "Ngân sác
 | D9 | Giữ 2 VM; VM2 chạy Spot hoặc bật/tắt theo lịch; **1 đường triển khai** trên VM2 (compose `cron`; CD gỡ `sict-worker-24h` từ 2026-10-21), bỏ `sict-worker-24h`/`loop24h.sh` | 2 đường deploy song song |
 | D10 | CI build image → GHCR, tag theo commit SHA; VM chỉ `pull`; rollback = đổi tag — **đã làm 2026-10-21** (`release.yml`, `cd.yml`; chưa chạy trên VM) | tar + scp + build trên VM 4 GB |
 | D11 | Swap 2 GB trên cả 2 VM; pin version mọi image (bỏ `:latest`) — **ghim xong 2026-10-21** trừ `minio/mc` (profile minio local) | không swap, `:latest` |
-| D12 | Bảo mật: bind cổng DB/cache vào IP private (hoặc SG chỉ cho VM2), Redis `requirepass`, Qdrant API key (`QDRANT__SERVICE__API_KEY`), mật khẩu PG mạnh, LLM qua TLS/tunnel | cổng 0.0.0.0, `sict/sict`, Qdrant không khoá, HTTP thường |
+| D12 | Bảo mật: bind cổng DB/cache vào IP private (hoặc SG chỉ cho VM2), Redis `requirepass`, Qdrant API key (`QDRANT__SERVICE__API_KEY`), mật khẩu PG mạnh, LLM qua TLS/tunnel. **Đã làm phần store 2026-11-01** (chưa chạy trên VM): mật khẩu / khoá từ `.env`, cổng store nghe `STORE_BIND` (mặc định 127.0.0.1; VM1 đặt 0.0.0.0 vì card mạng EC2 chỉ có IP private → cửa thật là SG chỉ cho VM2), `scripts/store_auth.sh` (`init-env` / `check vm1\|vm2` / `sync-pg`) được CD gọi trước `up`, Alloy nhận mật khẩu qua `--stack-env`. Kiểm trên bộ store tạm: mật khẩu cũ `sict` bị từ chối, Redis không mật khẩu bị từ chối, Qdrant không khoá bị từ chối (cả `/metrics`), code dự án (asyncpg, redis cache db 3, Qdrant gRPC) chạy với khoá. Còn lại: LLM qua TLS/tunnel; SG + đổi mật khẩu trên VM thật. | cổng 0.0.0.0, `sict/sict`, Qdrant không khoá, HTTP thường |
 | D13 | Giám sát (chốt 2026-10-21): **Grafana Cloud Free** (Prometheus/Mimir + Loki + Grafana host sẵn) — mỗi VM 1 Grafana Alloy (systemd, ~50 MB RAM) đẩy metric (60 s/lần: gói Free tính 1 điểm/phút/chuỗi) + log; nhãn `instance` = `sict-vm1` / `sict-vm2`; token ở `/etc/alloy/secrets.env` (root 600) qua systemd EnvironmentFile, config dùng `sys.env`. Template `monitor/alloy/`, render `scripts/render_alloy.py`, triển khai `scripts/deploy_alloy_vm.sh`, giả lập 2 VM local `scripts/monitor_sim.sh`, kiểm chứng phía cloud `scripts/verify_gcloud.py`. Không cảnh báo (chỉ dashboard). Không chạy Prometheus/Grafana trên VM (VM1 4 GB) | `docker-compose.monitor.yml` (Prometheus/Grafana local, thư mục `monitor/` cũ không còn) |
 | D14 | Bucket S3 cùng region với VM — đã đúng: VM1, VM2 và bucket `sict-crawl-media-quyen-ohio` đều ở `us-east-2` (kiểm tra 2026-10-20) | ghi nhầm VM ở `ap-southeast-2` |
 | D15 | **Chỉ dùng Docker Compose**, không k8s. Lịch chạy = service `cron` trong compose (không crontab host, không CronJob) | k8s (đã gỡ), crontab host `auto_process.sh` |
@@ -310,10 +310,9 @@ API (VM1, làm song song):
 - **Sau khi repo public (2026-10-28), kiểm 2026-11-01:** quét toàn bộ lịch sử git (mọi nhánh) không thấy
   token/khoá (Grafana, OpenAI-style `sk-`, HF, AWS, GitHub, Jina, Groq, private key) và không còn IP thật;
   `k8s/secrets.example.yaml` cũ chỉ có mật khẩu mẫu. Còn lại:
-  - `docker-compose.yml` để lộ mật khẩu Postgres mặc định `sict`, Redis không mật khẩu, Qdrant không API
-    key, và publish 5432 / 6379 / 6333-6334 trên mọi interface — repo public nên ai cũng biết mật khẩu.
-    Làm D12 trước khi lên VM: mật khẩu PG mạnh lấy từ `.env`, Redis `requirepass`, Qdrant
-    `QDRANT__SERVICE__API_KEY`, bind cổng store vào IP private của VM1, SG chỉ cho VM2.
+  - ~~`docker-compose.yml` để lộ mật khẩu Postgres mặc định `sict`, Redis / Qdrant không khoá, cổng store mở
+    mọi interface~~ → D12 phần store đã làm 2026-11-01. Lần deploy đầu: `scripts/store_auth.sh init-env` trên VM1,
+    chép giá trị sang `.env` VM2, SG VM1 chỉ cho SG VM2 vào 5432 / 6379 / 6333-6334.
   - Việc của chủ dự án: nhờ GitHub Support xoá ref PR cũ (#4–#17) còn trỏ tới commit có IP thật; coi các
     IP đó đã lộ (đóng cổng 20128, siết SG); đổi mật khẩu Postgres đang dùng trên VM; email tác giả trong
     commit là công khai (đổi sang email `noreply` của GitHub cho commit mới nếu muốn).

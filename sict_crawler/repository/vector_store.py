@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 
 from qdrant_client import QdrantClient
@@ -61,8 +62,12 @@ def get_client() -> QdrantClient:
     global _client
     if _client is None:
         cfg = get_settings().qdrant
+        # D12: API key gửi cả REST lẫn gRPC. Kết nối VM2 → VM1 đi trong mạng private của VPC (HTTP thường)
+        # → bỏ cảnh báo "Api key is used with an insecure connection" mà client in mỗi lần khởi động.
+        warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
         _client = QdrantClient(host=cfg.host, port=cfg.port, grpc_port=cfg.grpc_port,
-                               prefer_grpc=cfg.prefer_grpc, timeout=cfg.timeout)
+                               prefer_grpc=cfg.prefer_grpc, timeout=cfg.timeout,
+                               api_key=cfg.api_key or None, https=False)
     return _client
 
 

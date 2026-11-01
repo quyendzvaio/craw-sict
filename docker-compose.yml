@@ -1,13 +1,19 @@
 # VM1 = infra + serve (chạy 24/7). Copy file này thành docker-compose.yml trên VM1.
 # VM2 worker trỏ về VM1 qua POSTGRES_DSN/REDIS_URL/QDRANT_HOST (xem .env.worker.example).
+# D12 (2026-11-01): store có mật khẩu / API key lấy từ .env (POSTGRES_PASSWORD, REDIS_PASSWORD, QDRANT_API_KEY);
+# cổng store chỉ mở trên STORE_BIND (mặc định 127.0.0.1: máy dev / 1 máy). VM1 đặt STORE_BIND=0.0.0.0 để VM2 tới
+# được — trên EC2 card mạng chỉ có IP private, nên cửa thật là Security Group (chỉ SG của VM2 vào 5432/6379/
+# 6333-6334) + mật khẩu. Bỏ trống mật khẩu = như cũ (chỉ dùng cho dev); `scripts/store_auth.sh check vm1` (CD
+# chạy trước `up`) chặn deploy khi thiếu.
 services:
   postgres:
     image: postgres:16
     environment:
       POSTGRES_USER: sict
-      POSTGRES_PASSWORD: sict
+      # chỉ có tác dụng lúc khởi tạo data dir; đổi mật khẩu DB đã có: `scripts/store_auth.sh sync-pg` (CD gọi)
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sict}
       POSTGRES_DB: sict_crawler
-    ports: ["5432:5432"]
+    ports: ["${STORE_BIND:-127.0.0.1}:5432:5432"]
     volumes: [./.pgdata:/var/lib/postgresql/data]
     restart: unless-stopped
     # Đỉnh đo 148 MiB (2026-11-01); shared_buffers 256 MB + 50 kết nối → 600 MB đủ. Tổng mem_limit VM1 = 3.650 MB
@@ -18,15 +24,17 @@ services:
   redis:
     image: redis:7
     command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-ttl",
-              "--appendonly", "yes"]
-    ports: ["6379:6379"]
+              "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-}"]
+    ports: ["${STORE_BIND:-127.0.0.1}:6379:6379"]
     volumes: [redisdata:/data]
     restart: unless-stopped
     mem_limit: 300m
 
   qdrant:
     image: qdrant/qdrant:v1.19.1   # ghim (D11): bản đang chứa index v3; nâng = đổi tag có chủ đích
-    ports: ["6333:6333", "6334:6334"]
+    ports: ["${STORE_BIND:-127.0.0.1}:6333:6333", "${STORE_BIND:-127.0.0.1}:6334:6334"]
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}   # rỗng = không khoá (dev); /healthz, /readyz không cần khoá
     volumes: [qdata:/qdrant/storage]
     restart: unless-stopped
     # Đỉnh đo 786 MiB (dev giữ v1 + v2 + v3; production giữ v3 + v2 để rollback ≈ tương đương): 900 MB chỉ dư 15 %.
@@ -51,9 +59,11 @@ services:
       VLM_MODELS: ${VLM_MODELS:-}
       VLM_ENABLED: ${VLM_ENABLED:-false}
       HF_TOKEN: ${HF_TOKEN:-}
-      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql+asyncpg://sict:sict@postgres:5432/sict_crawler}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      # API nói chuyện với store qua mạng compose (tên service), không qua STORE_BIND
+      POSTGRES_DSN: postgresql+asyncpg://sict:${POSTGRES_PASSWORD:-sict}@postgres:5432/sict_crawler
+      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      QDRANT_HOST: qdrant
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       HF_HOME: /cache/hf  # share model cache, khỏi tải lại E5/CLIP mỗi recreate
       AWS_PROFILE: ${AWS_PROFILE:-quyen-admin}
     depends_on: [postgres, redis, qdrant]
