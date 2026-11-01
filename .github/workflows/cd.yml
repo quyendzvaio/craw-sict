@@ -80,7 +80,7 @@ jobs:
           host: ${{ secrets.VM1_HOST }}
           username: ubuntu
           key: ${{ secrets.VM1_KEY }}
-          source: docker-compose.yml,config.yaml,nginx/nginx.conf,scripts/monitor_2vm.sh
+          source: docker-compose.yml,config.yaml,nginx/nginx.conf,scripts/monitor_2vm.sh,scripts/store_auth.sh
           target: ~/craw-sict
       - name: Pull + up (infra, api, nginx)
         uses: appleboy/ssh-action@v1
@@ -98,6 +98,8 @@ jobs:
             set -euo pipefail
             cd ~/craw-sict
             touch .env
+            # D12: thiếu / yếu mật khẩu store hoặc STORE_BIND → dừng trước khi đổi gì (tạo: scripts/store_auth.sh init-env)
+            bash scripts/store_auth.sh check vm1
             upsert() { if grep -q "^$1=" .env; then sed -i "s#^$1=.*#$1=$2#" .env; else echo "$1=$2" >> .env; fi; }
             prev="$(grep '^API_IMAGE=' .env | cut -d= -f2- || true)"
             [ -n "$prev" ] && [ "$prev" != "$API_IMAGE" ] && upsert API_IMAGE_PREV "$prev"
@@ -105,6 +107,11 @@ jobs:
             echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
             docker compose pull api
             docker logout ghcr.io
+            # D12: mật khẩu trong .env chỉ áp cho data dir mới → đặt lại mật khẩu user sict trên DB đang có, rồi mới
+            # bật API (dùng mật khẩu mới) và recreate redis / qdrant (requirepass, API key)
+            docker compose up -d postgres
+            for i in $(seq 1 30); do docker compose exec -T postgres pg_isready -U sict -q && break; sleep 2; done
+            bash scripts/store_auth.sh sync-pg
             docker compose up -d postgres redis qdrant api nginx
             docker exec -u 0 craw-sict-api-1 chown -R 10000:10000 /cache/hf || true
             # cold start nạp model ~100 s → thử tới 5 phút
@@ -126,7 +133,7 @@ jobs:
           host: ${{ secrets.VM2_HOST }}
           username: ubuntu
           key: ${{ secrets.VM2_KEY }}
-          source: docker-compose.worker.yml,config.yaml,scripts/monitor_2vm.sh
+          source: docker-compose.worker.yml,config.yaml,scripts/monitor_2vm.sh,scripts/store_auth.sh
           target: ~/craw-sict
       - name: Pull + up worker (compose `cron` là đường worker DUY NHẤT — D9)
         uses: appleboy/ssh-action@v1
@@ -145,6 +152,7 @@ jobs:
             cd ~/craw-sict
             [ -f .env ] || { echo "thiếu ~/craw-sict/.env trên VM2 (POSTGRES_DSN/REDIS_URL/QDRANT_HOST trỏ IP private VM1 — xem .env.worker.example)"; exit 1; }
             grep -qE '^(POSTGRES_DSN|QDRANT_HOST)=' .env || { echo ".env VM2 chưa trỏ về VM1"; exit 1; }
+            bash scripts/store_auth.sh check vm2   # D12: DSN / REDIS_URL có mật khẩu, có QDRANT_API_KEY
             upsert() { if grep -q "^$1=" .env; then sed -i "s#^$1=.*#$1=$2#" .env; else echo "$1=$2" >> .env; fi; }
             prev="$(grep '^WORKER_IMAGE=' .env | cut -d= -f2- || true)"
             [ -n "$prev" ] && [ "$prev" != "$WORKER_IMAGE" ] && upsert WORKER_IMAGE_PREV "$prev"

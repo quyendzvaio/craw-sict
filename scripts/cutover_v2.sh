@@ -32,7 +32,8 @@ case "${1:-}" in
     mkdir -p "$d"
     docker compose exec -T postgres pg_dump -U sict -Fc sict_crawler > "$d/sict_crawler.dump"
     for c in sict_text sict_image; do
-      curl -sf -X POST "http://localhost:6333/collections/$c/snapshots" -o "$d/qdrant-$c.json" || \
+      qkey="$(grep -E '^QDRANT_API_KEY=' .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"'")"   # D12
+      curl -sf -X POST -H @<(printf 'api-key: %s' "$qkey") "http://localhost:6333/collections/$c/snapshots" -o "$d/qdrant-$c.json" || \
         echo "cảnh báo: không tạo được snapshot Qdrant $c"
     done
     ls -lh "$d"

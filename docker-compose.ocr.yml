@@ -48,6 +48,7 @@ services:
       POSTGRES_DSN: ${POSTGRES_DSN:-postgresql+asyncpg://sict:sict@postgres:5432/sict_crawler}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       QDRANT_TIMEOUT: ${QDRANT_TIMEOUT:-120}  # batch ghi (upsert/delete 20k-75k pts) cần deadline dài
       HF_HOME: /cache/hf
       AWS_PROFILE: ${AWS_PROFILE:-quyen-admin}  # S3 qua ~/.aws (không cần key rời)
@@ -75,6 +76,7 @@ services:
       POSTGRES_DSN: ${POSTGRES_DSN:-postgresql+asyncpg://sict:sict@postgres:5432/sict_crawler}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       QDRANT_TIMEOUT: ${QDRANT_TIMEOUT:-120}
       AWS_PROFILE: ${AWS_PROFILE:-quyen-admin}
       CHECK_EDITS: ${CHECK_EDITS:-100}

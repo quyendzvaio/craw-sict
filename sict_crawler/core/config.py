@@ -50,6 +50,7 @@ class QdrantConfig:
     grpc_port: int = 6334
     prefer_grpc: bool = True
     timeout: int = 30  # giây; worker batch ghi đặt cao hơn qua QDRANT_TIMEOUT
+    api_key: str = ""  # QDRANT_API_KEY (D12), không ghi vào yaml; rỗng = Qdrant không bật khoá (dev)
     collection_text: str = "sict_text_v2"
     collection_image: str = "sict_image_v2"
     # caption ảnh/video (tiêu đề + mục + chữ OCR + phụ đề), cùng không gian vector với chữ. Rỗng = chung
@@ -276,6 +277,8 @@ def _build(data: dict[str, Any]) -> Settings:
         qdata["grpc_port"] = int(os.environ["QDRANT_GRPC_PORT"])
     if os.environ.get("QDRANT_TIMEOUT"):
         qdata["timeout"] = int(os.environ["QDRANT_TIMEOUT"])
+    if os.environ.get("QDRANT_API_KEY"):
+        qdata["api_key"] = os.environ["QDRANT_API_KEY"]
     # cutover blue/green (D8): trỏ API/worker sang collection *_v2 mà không sửa yaml
     if os.environ.get("QDRANT_COLLECTION_TEXT"):
         qdata["collection_text"] = os.environ["QDRANT_COLLECTION_TEXT"]
