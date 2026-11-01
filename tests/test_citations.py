@@ -117,3 +117,13 @@ def test_linked_hits_use_block_neighbours_before_similarity(monkeypatch):
             {"modality": "i2i", "media_key": "old", "document_id": [6]}, {"modality": "clip", "media_key": "z", "document_id": [8]}]
     out = retriever._linked_doc_hits([0.0, 1.0], kept, None)
     assert [h["chunk_id"] for h in out] == ["near5-7", "sim6"] and all(h["via"] == "i2i-doc" for h in out)
+
+
+def test_enforce_accepts_fullwidth_brackets():
+    """gpt-oss trích dẫn bằng 【3】 / ［3］ (ngoặc toàn khổ): đổi về [3], không ghép thêm dòng "Nguồn:" (golden_v2
+    2026-11-01: 23/88 câu trả lời dùng 【n】 và đều bị ghép footer dù đã trích dẫn)."""
+    srcs = [_src(), _src(title="B"), _src(title="C")]
+    ans, cites = C.enforce("Quyết định 2536/QĐ-TTg【3】, xem thêm ［1］ và 【9】.", srcs)
+    assert ans == "Quyết định 2536/QĐ-TTg[3], xem thêm [1] và ." and "Nguồn:" not in ans
+    assert [c["n"] for c in cites] == [3, 1]
+    assert C.used("a【2】 b［1］", 3) == [2, 1]

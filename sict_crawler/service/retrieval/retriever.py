@@ -29,7 +29,7 @@ def index_tag() -> str:
 
 def query_cache_key(question: str, top_k: int, filters_key: str = "", index: str | None = None) -> str:
     index = index_tag() if index is None else index
-    return "q:v6:" + hashlib.sha256(   # v6: bài áp đảo + "mới nhất" theo ngày (v5: không LLM viết lại, ảnh 336)
+    return "q:v7:" + hashlib.sha256(   # v7: bảng mang nhãn (chunk đổi); v6: bài áp đảo + "mới nhất" (D30)
         f"{question}\x00{top_k}\x00{filters_key}\x00{index}".encode()).hexdigest()
 
 
