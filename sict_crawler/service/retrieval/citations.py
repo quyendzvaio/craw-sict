@@ -13,6 +13,12 @@ from urllib.parse import unquote, urlparse
 from sict_crawler.service.index.indexing import path_str
 
 _MARK = re.compile(r"\[(\d{1,3})\]")
+# Một số model (gpt-oss) trích dẫn bằng ngoặc toàn khổ 【3】 / ［3］: coi như [3]
+_WIDE_MARK = re.compile(r"[【［](\d{1,3})[】］]")
+
+
+def _normalize(answer: str) -> str:
+    return _WIDE_MARK.sub(r"[\1]", answer or "")
 FOOTER_SOURCES = 3      # số nguồn ghép vào dòng "Nguồn:" khi LLM không trích dẫn
 
 
@@ -32,7 +38,7 @@ def make_cite(title: str, url: str, kind: str, page: int | None = None,
 def used(answer: str, n_sources: int) -> list[int]:
     """[n] hợp lệ (1 ≤ n ≤ số nguồn) theo thứ tự xuất hiện, không lặp."""
     seen: list[int] = []
-    for m in _MARK.finditer(answer or ""):
+    for m in _MARK.finditer(_normalize(answer)):
         n = int(m.group(1))
         if 1 <= n <= n_sources and n not in seen:
             seen.append(n)
@@ -56,7 +62,7 @@ def enforce(answer: str, sources: list) -> tuple[str, list[dict]]:
     if not sources:
         return answer, []
     n_src = len(sources)
-    answer = _MARK.sub(lambda m: m.group(0) if 1 <= int(m.group(1)) <= n_src else "", answer or "")
+    answer = _MARK.sub(lambda m: m.group(0) if 1 <= int(m.group(1)) <= n_src else "", _normalize(answer))
     ns = used(answer, n_src)
     if not ns:
         ns = list(range(1, min(FOOTER_SOURCES, n_src) + 1))

@@ -222,8 +222,17 @@ async def score_all(args) -> None:
     old = {r["id"]: r for r in (json.loads(x) for x in out.read_text(encoding="utf-8").splitlines() if x.strip())} \
         if out.exists() else {}
     retry = {i: list(r["errors"]) for i, r in old.items() if r.get("errors")} if args.retry_errors else {}
+    # Câu đã có dòng điểm nhưng thiếu chỉ số trong --metrics (VD chấm F/CP/CR trước, AR sau khi dịch vụ embed rảnh):
+    # chấm thêm đúng chỉ số thiếu rồi gộp vào dòng cũ. context_recall chỉ áp cho câu có reference.
+    for r in rows:
+        o = old.get(r["id"])
+        if o is None or r.get("answerable") is False:
+            continue
+        miss = [m for m in use if m not in o and (m != "context_recall" or r.get("reference"))]
+        if miss:
+            retry[r["id"]] = sorted(set(retry.get(r["id"], [])) | set(miss))
     print(f"chấm {len(rows) - len(have & {r['id'] for r in rows})}/{len(rows)} câu"
-          + (f", chấm lại {len(retry)} câu có lỗi" if retry else "") + f", LLM chấm {model}", flush=True)
+          + (f", chấm lại / chấm thêm {len(retry)} câu" if retry else "") + f", LLM chấm {model}", flush=True)
 
     async def one(r):
         res = {}
@@ -254,9 +263,10 @@ async def score_all(args) -> None:
                **{k: r[k] for k in ("case", "style", "answerable", "variant_of") if k in r}}
         if r["id"] in retry:                 # gộp vào dòng cũ rồi ghi lại cả file
             merged = {**old[r["id"]], **{k: v for k, v in res.items() if k != "errors"}}
-            merged.pop("errors", None)
-            if res.get("errors"):
-                merged["errors"] = res["errors"]
+            errs = {k: v for k, v in merged.pop("errors", {}).items() if k not in use_here}   # lỗi cũ của chỉ số không chấm lại
+            errs.update(res.get("errors", {}))
+            if errs:
+                merged["errors"] = errs
             old[r["id"]] = row = merged
             out.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in old.values()), encoding="utf-8")
         else:
