@@ -177,9 +177,9 @@ Chạy đánh giá trước khi đổi model, ngưỡng hay luật chunk. Lịch
 
 Hai VM, Docker Compose (không k8s, D15):
 
-- **VM1** `docker-compose.yml`: postgres, redis, qdrant, api (cổng 8003), nginx cache (8080).
-- **VM2** `docker-compose.worker.yml`: `cron` chạy incremental mỗi 12 giờ, tối đa 5 phút / lượt (D31), OCR, Obscura sidecar;
-  dịch vụ embedding `docker-compose.embed.yml`. Trỏ về VM1 qua `.env` (`.env.worker.example`).
+- **VM1** (2 vCPU / 4 GB) `docker-compose.yml`: postgres, redis, qdrant, api (cổng 8003), nginx cache (8080).
+- **VM2** (EC2 riêng 2 vCPU / 8 GB, D32) `docker-compose.worker.yml`: `cron` chạy incremental mỗi 12 giờ, tối đa
+  5 phút / lượt (D31), Obscura sidecar (`svc-ocr` chỉ chạy tay); dịch vụ embedding `docker-compose.embed.yml`. Trỏ về VM1 qua `.env` (`.env.worker.example`).
 - **CI/CD**: `ci.yml` chạy test và build thử image trên mọi PR; `release.yml` đẩy
   `ghcr.io/<owner>/sict-{api,worker,embed}:<sha>` khi merge vào `main`; `cd.yml` (chạy tay, chỉ
   `main`) kéo image theo SHA về VM, không build trên VM.
@@ -200,3 +200,11 @@ Postgres, Redis, Qdrant trong compose mở cổng để worker ở VM2 kết n�
 
 Nội dung crawl thuộc về Trường CNTT&TT — Đại học Công nghiệp Hà Nội. Repo chỉ chứa mã nguồn và các
 bộ câu hỏi đánh giá; dữ liệu crawl, snapshot và index không nằm trong repo.
+Kết quả RAGAS chỉ commit điểm (`eval/results/ragas/*.scores*.jsonl`, `*.summary.json`); file
+`*.answers.jsonl` chứa nguyên văn ngữ cảnh lấy từ site nên giữ ở máy chấm, không đưa lên repo.
+
+## Giấy phép
+
+Mã nguồn phát hành theo [Apache License 2.0](LICENSE), Copyright 2026 quyendzvaio. Giấy phép chỉ áp cho
+mã nguồn và tài liệu của repo, **không** áp cho nội dung trang sict.haui.edu.vn (văn bản, ảnh, video,
+file đính kèm) mà hệ thống crawl về — nội dung đó vẫn thuộc Trường CNTT&TT.

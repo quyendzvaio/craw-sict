@@ -27,6 +27,9 @@ services:
       AWS_PROFILE: ${AWS_PROFILE:-quyen-admin}
     volumes: [localstore:/app/_local_store, hfcache:/cache/hf, "${AWS_DIR:-${HOME}/.aws}:/home/app/.aws:ro", "./cookies:/cookies:ro"]
     restart: "no"  # chạy 1 lần rồi thoát; cron bên dưới chạy lặp
+    # Chỉ chạy tay (D9): `up -d` bỏ qua → tổng mem_limit VM2 = embed 6 GB + cron 1 GB + obscura (D32).
+    # `docker compose run --rm svc-ocr …` vẫn chạy được. Chỉ có tác dụng với collection v1.
+    profiles: ["manual"]
     mem_limit: 3000m
     logging: {driver: json-file, options: {max-size: 20m, max-file: "3"}}
     command: ["python", "-m", "sict_crawler.pipeline.main", "--annotate-ocr", "2000"]

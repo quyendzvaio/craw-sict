@@ -1,0 +1,6 @@
+{"id": "golden:q02", "set": "golden", "question": "Ban Giám hiệu Trường CNTT và Truyền thông làm việc ở tầng mấy, nhà nào?", "faithfulness": 1.0, "answer_relevancy": 0.5905, "context_precision": 1.0}
+{"id": "golden:q03", "set": "golden", "question": "Ai là Phó Hiệu trưởng phụ trách Trường Công nghệ thông tin và Truyền thông?", "faithfulness": 1.0, "answer_relevancy": 0.912, "context_precision": 0.5833}
+{"id": "golden:q05", "set": "golden", "question": "Tên tiếng Anh của chương trình cử nhân An toàn thông tin là gì?", "faithfulness": 1.0, "answer_relevancy": 0.4614, "context_precision": 0.5}
+{"id": "golden:q04", "set": "golden", "question": "Email của TS. Phạm Văn Hà là gì?", "faithfulness": 1.0, "answer_relevancy": 0.931, "context_precision": 0.5}
+{"id": "golden:q07", "set": "golden", "question": "Mục tiêu đào tạo của chương trình Trí tuệ nhân tạo là gì?", "faithfulness": 1.0, "answer_relevancy": 0.6827, "context_precision": 0.8875}
+{"id": "golden:q06", "set": "golden", "question": "Chương trình Khoa học máy tính của HaUI được tổ chức nào kiểm định?", "faithfulness": 1.0, "answer_relevancy": 0.8122, "context_precision": 0.7}
