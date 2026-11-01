@@ -24,8 +24,9 @@ Tiêu chí chấp nhận: `tests/acceptance_criteria.md` (AC-B/E/G/H/O) và
 video sidebar 1→0, markdown 15.099→8.425 ký tự. Bộ đếm lượt xem nằm trong HTML → hash raw
 đổi mỗi lần có người đọc → trang bị coi là "sửa" và xử lý lại toàn bộ.
 
-Phần cứng: VM1, VM2 = c7i-flex.large (2 vCPU, 4 GB). Tổng `mem_limit` VM1 = 3.650 MB
-(gần hết RAM), VM2 = 6.150 MB (vượt RAM nếu svc-ocr + cron chạy cùng lúc).
+Phần cứng (D32, 2026-10-29): VM1 = c7i-flex.large (2 vCPU, 4 GB): postgres, redis, qdrant, api, nginx.
+VM2 = EC2 riêng 2 vCPU / 8 GB: dịch vụ embed + worker `cron` + obscura. Tổng `mem_limit` VM1 = 3.650 MB,
+VM2 = 7.150 MB (svc-ocr chỉ chạy tay). Số đo thật ở mục "Ngân sách RAM".
 
 ## Quyết định đã chốt
 
@@ -63,6 +64,7 @@ Phần cứng: VM1, VM2 = c7i-flex.large (2 vCPU, 4 GB). Tổng `mem_limit` VM1 
 | D29 | **Ngân sách ngữ cảnh riêng cho câu hỏi liệt kê (2026-10-26)**: `llm.list_context_chars` 15.000 (10 nguồn × `source_chars` 1.500) thay vì `context_chars` 9.000 chia đều (900 ký tự / nguồn). Đo trên `eval/list_v1` (cùng 10 nguồn): độ phủ 0,724 ở mức cắt 900, 0,970 ở 1.500, 0,970 khi không cắt → chỗ nghẽn là cắt đầu đoạn (VD bảng ngành nằm sau ký tự 900 của bài tuyển sinh 2025), không phải chọn nguồn. Đã thử và bỏ: MMR khi chọn nguồn (λ 0,5–0,85, tập ứng viên 30 hoặc 60 / nhánh: 0,688–0,733), 2 đoạn / bài (0,886 ở mức cắt 1.500). Chi phí: thêm tối đa ~6.000 ký tự đầu vào LLM, chỉ với câu liệt kê; truy xuất không đổi nên cache `q:v5` giữ nguyên | đã làm |
 | D30 | **Chất lượng câu trả lời sau RAGAS (2026-10-27)**, đọc tay 8 câu điểm thấp của `eval/results/ragas/2026-10-26`: (1) model suy luận (glm-5.3-flash-sale, kiraai) tiêu 300–700 token suy nghĩ trước khi trả lời, `llm.max_new_tokens` 256 → `/chat` không còn chữ nào, rơi về echo ngữ cảnh (tham số tắt suy luận bị gateway bỏ qua) → mặc định 2048, `stream_answer` ghi log khi chỉ có suy luận; (2) prompt: ngữ cảnh có một phần thì trả lời phần có rồi nói rõ phần thiếu, chỉ nói "không có" khi không nguồn nào liên quan (deepseek trả "không tìm thấy" dù nguồn [1] là đúng bảng đề tài NCKH 2022); (3) **bài áp đảo**: hit đầu thuộc bài chiếm ≥ `retrieval.dominant_min` (6) trong 10 hit đầu (trước diversify) → bài đó được tối đa `retrieval.dominant_doc_max` (4) đoạn thay vì `per_doc_max` 2 / 1 với câu liệt kê ("Danh sách đề tài NCKH 2022" là 1 bảng dài: 7 → 21 đề tài trong ngữ cảnh); kích hoạt ở 8/90 câu golden + list_v1, golden recall@5 0,985 / MRR 0,898 không đổi, độ phủ list_v1 0,970 giữ nguyên ở min 6–7 (min 5: 0,951); (4) **"mới nhất" theo ngày**: câu hỏi chỉ gồm mục + "mới nhất" (`filters.QueryFilters.latest`, VD "Thông báo mới nhất?") → bài mới nhất của mục (`vector_store.latest_text`, lọc mục + năm có index, sắp `published_at` phía client) lên đầu; trước đó trả một bài 10/2025 thay vì 05/10/2026. Cache `q:v6`. Còn tồn: "Chiến lược 2021–2025 là gì?" — đoạn mục tiêu / giải pháp của bài xếp sau các đoạn thực trạng và bảng | đã làm |
 | D31 | **Chu kỳ incremental 12h, ngân sách 5 phút / lượt (2026-10-29)**: `CRON_INTERVAL_SEC` mặc định 43.200; `crawl.cycle_budget_sec` 300 (`--budget-sec`, `CYCLE_BUDGET_SEC`) tính từ đầu lượt, áp cho drain + recheck — hết giờ thì dừng, URL còn lại nằm trong frontier, bài chưa kiểm vẫn là cũ nhất nên lượt sau làm tiếp. Thứ tự mới: drain (bài mới) **trước** recheck. `mark_known_seen`: URL mọi bài trong DB vào `frontier:seen` mỗi lượt (bài nạp qua loader chưa từng qua frontier: seen 840 / 1.938 bài, mỗi bài mới kéo theo vài chục link bài cũ bị tải lại). `--check-edits` 100 → 50 (2 lượt/ngày → mỗi bài được kiểm lại khoảng 19 ngày/lần). Đo trên máy dev, giới hạn như VM2 (2 nhân, embed int8 tách riêng): lượt cũ 30 phút (tồn đọng 11 ngày: 12 bài mới × 78 s — chủ yếu embed ảnh — + 169 bài cũ tải lại + 100 bài kiểm lại); lượt bình thường không có bài mới 1 phút 57 s (17 trang danh sách + 50 bài kiểm lại, 1,3 s / bài); mỗi bài mới thêm ~1–2,5 phút; dựng lại graph toàn bộ (~75 s, mỗi 20h) và reconcile chạy ngoài ngân sách. Cảnh báo heartbeat 7 h → 13 h. Đầu lượt chờ Postgres / Redis / Qdrant tối đa `crawl.startup_wait_sec` 900 s (`wait_for_services`; ngân sách tính từ lúc store đã lên): chạy thử trên máy dev 2 lần reboot (29/10, 31/10) đều mất lượt vì worker lên trước, Postgres mất ~5 phút, Qdrant ~6 phút mới nhận kết nối; hết giờ chờ → bỏ lượt, ghi heartbeat lỗi (trước là traceback, không heartbeat). | 6h/lần, 30 phút, recheck trước drain |
+| D32 | **Bố trí VM (chủ dự án, 2026-10-29)**: dịch vụ embed (jina-clip-v2 int8) nặng nên chạy trên **EC2 riêng 2 vCPU / 8 GB** (VM2), bật 24/7 vì mỗi câu hỏi cần nhúng; VM1 (2 vCPU / 4 GB) giữ postgres, redis, qdrant, api, nginx. Worker `cron` ở chung VM2: gần như không tốn thêm (rỗi 62 MiB, đỉnh 408 MiB, `mem_limit` 1 GB) và gọi embed nội bộ. **Không đưa worker lên serverless**: máy vẫn phải bật cho embed nên không tiết kiệm được; Lambda cần ở trong VPC để tới store, muốn ra internet tải site phải thêm NAT Gateway (~33 USD/tháng), đắt hơn cả phần worker; mở store ra internet thì không được. Nếu sau này bỏ VM2 (embed qua API cloud) thì dùng ECS Fargate theo lịch, không dùng Lambda. VM2 không chạy Spot / bật-tắt theo lịch nữa (thay phần đó của D9). `svc-ocr` chuyển sang profile `manual` (D9) để `up -d` không chạy. Đo trên máy dev 2026-11-01 (API giới hạn 1,5 GB, 2 nhân riêng; embed 2 nhân như VM2): `/query` 70 câu golden, không LLM, không cache: p50 0,44 s / p95 0,69 s, câu hỏi bằng ảnh (10 ảnh) 4,8 / 5,5 s. Khi worker đang embed (giả lập bài mới: mỗi request 2 ảnh + 2 đoạn dài): chữ 0,82 / 1,42 s, ảnh 10,5 / 11,6 s — chậm khoảng gấp đôi nhưng chỉ trong vài phút worker chạy mỗi 12h. | 2× c7i-flex.large 4 GB; VM2 Spot / lịch bật tắt |
 
 ### Câu hỏi còn mở (không chặn Giai đoạn 0–1)
 - ~~**Q1** Phạm vi `www.haui.edu.vn`~~ → **chốt 2026-10-12: chỉ SICT** (`external_hosts: []`, thêm `/vn/tags` vào `skip_patterns`).
@@ -305,16 +307,29 @@ API (VM1, làm song song):
 ## Giai đoạn 5 — Vận hành & bảo mật
 - D12 bảo mật; D14 region S3; D9 VM2 Spot hoặc lịch bật/tắt (EventBridge) — worker idempotent nên chịu
   được ngắt; D13 giám sát + cảnh báo heartbeat > 13 h (cron 12h, D31); backup hằng ngày giữ 7–14 ngày + thử restore định kỳ.
+- **Sau khi repo public (2026-10-28), kiểm 2026-11-01:** quét toàn bộ lịch sử git (mọi nhánh) không thấy
+  token/khoá (Grafana, OpenAI-style `sk-`, HF, AWS, GitHub, Jina, Groq, private key) và không còn IP thật;
+  `k8s/secrets.example.yaml` cũ chỉ có mật khẩu mẫu. Còn lại:
+  - `docker-compose.yml` để lộ mật khẩu Postgres mặc định `sict`, Redis không mật khẩu, Qdrant không API
+    key, và publish 5432 / 6379 / 6333-6334 trên mọi interface — repo public nên ai cũng biết mật khẩu.
+    Làm D12 trước khi lên VM: mật khẩu PG mạnh lấy từ `.env`, Redis `requirepass`, Qdrant
+    `QDRANT__SERVICE__API_KEY`, bind cổng store vào IP private của VM1, SG chỉ cho VM2.
+  - Việc của chủ dự án: nhờ GitHub Support xoá ref PR cũ (#4–#17) còn trỏ tới commit có IP thật; coi các
+    IP đó đã lộ (đóng cổng 20128, siết SG); đổi mật khẩu Postgres đang dùng trên VM; email tác giả trong
+    commit là công khai (đổi sang email `noreply` của GitHub cho commit mới nếu muốn).
 
-## Ngân sách RAM mục tiêu (ước tính, đo lại sau mỗi giai đoạn)
+## Ngân sách RAM (MB; `mem_limit` theo compose, đỉnh đo trên máy dev 2026-10-29 → 11-01)
 
-| VM1 | Hiện tại | Mục tiêu | | VM2 | Hiện tại | Mục tiêu |
+| VM1 (4 GB) | mem_limit | Đo đỉnh | | VM2 (8 GB, D32) | mem_limit | Đo đỉnh |
 |---|---|---|---|---|---|---|
-| api | 1.500 | ~600 (ONNX) | | cron (worker) | 3.000 | ~2.000 |
-| qdrant | 900 | ~600 (quantization int8) | | svc-ocr | 3.000 | 0 (profile, chạy tay) |
-| postgres | 800 | 800 | | obscura | 150 | 150 |
-| redis + nginx | 450 | 450 | | | | |
-| **Tổng** | **3.650** | **~2.450** | | **Tổng** | **6.150** | **~2.150** |
+| api | 1.500 | ~200 (backend `api`: không nạp model) | | embed | 6.000 | 3.057 (đoạn dài ~2.048 token) |
+| qdrant | 900 | 786 (dev giữ cả v1, v2, v3) | | cron (worker) | 1.000 | 408 |
+| postgres | 800 | 148 | | obscura | 150 | 5 |
+| redis + nginx | 450 | 16 + — | | svc-ocr | chạy tay | — |
+| **Tổng** | **3.650** | **~1.150** | | **Tổng** | **7.150** | **~3.470** |
+
+VM1 còn dư nhiều; riêng `mem_limit` qdrant 900 MB chỉ hơn đỉnh 786 MB khoảng 15 % — production giữ
+v3 + v2 (rollback) nên dung lượng gần như máy dev; nên nâng qdrant (vd. 1.500) và hạ api (vd. 600).
 
 ---
 

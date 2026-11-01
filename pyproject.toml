@@ -1,6 +1,7 @@
 [project]
 name = "sict-crawler"
 version = "0.1.0"
+license = "Apache-2.0"
 requires-python = ">=3.10"
 # Common: pipeline cơ bản — crawl nhẹ + parse + DB + vector + storage.
 # Mọi image đều cài nhóm này. ML/API/crawl-render nằm ở dependency-groups.
