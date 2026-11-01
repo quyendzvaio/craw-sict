@@ -29,3 +29,32 @@ Lưu ý:
   chứng trên chunk (q12, q27, q55) — xem `notes`. Đạt trần 1.0 → cần thêm câu khó (đa bước, so sánh,
   hỏi trong file đính kèm) ở golden_v2.
 - Chưa đo media/router vì chưa có artifact ảnh (chờ chạy GPU).
+
+## 2026-11-02 — RAGAS trên golden_v2 (nhánh feat/answer-quality-eval-v2)
+
+Bộ `golden_v2.jsonl` (88 câu theo vai người dùng, `status: draft`). API v3 trên máy dev, cache tắt.
+Model trả lời `gpt-oss-120b-free`, model chấm `deepseek-v4-flash-free` (kiraai, khác model trả lời).
+Embedding cho answer_relevancy: dịch vụ embed :8090. Ví kiraai hết tiền nên không chấm bằng glm-5.3
+như lần 2026-10-26: số liệu không so thẳng được với lần đó.
+
+Toàn bộ (80 câu có đáp án; 8 câu ngoài phạm vi / không có đáp án không chấm RAGAS):
+
+| | faithfulness | answer_relevancy | context_precision | context_recall | url_hit | false_abstain | abstain_ok |
+|---|---|---|---|---|---|---|---|
+| bản sửa | 0,928 | 0,668 | 0,691 | 0,805 | 0,885 | 0,100 | 1,0 |
+
+A/B với develop (311eb8d), cùng câu trả lời model trên, chỉ tính câu cả hai bản có điểm. Bản develop chỉ chấm
+được 69/88 câu: kiraai hết hạn mức ngày, chủ dự án quyết định chỉ chấm tiếp bản sửa.
+
+| | faithfulness (57 câu) | context_precision (49) | context_recall (61) | url_hit (88) |
+|---|---|---|---|---|
+| develop | 0,890 | 0,637 | 0,849 | 0,885 |
+| bản sửa | 0,914 | 0,704 | 0,833 | 0,885 |
+
+Nhóm yếu (bản sửa): danh sách (CP 0,40, CR 0,49; g053/g054 bài báo, báo cáo 2021 vẫn không vào top 10),
+ảnh (F 0,84, CP 0,54), video (CP 0,47: nguồn khung hình ít chữ), câu nguồn mâu thuẫn hiệu trưởng (CP 0,25).
+Theo cách gõ, url_hit: phrase 1,0, question 0,89, no_accent 0,75, abbrev / chatty 0,67, english 0,5.
+answer_relevancy = 0 ở 4 câu trả lời "không có thông tin" (g041, g053, g072, g074); bỏ chúng thì 0,703.
+Cặp biến thể (6 cặp): gốc / biến thể AR 0,82 / 0,53, CP 0,90 / 0,69, F 0,96 / 0,96.
+Model chấm miễn phí dao động: g005 có câu trả lời gần như giống hệt ở hai bản nhưng faithfulness 0 và 1.
+Chi tiết: `results/ragas/2026-11-01-g2-{base,new}.scores.jsonl`, `2026-11-01-g2-new.summary.json`.
