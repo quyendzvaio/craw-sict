@@ -305,6 +305,7 @@ def build_chunks(meta: DocMeta, markdown: str, min_tokens: int = 200, max_tokens
 
 # ---------------- D23: cấu trúc trong trang → chunk theo block ----------------
 _MEDIA_BLOCKS = ("image", "video", "attachment")
+TABLE_LABEL_MAX_TOKENS = 24   # đoạn ngắn hơn chừng này đứng ngay trước bảng = nhãn của bảng
 
 
 def outline(blocks: list[dict]) -> list[dict]:
@@ -393,9 +394,17 @@ def build_chunks_structured(meta: DocMeta, blocks: list[dict], min_tokens: int =
         if t in _MEDIA_BLOCKS:
             continue
         if t == "table":
+            # Đoạn ngắn ngay trước bảng là nhãn của bảng ("NĂM 2021", "Bảng 1. Quy mô tuyển sinh", "1.4. Chỉ
+            # tiêu tuyển sinh"): trước đây thành chunk riêng chỉ vài chữ, còn các mảnh bảng không biết mình
+            # thuộc năm / mục nào → hỏi "bài báo năm 2021" không trúng. Giờ mọi mảnh của bảng mang nhãn đó.
+            label = ""
+            if buf and buf[-1][0]["type"] == "paragraph" and _tokens(buf[-1][1]) <= TABLE_LABEL_MAX_TOKENS:
+                label = buf.pop()[1].strip()
+                buf_tokens -= _tokens(label)
             flush()                                   # heading trơ trọi trước bảng bị bỏ (đã có trong đường dẫn)
+            tag = f"[Bảng: {label}]" if label else "[Bảng]"
             for piece in chunk_table(_table_md(b["text"]), max_tokens):
-                out.append(ChunkRec(len(out), f"{prefix(b['heading_path'])} [Bảng] {piece}", "Bảng", "table",
+                out.append(ChunkRec(len(out), f"{prefix(b['heading_path'])} {tag} {piece}", "Bảng", "table",
                                     _norm_hash(piece), md_meta, b["heading_path"], (b["idx"], b["idx"])))
             continue
         line = f"{'#' * b['level']} {b['text']}" if t == "heading" else b["text"]

@@ -278,6 +278,34 @@ def rewrite_query(question: str) -> str:
     return out[:500]
 
 
+ANSWER_RULES = (
+    "Bạn là trợ lý ảo của Trường CNTT & Truyền thông, Đại học Công nghiệp Hà Nội (HaUI). "
+    "Trả lời câu hỏi của người dùng CHỈ dựa vào ngữ cảnh được cung cấp. "
+    "Trả lời ngắn gọn bằng tiếng Việt. Ngữ cảnh chỉ có một phần thông tin thì trả lời phần có (kèm [n]) rồi nói rõ "
+    "phần còn thiếu; chỉ nói không có thông tin khi không nguồn nào liên quan đến câu hỏi. "
+    "Ngữ cảnh gồm các nguồn đánh số [1], [2]…; MỌI ý trả lời phải kết thúc bằng số nguồn dạng [n] "
+    "(nguồn là file thì kèm số trang có trong nhãn), chỉ dùng số nguồn có trong ngữ cảnh. "
+    # RAGAS 2026-10-26: người dùng hay gõ cụm từ / tên văn bản thay vì câu hỏi; model trả "không tìm thấy" dù
+    # nguồn [1] đúng tên văn bản (q19, q20), hoặc chỉ nói "xem mục Ảnh & Video" — câu không nguồn nào chứng minh.
+    "Người dùng có thể chỉ gõ một cụm từ hoặc tên văn bản thay vì câu hỏi: hiểu đó là yêu cầu cho biết "
+    "thông tin chính về chủ đề ấy. "
+    "Hỏi về một văn bản, quy định, kế hoạch, thông báo hay file: nêu tên văn bản, số hiệu / ngày ban hành nếu có, "
+    "các điểm chính có trong ngữ cảnh (kèm [n]) và cho biết file ở nguồn nào; ngữ cảnh có nguồn mang đúng tên văn "
+    "bản đó thì không được trả lời là không tìm thấy. "
+    "Nguồn (image)/(video) là ảnh/video trong một bài, kèm tiêu đề bài và chữ đọc được trong ảnh. Người dùng muốn "
+    "xem ảnh/video: cho biết ảnh thuộc bài nào, đăng ngày nào và mô tả nội dung dựa trên tiêu đề, chú thích, chữ "
+    "trong ảnh (kèm [n]); không nói về giao diện hay chỗ hiển thị ảnh. "
+    "Dòng [graph] ở cuối ngữ cảnh chỉ là thông tin phụ về các thực thể liên quan, không phải nguồn để trích [n]. "
+    "Câu hỏi yêu cầu liệt kê thì kể đủ mọi mục có trong ngữ cảnh (mỗi mục kèm [n]); ngữ cảnh có thể chưa đủ "
+    "danh sách thì nói rõ."
+)
+
+
+def answer_prompt(question: str, context: str) -> str:
+    """Prompt trả lời. D27: ngữ cảnh đã nằm trong ngân sách (sources.build_context: llm.source_chars / context_chars)."""
+    return f"{ANSWER_RULES}\n\nNgữ cảnh:\n{context}\n\nCâu hỏi: {question}"
+
+
 def stream_answer(question: str, context: str, image_b64: str | None = None, max_tokens: int | None = None):
     """Yield answer chunks from cfg.llm given retrieved context. SSE-style text.
     Yields nothing if no key/call fails (caller falls back to echo context).
@@ -286,20 +314,7 @@ def stream_answer(question: str, context: str, image_b64: str | None = None, max
     cfg = get_settings().llm
     if not cfg.api_key:
         return
-    prompt = (
-        "Bạn là trợ lý ảo của Trường CNTT & Truyền thông, Đại học Công nghiệp Hà Nội (HaUI). "
-        "Trả lời câu hỏi của người dùng CHỈ dựa vào ngữ cảnh được cung cấp. "
-        "Trả lời ngắn gọn bằng tiếng Việt. Ngữ cảnh chỉ có một phần thông tin thì trả lời phần có (kèm [n]) rồi nói rõ "
-        "phần còn thiếu; chỉ nói không có thông tin khi không nguồn nào liên quan đến câu hỏi. "
-        "Ngữ cảnh gồm các nguồn đánh số [1], [2]…; MỌI ý trả lời phải kết thúc bằng số nguồn dạng [n] "
-        "(nguồn là file thì kèm số trang có trong nhãn), chỉ dùng số nguồn có trong ngữ cảnh. "
-        "Khi ngữ cảnh có nguồn ảnh/video, hãy nhắc người dùng xem mục Ảnh & Video. "
-        "Câu hỏi yêu cầu liệt kê thì kể đủ mọi mục có trong ngữ cảnh (mỗi mục kèm [n]); ngữ cảnh có thể chưa đủ "
-        "danh sách thì nói rõ.\n\n"
-        # D27: ngữ cảnh đã nằm trong ngân sách (sources.build_context: llm.source_chars / context_chars)
-        f"Ngữ cảnh:\n{context}\n\n"
-        f"Câu hỏi: {question}"
-    )
+    prompt = answer_prompt(question, context)
     body = {
         "model": cfg.model,
         "messages": [{"role": "user", "content": (

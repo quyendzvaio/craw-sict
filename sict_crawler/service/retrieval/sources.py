@@ -82,8 +82,11 @@ def build_context(tsrcs: list[Source], msrcs: list[Source], facts: list[str] | N
     per = source_chars or cfg.source_chars
     if srcs:
         per = max(MIN_SOURCE_CHARS, min(per, (context_chars or cfg.context_chars) // len(srcs)))
-    parts = [f"[graph] {f}" for f in (facts or [])]
     # D24: nguồn đánh số [1]…[n] (chữ trước, media sau) — LLM trích dẫn bằng [n], citations.enforce kiểm lại
-    parts += [f"[{i}] ({s.kind}) {s.cite or s.title or s.url}{_date_tag(s)}\n{(s.content or s.excerpt)[:per]}"
-              for i, s in enumerate(srcs, 1)]
+    parts = [f"[{i}] ({s.kind}) {s.cite or s.title or s.url}{_date_tag(s)}\n{(s.content or s.excerpt)[:per]}"
+             for i, s in enumerate(srcs, 1)]
+    # Dữ kiện graph đứng SAU các nguồn: chỉ là thông tin phụ (thực thể liên quan, số bài). Đứng đầu thì
+    # LLM đọc nó trước nguồn chứa câu trả lời, và RAGAS context_precision coi nó là nguồn hạng 1 vô ích
+    # (18 câu có graph: 0.554 so với 0.788, 2026-10-26).
+    parts += [f"[graph] {f}" for f in (facts or [])]
     return "\n\n---\n\n".join(parts)
