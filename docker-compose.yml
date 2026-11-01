@@ -10,7 +10,9 @@ services:
     ports: ["5432:5432"]
     volumes: [./.pgdata:/var/lib/postgresql/data]
     restart: unless-stopped
-    mem_limit: 800m
+    # Đỉnh đo 148 MiB (2026-11-01); shared_buffers 256 MB + 50 kết nối → 600 MB đủ. Tổng mem_limit VM1 = 3.650 MB
+    # (pg 600 + redis 300 + qdrant 1.100 + api 1.500 + nginx 150), chừa ~450 MB cho OS + Alloy trên 4 GB.
+    mem_limit: ${PG_MEM_LIMIT:-600m}
     command: ["postgres", "-c", "shared_buffers=256MB", "-c", "max_connections=50"]
 
   redis:
@@ -27,7 +29,8 @@ services:
     ports: ["6333:6333", "6334:6334"]
     volumes: [qdata:/qdrant/storage]
     restart: unless-stopped
-    mem_limit: 900m
+    # Đỉnh đo 786 MiB (dev giữ v1 + v2 + v3; production giữ v3 + v2 để rollback ≈ tương đương): 900 MB chỉ dư 15 %.
+    mem_limit: ${QDRANT_MEM_LIMIT:-1100m}
 
   api:
     image: ${API_IMAGE:-sict-api:latest}   # CD đặt ghcr.io/…/sict-api:<sha> trong .env (D10); local = build
@@ -56,7 +59,10 @@ services:
     depends_on: [postgres, redis, qdrant]
     volumes: [hfcache:/cache/hf, "${AWS_DIR:-${HOME}/.aws}:/home/app/.aws:ro"]
     restart: unless-stopped
-    mem_limit: 1500m
+    # Index v2 (mặc định, embedding.backend torch): API tự nạp E5 + CLIP → đo 2026-11-01 anon ~820 MiB + ~600 MiB
+    # cache file model, chạm 1,5 GB → giữ 1.500 MB. Sau cutover v3 (EMBED_BACKEND=api, embed ở VM2) API chỉ
+    # ~200 MiB → đặt API_MEM_LIMIT=600m trong .env, trả ~900 MB cho VM1.
+    mem_limit: ${API_MEM_LIMIT:-1500m}
     logging: {driver: json-file, options: {max-size: 10m, max-file: "3"}}
 
   # L0 edge: reverse proxy + cache truoc api (AC-K1..K5). Nghe 8080,

@@ -322,14 +322,16 @@ API (VM1, làm song song):
 
 | VM1 (4 GB) | mem_limit | Đo đỉnh | | VM2 (8 GB, D32) | mem_limit | Đo đỉnh |
 |---|---|---|---|---|---|---|
-| api | 1.500 | ~200 (backend `api`: không nạp model) | | embed | 6.000 | 3.057 (đoạn dài ~2.048 token) |
-| qdrant | 900 | 786 (dev giữ cả v1, v2, v3) | | cron (worker) | 1.000 | 408 |
-| postgres | 800 | 148 | | obscura | 150 | 5 |
+| api | 1.500 (`API_MEM_LIMIT`) | v2/torch: chạm 1.500 (anon ~820 + cache file model); v3/backend `api`: ~200 | | embed | 6.000 | 3.057 (đoạn dài ~2.048 token) |
+| qdrant | 1.100 | 786 (dev giữ cả v1, v2, v3) | | cron (worker) | 1.000 | 408 |
+| postgres | 600 | 148 (shared_buffers 256) | | obscura | 150 | 5 |
 | redis + nginx | 450 | 16 + — | | svc-ocr | chạy tay | — |
-| **Tổng** | **3.650** | **~1.150** | | **Tổng** | **7.150** | **~3.470** |
+| **Tổng** | **3.650** | **~2.450 (v2) / ~1.150 (v3)** | | **Tổng** | **7.150** | **~3.470** |
 
-VM1 còn dư nhiều; riêng `mem_limit` qdrant 900 MB chỉ hơn đỉnh 786 MB khoảng 15 % — production giữ
-v3 + v2 (rollback) nên dung lượng gần như máy dev; nên nâng qdrant (vd. 1.500) và hạ api (vd. 600).
+Chỉnh 2026-11-01 (tổng giữ 3.650): qdrant 900 → 1.100 (900 chỉ hơn đỉnh 786 khoảng 15 %; production giữ v3 + v2
+để rollback nên dung lượng gần như máy dev), postgres 800 → 600. API giữ 1.500 vì index v2 nạp E5 + CLIP ngay trong
+API; sau cutover v3 đặt `API_MEM_LIMIT=600m`. Các giới hạn đổi được qua `PG_MEM_LIMIT`, `QDRANT_MEM_LIMIT`,
+`API_MEM_LIMIT`, `CRON_MEM_LIMIT`, `EMBED_MEM_LIMIT`.
 
 ---
 
