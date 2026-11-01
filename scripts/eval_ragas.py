@@ -218,14 +218,19 @@ async def score_all(args) -> None:
     rows = [json.loads(x) for x in Path(f"{args.out}.answers.jsonl").read_text(encoding="utf-8").splitlines() if x]
     out = Path(f"{args.out}.scores.jsonl")
     have = done_ids(out)
-    print(f"chấm {len(rows) - len(have & {r['id'] for r in rows})}/{len(rows)} câu, LLM chấm {model}", flush=True)
+    # --retry-errors: chấm lại đúng các chỉ số bị lỗi (504 / timeout của LLM chấm), giữ nguyên chỉ số đã có
+    old = {r["id"]: r for r in (json.loads(x) for x in out.read_text(encoding="utf-8").splitlines() if x.strip())} \
+        if out.exists() else {}
+    retry = {i: list(r["errors"]) for i, r in old.items() if r.get("errors")} if args.retry_errors else {}
+    print(f"chấm {len(rows) - len(have & {r['id'] for r in rows})}/{len(rows)} câu"
+          + (f", chấm lại {len(retry)} câu có lỗi" if retry else "") + f", LLM chấm {model}", flush=True)
 
     async def one(r):
         res = {}
         if r.get("answerable") is False:     # câu ngoài phạm vi / không có đáp án: RAGAS không áp dụng
             use_here = []
         else:
-            use_here = use
+            use_here = retry.get(r["id"], use)
         for name in use_here:
             m = metrics[name]
             try:
@@ -247,8 +252,16 @@ async def score_all(args) -> None:
                 res.setdefault("errors", {})[name] = f"{type(e).__name__}: {str(e)[:200]}"
         row = {"id": r["id"], "set": r["set"], "question": r["question"], **res,
                **{k: r[k] for k in ("case", "style", "answerable", "variant_of") if k in r}}
-        with out.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        if r["id"] in retry:                 # gộp vào dòng cũ rồi ghi lại cả file
+            merged = {**old[r["id"]], **{k: v for k, v in res.items() if k != "errors"}}
+            merged.pop("errors", None)
+            if res.get("errors"):
+                merged["errors"] = res["errors"]
+            old[r["id"]] = row = merged
+            out.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in old.values()), encoding="utf-8")
+        else:
+            with out.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
         print(json.dumps(row, ensure_ascii=False)[:300], flush=True)
         print(f"  LLM: {STATS['calls']} lượt, {STATS['429']} lần 429, {STATS['errors']} lỗi, "
               f"trung bình {STATS['llm_s'] / max(STATS['calls'], 1):.1f} s / lượt", flush=True)
@@ -258,7 +271,7 @@ async def score_all(args) -> None:
     async def guarded(r):
         async with sem:
             await one(r)
-    await asyncio.gather(*(guarded(r) for r in rows if r["id"] not in have))
+    await asyncio.gather(*(guarded(r) for r in rows if r["id"] not in have or r["id"] in retry))
     summary(out, use)
 
 
@@ -348,6 +361,7 @@ def main() -> None:
     ap.add_argument("--max-tokens", type=int, default=2048)
     ap.add_argument("--metrics", default="faithfulness,answer_relevancy,context_precision,context_recall")
     ap.add_argument("--embed-base", default="http://localhost:8090/v1")
+    ap.add_argument("--retry-errors", action="store_true", help="score: chấm lại các chỉ số đã lỗi")
     ap.add_argument("--env-file", default=".env")
     args = ap.parse_args()
     if args.step == "collect":
