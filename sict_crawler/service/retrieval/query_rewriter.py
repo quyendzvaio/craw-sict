@@ -59,9 +59,15 @@ def rewrite(question: str) -> dict:
     from sict_crawler.core.config import get_settings
     from sict_crawler.service.retrieval import vlm
     llm = vlm.rewrite_and_route(question) if get_settings().llm.rewrite_query else None
-    rewritten = (llm or {}).get("rewritten") or _rule_rewrite(question)
+    restored = None
+    if not llm and get_settings().retrieval.restore_accents:
+        from sict_crawler.service.retrieval import accent
+        restored = accent.maybe_restore(question)
+    rewritten = (llm or {}).get("rewritten") or _rule_rewrite(restored or question)
     route_llm = {k: llm[k] for k in ("media", "wants_file")} if llm and llm.get("media") else None
-    return {"rewritten": rewritten, "terms": _terms(rewritten), "route_llm": route_llm}
+    # restored: câu gốc không dấu đã khôi phục dấu → retriever nhúng câu này cho nhánh dense (mô hình nhúng không hiểu
+    # tiếng Việt không dấu); BM25 bỏ dấu cả hai phía nên vẫn tìm bằng câu gốc
+    return {"rewritten": rewritten, "terms": _terms(rewritten), "route_llm": route_llm, "restored": restored}
 
 
 def _key(r: dict) -> tuple:

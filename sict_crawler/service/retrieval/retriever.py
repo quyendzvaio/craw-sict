@@ -30,7 +30,7 @@ def index_tag() -> str:
 
 def query_cache_key(question: str, top_k: int, filters_key: str = "", index: str | None = None) -> str:
     index = index_tag() if index is None else index
-    return "q:v8:" + hashlib.sha256(   # v8: phạm vi mục + năm nhãn bảng + tiêu đề; v7: bảng mang nhãn; v6: D30
+    return "q:v9:" + hashlib.sha256(   # v9: đoạn đủ dài, đoạn liền kề câu liệt kê, khôi phục dấu; v8: phạm vi mục + năm nhãn bảng + tiêu đề; v7: bảng mang nhãn; v6: D30
         f"{question}\x00{top_k}\x00{filters_key}\x00{index}".encode()).hexdigest()
 
 
@@ -134,6 +134,34 @@ def _image_block(media_key: str | None, doc_id: int) -> int | None:
     except Exception:
         return None
     return next((c["block_idx"] for c in caps if c.get("block_idx") is not None), None)
+
+
+def _doc_chunks(doc_id) -> list[dict]:
+    """Mọi chunk chữ (không caption) của 1 bài trong collection chữ đang phục vụ."""
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+    try:
+        return [c for c in vector_store.scroll_text(Filter(must=[
+            FieldCondition(key="document_id", match=MatchValue(value=doc_id))]),
+            collection=get_settings().qdrant.collection_text) if c.get("kind") != "media_caption"]
+    except Exception:
+        return []
+
+
+def list_neighbors(hits: list[dict], n_docs: int, window: int = 1) -> list[dict]:
+    """Câu liệt kê (thử nghiệm 2026-11-02): đoạn liền trước / liền sau (±window theo `idx`) của các đoạn thuộc `n_docs`
+    bài đứng đầu. Phần mở đầu khớp câu hỏi, còn danh sách hay nằm ở đoạn kế bên; mỗi bài chỉ lấy 1 đoạn nên mất.
+    Bỏ đoạn đã có trong `hits`. Trả về theo thứ tự bài rồi `idx`, gắn via="neighbor"."""
+    docs = list(dict.fromkeys(h.get("document_id") for h in hits if isinstance(h.get("document_id"), int)))[:n_docs]
+    have = {(h.get("document_id"), h.get("idx")) for h in hits}
+    out = []
+    for d in docs:
+        mine = {h.get("idx") for h in hits if h.get("document_id") == d}
+        want = {i + o for i in mine if i is not None for o in range(-window, window + 1) if o}
+        for c in sorted(_doc_chunks(d), key=lambda c: c.get("idx", 0)):
+            if c.get("idx") in want and (d, c.get("idx")) not in have:
+                out.append({**c, "via": "neighbor", "score": 0.0})
+                have.add((d, c.get("idx")))
+    return out
 
 
 def _chunks_around(doc_id: int, block_idx: int, limit: int = 2) -> list[dict]:
@@ -290,7 +318,8 @@ def retrieve(question: str, top_k: int = 5,
     # D27: luôn tìm bằng CÂU GỐC; câu LLM viết lại (nếu khác sau khi bỏ dấu) chỉ thêm danh sách vào RRF → đổi/tắt LLM
     # không đổi hẳn kết quả. Nhánh media vẫn dùng vector câu viết lại (rvec) như trước.
     q0 = question.strip()
-    tvec = embedder.embed_query(q0) if has_text else None
+    # câu không dấu đã khôi phục dấu (retrieval.restore_accents): nhánh dense nhúng câu có dấu; BM25 vẫn dùng câu gốc
+    tvec = embedder.embed_query(r.get("restored") or q0) if has_text else None
     rvec, alt = tvec, []
     if has_text and fold(r["rewritten"]).strip() != fold(q0):
         rvec = embedder.embed_query(r["rewritten"])
@@ -357,7 +386,8 @@ def retrieve(question: str, top_k: int = 5,
         lead = [h for h in linked if linked and h.get("document_id") == linked[0].get("document_id")]
         rest = [h for h in linked if h not in lead]
         text_hits = query_rewriter.dedupe_hits(linked + text_hits if not has_text else lead + text_hits + rest)
-    tsrcs = text_sources(text_hits[:k])
+    extra = list_neighbors(text_hits[:k], gc.list_neighbor_docs) if route.list_question and gc.list_neighbor_docs else []
+    tsrcs = text_sources(text_hits[:k] + extra)
     route.inputs = [x for x, on in (("text", bool(question.strip())), ("image", bool(query_image_b64))) if on]
     route.outputs = [x for x, on in (("text", bool(tsrcs)), ("image", bool(msrcs))) if on]
     cache.put(ck, json.dumps(

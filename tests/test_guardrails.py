@@ -310,3 +310,20 @@ def test_title_only_chunk_ranks_after_content_of_same_doc():
     assert R.diversify(out, 2, 1)[1]["content"].endswith("| STT |")          # bài 104 góp mảnh bảng
     alone = [{"document_id": 7, "title": "Sơ đồ tổ chức", "content": "[Sơ đồ tổ chức] Sơ đồ tổ chức", "score": 1.0}]
     assert R.demote_title_only(alone) == alone                             # bài chỉ có mảnh tiêu đề: giữ nguyên
+
+
+def test_list_neighbors_add_adjacent_chunks_of_top_docs(monkeypatch):
+    """Câu liệt kê: bài đứng đầu thường có phần mở đầu khớp câu hỏi, còn danh sách nằm ở đoạn kế tiếp (golden list_v2
+    m21, m27; l07 ngược lại ở đoạn trước) → thêm đoạn liền trước / liền sau của `n_docs` bài đầu, đặt sau các nguồn chính,
+    bỏ đoạn đã có. Bài khác không bị thêm."""
+    from sict_crawler.service.retrieval import retriever as R
+    doc = {1: [{"document_id": 1, "idx": i, "content": f"a{i}", "url": "u1", "kind": "text"} for i in range(4)],
+           2: [{"document_id": 2, "idx": i, "content": f"b{i}", "url": "u2", "kind": "text"} for i in range(3)],
+           3: [{"document_id": 3, "idx": i, "content": f"c{i}", "url": "u3", "kind": "text"} for i in range(3)]}
+    monkeypatch.setattr(R, "_doc_chunks", lambda d: doc[d])
+    hits = [dict(doc[1][1]), dict(doc[2][0]), dict(doc[3][1])]
+    extra = R.list_neighbors(hits, n_docs=2, window=1)
+    assert [(h["document_id"], h["idx"]) for h in extra] == [(1, 0), (1, 2), (2, 1)]
+    assert all(h["via"] == "neighbor" for h in extra)
+    two = R.list_neighbors(hits + [dict(doc[1][2])], n_docs=1, window=1)   # bài 1 có đoạn 1 và 2 → thêm 0 và 3
+    assert [(h["document_id"], h["idx"]) for h in two] == [(1, 0), (1, 3)]
