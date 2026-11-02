@@ -34,7 +34,7 @@ def test_mass_delete_guard():
 def test_cache_key_stable_and_scoped():
     a = query_cache_key("tuyển sinh", 5)
     assert a == query_cache_key("tuyển sinh", 5)
-    assert a.startswith("q:v7:")  # v7: bảng mang nhãn; v6: bài áp đảo + "mới nhất" (v5: không LLM viết lại; v4 D27)
+    assert a.startswith("q:v8:")  # v8: phạm vi mục, năm nhãn bảng, tiêu đề; v7: bảng mang nhãn; v6: bài áp đảo + "mới nhất" (v5: không LLM viết lại; v4 D27)
     assert a != query_cache_key("tuyển sinh", 8)
     assert a != query_cache_key("tuyển sinh?", 5)
     assert a != query_cache_key("tuyển sinh", 5, "sections=['thong-bao']")

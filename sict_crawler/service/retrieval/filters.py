@@ -35,8 +35,12 @@ _SECTION_HINTS: list[tuple[str, list[str]]] = [
      ["tuyen-sinh-sau-dai-hoc", "sau-dai-hoc", "cao-hoc-he-thong-thong-tin"]),
     (r"\bnganh\b|\bchuong trinh dao tao\b|\bctdt\b", ["tuyen-sinh-dai-hoc", *_PROGRAMS]),
     (r"\btuyen dung\b|\bviec lam\b|\bthuc tap\b", ["tuyen-dung"]),
-    (r"\bnghien cuu\b|\bnckh\b|\bbai bao\b|\bcong trinh\b|\bde tai\b",
+    (r"\bnghien cuu\b|\bnckh\b|\bde tai\b",
      ["tin-khcn", "sinh-vien-nckh", "danh-muc-cong-trinh-da-cong-bo", "de-tai-du-an"]),
+    # công bố của giảng viên (bài báo / báo cáo hội thảo): chỉ mục danh mục công trình, không cộng điểm cho đề tài
+    # sinh viên (trước 2026-11-02 chung luật NCKH: "bài báo khoa học năm 2021" đẩy đề tài SV 2021 lên đầu)
+    (r"\bbai bao\b|\bbao cao khoa hoc\b|\bcong trinh\b|\bcong bo\b|\btap chi\b|\bhoi thao\b",
+     ["danh-muc-cong-trinh-da-cong-bo"]),
     (r"\bcau lac bo\b|\bclb\b|\bdoi olympic\b", ["cau-lac-bo"]),
     (r"\bke hoach\b|\blich thi\b|\blich hoc\b|\blich thuc hanh\b|\bthoi khoa bieu\b|\blop hoc phan\b",
      ["ke-hoach"]),
@@ -55,6 +59,13 @@ _SECTION_HINTS: list[tuple[str, list[str]]] = [
     (r"\btin tuc\b|\bsu kien\b", ["tin-tuc"]),
     (r"\bthu vien anh\b|\bhinh anh\b", ["thu-vien-anh"]),
 ]
+# Câu nêu ĐÍCH DANH loại tài liệu của một mục → mục đó là phạm vi tìm thêm (retriever: 1 danh sách dense + 1 BM25
+# lọc theo section, gộp RRF). Ưu tiên mềm chỉ nhân điểm ứng viên đã có; trang "Bài báo khoa học" (bảng tên bài
+# tiếng Anh) không lọt top 60 của tìm toàn bộ nên boost không cứu được. Chỉ thêm ứng viên, không loại kết quả nào.
+_SCOPE_HINTS: list[tuple[str, list[str]]] = [
+    (r"\bbai bao( khoa hoc)?\b|\bbao cao khoa hoc\b|\bcong trinh (da )?cong bo\b|\bcong bo khoa hoc\b",
+     ["danh-muc-cong-trinh-da-cong-bo"]),
+]
 _RECENT = re.compile(r"\bmoi nhat\b|\bgan day\b|\bvua qua\b|\bhien nay\b|\bhien hanh\b|"
                      r"\bsap toi\b|\btuan nay\b|\bthang nay\b|\bhoc ky nay\b|\bky nay\b")
 # từ chung, không làm câu "mục + mới nhất" có nội dung riêng ("thông báo mới nhất của trường là gì")
@@ -65,6 +76,8 @@ _SCHOOL_YEAR = re.compile(r"\b(20\d{2})\s*[-–/]\s*(20\d{2})\b")
 SECTION_BOOST = 1.25
 DOC_TYPE_BOOST = 1.3
 YEAR_BOOST = 1.3
+TITLE_BOOST = 1.3
+TITLE_MIN_WORDS = 3           # "Tin tức", "Thông báo" quá chung: không tính
 RECENCY_MAX_BOOST = 0.35      # ×(1 + 0.35·e^(-tuổi/365))
 RECENCY_HALF_DAYS = 365.0
 
@@ -84,6 +97,8 @@ class QueryFilters:
     # đặt các bài mới nhất của mục lên đầu (vector_store.latest_text)
     latest: bool = False
     prefer_doc_types: list[str] = field(default_factory=list)  # router wants_file → ["attachment"]
+    # mục câu hỏi nêu đích danh (_SCOPE_HINTS) → retriever thêm danh sách tìm trong riêng mục đó
+    scope_sections: list[str] = field(default_factory=list)
 
     def has_hard(self) -> bool:
         return bool(self.sections or self.doc_types or self.year_from or self.year_to)
@@ -128,6 +143,9 @@ def infer(question: str, today: date | None = None) -> QueryFilters:
         years.append(today.year)
     if re.search(r"\bnam ngoai\b|\bnam truoc\b", q):
         years.append(today.year - 1)
+    for pat, secs in _SCOPE_HINTS:
+        if re.search(pat, q):
+            f.scope_sections += [x for x in secs if x not in f.scope_sections]
     f.prefer_years = sorted({y for y in years if 2000 <= y <= today.year + 2})
     f.recency = bool(_RECENT.search(q)) or (bool(re.search(r"\bnam nay\b", q)) and not f.prefer_years)
     left = [t for t in question_terms(_RECENT.sub(" ", rest)) if t not in _GENERIC]
@@ -141,6 +159,7 @@ def merge(explicit: QueryFilters, inferred: QueryFilters) -> QueryFilters:
     out.prefer_years = inferred.prefer_years
     out.recency = inferred.recency
     out.latest = inferred.latest
+    out.scope_sections = inferred.scope_sections
     return out
 
 
@@ -168,13 +187,27 @@ def _age_days(meta: dict, today: date) -> float | None:
         return None
 
 
+# nhãn bảng (indexing.build_chunks_structured: "[Bảng: NĂM 2021]", "[Bảng: Danh sách năm học 2020-2021]")
+_TABLE_LABEL = re.compile(r"\[Bảng: ([^\]]{1,200})\]")
+
+
+def _chunk_year_matches(meta: dict, years: list[int]) -> bool:
+    """Mảnh bảng có nhãn chứa năm → so theo năm trong nhãn (một trang có thể gom bảng của nhiều năm, `year` chỉ
+    là năm đăng trang); không có nhãn năm → so theo `year` của tài liệu như trước."""
+    m = _TABLE_LABEL.search(meta.get("content") or meta.get("text") or "")
+    label_years = {int(y) for y in _YEAR.findall(m.group(1))} if m else set()
+    if label_years:
+        return bool(label_years & set(years))
+    return meta.get("year") in years
+
+
 def boost(meta: dict, f: QueryFilters, today: date | None = None) -> float:
     """Hệ số nhân điểm ≥ 1 theo ưu tiên mềm. Thiếu metadata → 1.0."""
     today = today or date.today()
     m = 1.0
     if f.prefer_sections and meta.get("section") in f.prefer_sections:
         m *= SECTION_BOOST
-    if f.prefer_years and meta.get("year") in f.prefer_years:
+    if f.prefer_years and _chunk_year_matches(meta, f.prefer_years):
         m *= YEAR_BOOST
     if f.prefer_doc_types and meta.get("doc_type") in f.prefer_doc_types:
         m *= DOC_TYPE_BOOST
@@ -208,3 +241,29 @@ def to_qdrant(f: QueryFilters):
     if f.year_from or f.year_to:
         must.append(FieldCondition(key="year", range=Range(gte=f.year_from, lte=f.year_to)))
     return Filter(must=must)
+
+
+def _words(t: str) -> str:
+    return " ".join(re.findall(r"[0-9a-z]+", fold(t or "")))
+
+
+def apply_title_boost(hits: list[dict], question: str, key: str = "score") -> list[dict]:
+    """Tiêu đề trang (≥ TITLE_MIN_WORDS từ, bỏ dấu) nằm nguyên văn trong câu hỏi → nhân TITLE_BOOST rồi sắp lại.
+    Người dùng gọi đúng tên trang ("bài báo khoa học năm 2021" → trang "Bài báo khoa học"); trang cùng mục, bảng
+    giống nhau ("Báo cáo khoa học") không được cộng. Tiêu đề bài tin dài nên hiếm khi nằm trọn trong câu hỏi."""
+    q = f" {_words(question)} "
+    hit_any = False
+    for h in hits:
+        t = _words(h.get("title", ""))
+        if len(t.split()) >= TITLE_MIN_WORDS and f" {t} " in q:
+            h[key] = h.get(key, 0.0) * TITLE_BOOST
+            hit_any = True
+    return sorted(hits, key=lambda h: -h.get(key, 0.0)) if hit_any else hits
+
+
+def scope_qdrant(f: QueryFilters):
+    """scope_sections → qdrant Filter cho danh sách tìm thêm trong mục câu hỏi nêu đích danh (None nếu không có)."""
+    if not f.scope_sections:
+        return None
+    from qdrant_client.models import FieldCondition, Filter, MatchAny
+    return Filter(must=[FieldCondition(key="section", match=MatchAny(any=f.scope_sections))])

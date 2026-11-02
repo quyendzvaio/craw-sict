@@ -58,3 +58,18 @@ answer_relevancy = 0 ở 4 câu trả lời "không có thông tin" (g041, g053,
 Cặp biến thể (6 cặp): gốc / biến thể AR 0,82 / 0,53, CP 0,90 / 0,69, F 0,96 / 0,96.
 Model chấm miễn phí dao động: g005 có câu trả lời gần như giống hệt ở hai bản nhưng faithfulness 0 và 1.
 Chi tiết: `results/ragas/2026-11-01-g2-{base,new}.scores.jsonl`, `2026-11-01-g2-new.summary.json`.
+
+## 2026-11-02 — phạm vi mục, năm theo nhãn bảng, cộng điểm tiêu đề (nhánh feat/section-year-filter)
+
+Đo truy xuất qua `/query` (không LLM) trên index v3 máy dev, so với develop (2f6fe52), cache tắt:
+
+| | golden_v1 recall@5 | MRR@10 | golden_v2 url_hit | list_v1 coverage |
+|---|---|---|---|---|
+| develop | 0,985 | 0,898 | 69/78 | 0,864 |
+| nhánh này | 1,0 | 0,928 | 70/78 | 0,864 |
+
+- q63 (golden_v1) / g053: hai mảnh bảng NĂM 2021 của trang "Bài báo khoa học" lên hạng 1–2 (trước: không có trong top 60).
+- g054: ba mảnh bảng NĂM 2021 của trang "Báo cáo khoa học" ở hạng 1–3, thay cho mảnh chỉ có tiêu đề.
+- list_v1 0,864 ở cả hai bản; lần đo 2026-10-26 là 0,970. Câu l01 "Trường có những ngành đào tạo nào?" chỉ còn 2/9:
+  các file thời khoá biểu (.xls) chen vào top 10. Mức tụt này đã có ở develop, không do nhánh này; các trang chương
+  trình đào tạo đã được worker chạy thử index lại ngày 29–31/10. Chưa tìm ra nguyên nhân.

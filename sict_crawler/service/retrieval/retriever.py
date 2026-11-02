@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
@@ -29,7 +30,7 @@ def index_tag() -> str:
 
 def query_cache_key(question: str, top_k: int, filters_key: str = "", index: str | None = None) -> str:
     index = index_tag() if index is None else index
-    return "q:v7:" + hashlib.sha256(   # v7: bảng mang nhãn (chunk đổi); v6: bài áp đảo + "mới nhất" (D30)
+    return "q:v8:" + hashlib.sha256(   # v8: phạm vi mục + năm nhãn bảng + tiêu đề; v7: bảng mang nhãn; v6: D30
         f"{question}\x00{top_k}\x00{filters_key}\x00{index}".encode()).hexdigest()
 
 
@@ -182,6 +183,27 @@ def _doc_key(h: dict):
     return tuple(d) if isinstance(d, list) else (d if d is not None else h.get("url"))
 
 
+_HEADER = re.compile(r"^\s*\[[^\]]*\]\s*")
+
+
+def _title_only(h: dict) -> bool:
+    """Mảnh chỉ gồm header ngữ cảnh + đúng tiêu đề (đoạn mở đầu trang có bảng): không có gì cho LLM."""
+    body = _HEADER.sub("", h.get("content") or h.get("text") or "", count=1)
+    return bool(body) and fold(body).strip(" .:") == fold(h.get("title") or "").strip(" .:")
+
+
+def demote_title_only(hits: list[dict]) -> list[dict]:
+    """Mảnh chỉ có tiêu đề xếp ngay sau mảnh nội dung cuối của cùng bài (nếu bài có mảnh nội dung trong danh sách),
+    để diversify (câu liệt kê: 1 mảnh / bài) chọn mảnh nội dung. Bài chỉ có mảnh tiêu đề thì giữ nguyên chỗ."""
+    out = list(hits)
+    for h in [h for h in hits if _title_only(h)]:
+        same = [i for i, x in enumerate(out) if _doc_key(x) == _doc_key(h) and not _title_only(x)]
+        if same and same[-1] > out.index(h):
+            out.remove(h)
+            out.insert(same[-1], h)        # sau khi bỏ h, chỉ số mảnh cuối lùi 1 → chèn đúng sau nó
+    return out
+
+
 def dominant_doc(hits: list[dict], min_hits: int, window: int = 10):
     """Bài của hit đầu nếu nó chiếm ≥ `min_hits` trong `window` hit đầu (thứ tự RRF, trước diversify) → câu hỏi nhắm
     đúng bài đó; None nếu không có bài nào áp đảo hoặc min_hits ≤ 0."""
@@ -297,7 +319,7 @@ def retrieve(question: str, top_k: int = 5,
                                                query_filter=qf, text=q0 or None,
                                                graph_filter=[_graph_filter(ekeys, all_of=True),
                                                              _graph_filter(ekeys)],
-                                               extra_vecs=extra, alt_queries=alt)
+                                               extra_vecs=extra, alt_queries=alt, scope_filter=F.scope_qdrant(f))
     if has_text:
         # raw_score = cosine câu hỏi↔đoạn (ngưỡng caption của router). v2: giữ thứ tự RRF dense+BM25
         # (xem rerank_text); v1: xếp lại theo cosine như cũ.
@@ -305,13 +327,13 @@ def retrieve(question: str, top_k: int = 5,
                                               reorder=not vector_store.has_sparse(), qvec=tvec)
     else:   # chỉ ảnh: danh sách duy nhất là cosine ảnh↔chữ → lọc theo i2t_min, điểm gốc = cosine
         reranked = [{**h, "raw_score": h["score"]} for h in t_hits if h["score"] >= rc.i2t_min]
-    boosted = F.apply_boost(reranked, f)
+    boosted = F.apply_title_boost(F.apply_boost(reranked, f), q0) if has_text else F.apply_boost(reranked, f)
     if f.latest and has_text:
         # "thông báo mới nhất?": thứ tự theo nghĩa không biết ngày → bài mới nhất của mục lên đầu (năm nay và năm trước)
         latest = vector_store.latest_text(f.prefer_sections, limit=k, since_year=date.today().year - 1)
         got = {_doc_key(h) for h in latest}
         boosted = [{**h, "via": "latest"} for h in latest] + [h for h in boosted if _doc_key(h) not in got]
-    chunks = [h for h in boosted if h.get("kind") != "media_caption"]
+    chunks = demote_title_only([h for h in boosted if h.get("kind") != "media_caption"])
     text_hits = diversify(chunks, k, per_doc, dominant_doc(chunks, gc.dominant_min), gc.dominant_doc_max)
 
     kept: list[dict] = []
