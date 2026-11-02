@@ -73,3 +73,31 @@ Chi tiết: `results/ragas/2026-11-01-g2-{base,new}.scores.jsonl`, `2026-11-01-g
 - list_v1 0,864 ở cả hai bản; lần đo 2026-10-26 là 0,970. Câu l01 "Trường có những ngành đào tạo nào?" chỉ còn 2/9:
   các file thời khoá biểu (.xls) chen vào top 10. Mức tụt này đã có ở develop, không do nhánh này; các trang chương
   trình đào tạo đã được worker chạy thử index lại ngày 29–31/10. Chưa tìm ra nguyên nhân.
+
+## 2026-11-02 — list_v2 (42 câu liệt kê) và nguyên nhân list_v1 0,970 → 0,864
+
+**Nguyên nhân list_v1 tụt.** Không do code hay vector:
+- code 27/10 chạy trên dữ liệu hiện tại cũng ra 0,864;
+- vector lưu trùng vector nhúng lại (cosine 0,999);
+- chunk của các bài liên quan giống bản index gốc.
+
+Hai câu lật thứ hạng ở ranh giới top 10 sau các thay đổi nhỏ của index (nhãn bảng 01/11: −129 chunk / 101 trang; 13 bài mới; BM25 IDF tính trên cả collection):
+- **l01:** bài 391 (chứa 8/9 ngành) hoà điểm RRF tuyệt đối (0,01449) với một file thời khoá biểu ở hạng 10/11.
+- **l07:** câu liệt kê lấy 1 đoạn / bài, và đoạn có tên các phó giáo sư (idx 0) thua đoạn không có tên (idx 1, có mặt ở cả dense lẫn BM25).
+
+**Đã thử, không đạt:** RRF theo bài (hạng = số bài khác đứng trước). golden_v1 MRR 0,928 → 0,898, list_v1 không đổi. Nguyên nhân: thứ chen vào là nhiều file thời khoá biểu khác nhau, không phải nhiều đoạn của một file. Nhánh local `exp/doc-aware-rrf`, không merge.
+
+**list_v2.** Mốc trên develop:
+
+| | n câu liệt kê | coverage | full_coverage | sufficient_acc |
+|---|---|---|---|---|
+| develop (bbb4500 + docs) | 42 | 0,724 | 23 | 0,96 |
+
+- Hai lần chạy giống hệt nhau từng câu.
+- Câu mới độ phủ 0 (hỏng truy xuất thật, chờ phân tích):
+  - m03 cố vấn học tập (không dấu);
+  - m11 đề tài NCKH 2022 (không dấu);
+  - m21 tổ hợp mới 2025;
+  - m22 điều kiện duy trì học bổng;
+  - m24 khóa ngắn hạn 2026;
+  - m27 đội chung kết SPC 2026.
