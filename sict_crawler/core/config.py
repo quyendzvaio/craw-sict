@@ -190,12 +190,15 @@ class LlmConfig:
     rewrite_query: bool = False
     # D27: ngân sách ngữ cảnh gửi LLM (ký tự) — mỗi nguồn tối đa source_chars, tổng ≈ context_chars (chia đều khi nhiều
     # nguồn). Trước đây LLM chỉ thấy 300 ký tự đầu mỗi đoạn (excerpt hiển thị trên UI).
-    source_chars: int = 1500
-    context_chars: int = 9000
+    # 2026-11-03: 1500 → 2200 — 74% đoạn của index dài hơn 1500 ký tự (trung vị ~1940) nên phần lớn nguồn mất ~1/4
+    # cuối; 2200 vừa nguyên đoạn. Đo trên eval/list_v2: độ phủ 0,724 → 0,798 (cùng tổng 11000 / 22000), golden không đổi.
+    source_chars: int = 2200
+    context_chars: int = 11000
     # câu hỏi liệt kê (retrieval.list_top_k = 10 nguồn): 9000 / 10 = 900 ký tự / nguồn cắt mất danh sách nằm giữa đoạn
     # (bảng ngành sau ký tự 900 của bài tuyển sinh) → ngân sách riêng, đủ source_chars cho mỗi nguồn. Đo 2026-10-26 trên
     # eval/list_v1: độ phủ 0,724 → 0,970 (MMR khi chọn nguồn: 0,714–0,733, không giúp)
-    list_context_chars: int = 15000
+    # 2026-11-03: 31000 = 10 nguồn chính × 2200 + đoạn liền kề (retrieval.list_neighbor_docs) — list_v2 0,878
+    list_context_chars: int = 31000
 
     def __post_init__(self):
         self.api_key = os.environ.get("LLM_API_KEY", self.api_key)
@@ -241,6 +244,14 @@ class RetrievalConfig:
     # per_doc_max / 1; 0 = tắt
     dominant_min: int = 6
     dominant_doc_max: int = 4
+    # câu liệt kê: thêm đoạn liền trước/sau của N bài đầu (retriever.list_neighbors), đặt sau nguồn chính; 0 = tắt.
+    # Câu liệt kê lấy 1 đoạn / bài, đoạn khớp câu hỏi nhất thường là phần mở đầu còn danh sách ở đoạn sau
+    # (đo 2026-11-03, list_v2: 0,798 → 0,878, full_coverage 30 → 34/42; golden không đổi)
+    list_neighbor_docs: int = 2
+    # câu hỏi hoàn toàn không dấu → nhánh dense dùng câu đã khôi phục dấu (retrieval.accent, bigram từ chính corpus,
+    # không LLM); BM25 vẫn dùng câu gốc. jina-clip-v2 không hiểu tiếng Việt không dấu: golden_v1 bỏ dấu recall@5
+    # 0,881 → 0,985, MRR 0,775 → 0,920 (2026-11-03); câu có dấu không đổi
+    restore_accents: bool = True
     min_cosine: float = 0.45     # sufficient: cosine câu hỏi↔đoạn tốt nhất tối thiểu (jina-clip-v2, index v3)
     min_term_cover: float = 0.8  # sufficient: tỷ lệ từ nội dung của câu hỏi (bỏ dấu, bỏ hư từ) có trong ngữ cảnh
 

@@ -101,3 +101,31 @@ Hai câu lật thứ hạng ở ranh giới top 10 sau các thay đổi nhỏ c�
   - m22 điều kiện duy trì học bổng;
   - m24 khóa ngắn hạn 2026;
   - m27 đội chung kết SPC 2026.
+
+## 2026-11-03 — ngữ cảnh đủ đoạn, đoạn liền kề cho câu liệt kê, khôi phục dấu (nhánh feat/context-fit)
+
+**Phân tích 6 câu độ phủ 0 của list_v2.** Có hai nguyên nhân chung.
+
+1. **Đã tìm đúng bài nhưng mục cần liệt kê không tới LLM** (m21, m22, m24, m27; l07 trước đây).
+   - 74% đoạn của index v3 dài hơn 1500 ký tự (trung vị ~1940), mà mỗi nguồn chỉ được 1500 ký tự: m22 có mục ở ký tự 1854–2062, m27 ở 1663/2073.
+   - Câu liệt kê lấy 1 đoạn / bài, và đoạn khớp câu hỏi nhất thường là phần mở đầu: m21 chọn idx 0 trong khi mục nằm ở idx 1/2; m24 chọn idx 3 trong khi mục ở 0/2/4.
+2. **Câu không dấu** (m03, m11): jina-clip-v2 không hiểu tiếng Việt không dấu. Nhánh dense không có bài đúng trong top 100; cùng câu có dấu thì bài đúng ở hạng 1–2.
+
+**Sửa (tổng quát, không theo câu):**
+- `llm.source_chars` 1500 → 2200, `context_chars` 9000 → 11000, `list_context_chars` 15000 → 31000;
+- `retrieval.list_neighbor_docs` 2: câu liệt kê thêm đoạn liền trước / sau của 2 bài đầu, đặt sau các nguồn chính;
+- `retrieval.restore_accents`: câu hoàn toàn không dấu được khôi phục dấu bằng bigram âm tiết của corpus (không LLM); chỉ nhánh dense dùng câu đã khôi phục.
+
+**Số đo** (API trên index v3, không cache Redis; golden_v1 ghi recall@5 / MRR@10):
+
+| | list_v2 coverage | full_coverage | golden_v1 | golden_v1 bỏ dấu | golden_v2 url_hit | ngữ cảnh câu liệt kê |
+|---|---|---|---|---|---|---|
+| develop | 0,724 | 23/42 | 1,0 / 0,928 | 0,881 / 0,775 | 70/78 | ~13.100 ký tự |
+| chỉ đổi ngân sách | 0,798 | 30/42 | không đổi | không đổi | 70/78 | ~15.800 |
+| + đoạn liền kề | 0,878 | 34/42 | không đổi | không đổi | 70/78 | ~18.400 |
+| chỉ khôi phục dấu | 0,724 | 23/42 | 1,0 / 0,928 | 0,985 / 0,920 | 70/78 | không đổi |
+| **cả ba (nhánh này)** | **0,878** | **34/42** | **1,0 / 0,928** | **0,985 / 0,920** | **70/78** | ~18.400 |
+
+- Không câu nào tụt ở bất kỳ bộ nào; `sufficient_acc` giữ 0,96.
+- Còn 0: m03, m11 (bài đúng đã vào top nhờ khôi phục dấu, nhưng mục nằm sâu trong bài dài, ngoài ±1 đoạn), m22 (câu thường nhiều nguồn, ngân sách chia đều vẫn cắt).
+- Chưa chấm RAGAS cho thay đổi này (câu trả lời đổi vì ngữ cảnh dài hơn 20–40%); chủ dự án duyệt áp dụng ngay 2026-11-03, RAGAS chạy sau khi có quota LLM.
