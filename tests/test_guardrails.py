@@ -295,3 +295,18 @@ def test_answer_prompt_covers_documents_and_images_without_ui_claims():
     assert "Ảnh & Video" not in p                       # câu về giao diện: không nguồn nào chứng minh được
     assert "không được trả lời là không tìm thấy" in p and "(image)/(video)" in p and "[graph]" in p
     assert p.endswith("Câu hỏi: Quy định làm đồ án tốt nghiệp")
+
+
+def test_title_only_chunk_ranks_after_content_of_same_doc():
+    """Mảnh chỉ có tiêu đề ("[Bài báo khoa học | … ] Bài báo khoa học") không có gì cho LLM: xếp sau các mảnh nội dung
+    của cùng bài, để câu liệt kê (1 mảnh / bài) lấy bảng chứ không lấy tiêu đề."""
+    from sict_crawler.service.retrieval import retriever as R
+    head = "[Bài báo khoa học | Công trình đã công bố | 10/12/2021] "
+    hits = [{"document_id": 104, "title": "Bài báo khoa học", "content": head + "Bài báo khoa học", "score": 0.05},
+            {"document_id": 103, "title": "Báo cáo khoa học", "content": "[Báo cáo …] [Bảng: NĂM 2021] | a |", "score": 0.049},
+            {"document_id": 104, "title": "Bài báo khoa học", "content": head + "[Bảng: NĂM 2021] | STT |", "score": 0.045}]
+    out = R.demote_title_only(hits)
+    assert [h["content"][-5:] for h in out] == [hits[1]["content"][-5:], hits[2]["content"][-5:], "khoa học"[-5:]]
+    assert R.diversify(out, 2, 1)[1]["content"].endswith("| STT |")          # bài 104 góp mảnh bảng
+    alone = [{"document_id": 7, "title": "Sơ đồ tổ chức", "content": "[Sơ đồ tổ chức] Sơ đồ tổ chức", "score": 1.0}]
+    assert R.demote_title_only(alone) == alone                             # bài chỉ có mảnh tiêu đề: giữ nguyên

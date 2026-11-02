@@ -96,7 +96,8 @@ def hybrid_search_text(tvec: list[float] | None, terms: list[str], limit: int = 
                        filter_document_id: int | None = None, query_filter=None,
                        text: str | None = None, graph_filter=None,
                        extra_vecs: list[tuple[str, list[float]]] | None = None,
-                       alt_queries: list[tuple[list[float], str]] | None = None) -> list[dict]:
+                       alt_queries: list[tuple[list[float], str]] | None = None,
+                       scope_filter=None) -> list[dict]:
     """Dense E5 + keyword legs fused by RRF.
 
     Keyword leg (vector_store.keyword_search): collection v2 → BM25 sparse trên token bỏ dấu của
@@ -107,6 +108,8 @@ def hybrid_search_text(tvec: list[float] | None, terms: list[str], limit: int = 
     truy vấn tìm trong chunk/caption); mỗi hit gắn `via`.
     alt_queries: [(vector, chữ)] — câu hỏi khác cùng ý (D27: câu LLM viết lại khi `tvec`/`text` là câu gốc), mỗi câu
     thêm 1 danh sách dense + 1 danh sách BM25 vào RRF: câu viết lại chỉ bổ sung, không thay câu gốc.
+    scope_filter: filter mục câu hỏi nêu đích danh (filters.scope_qdrant) → thêm 1 danh sách dense + 1 BM25 chỉ trong
+    mục đó: bài đúng mục vào được tập ứng viên dù không lọt top của tìm toàn bộ (không loại kết quả nào).
     """
     from sict_crawler.repository import vector_store
 
@@ -149,6 +152,13 @@ def hybrid_search_text(tvec: list[float] | None, terms: list[str], limit: int = 
         legs.append(dense_of(avec))
         legs.append(best_effort(lambda atext=atext: vector_store.keyword_search(
             atext, _terms(atext), limit=limit, query_filter=query_filter)))
+    if scope_filter is not None:
+        sf = vector_store._and(query_filter, scope_filter)
+        if tvec is not None:
+            legs.append(best_effort(lambda: vector_store.search_text(tvec, limit=limit, query_filter=sf)))
+        if text or terms:
+            legs.append(best_effort(lambda: vector_store.keyword_search(text or " ".join(terms), terms, limit=limit,
+                                                                        query_filter=sf)))
     lists = [x for x in vector_store.parallel(legs) if x]
     if len(lists) <= 1:
         return lists[0] if lists else []

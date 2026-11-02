@@ -103,3 +103,26 @@ def test_retrieve_runs_text_and_media_legs_concurrently(monkeypatch):
     took = time.perf_counter() - t
     assert route.media == "required" and text
     assert took < 3.2 * D, took                                    # tuần tự = 4 × D
+
+
+def test_scope_filter_adds_filtered_dense_and_bm25_lists(monkeypatch):
+    """scope_filter (mục câu hỏi nêu đích danh) → thêm 1 danh sách dense + 1 BM25 chỉ trong mục đó vào RRF:
+    bài đúng mục được vào tập ứng viên dù không lọt top của tìm kiếm toàn bộ."""
+    seen = []
+
+    def dense(vec, limit=8, filter_document_id=None, query_filter=None, collection=None):
+        seen.append(("dense", query_filter))
+        return [{"url": "https://x/scoped" if query_filter == "SEC" else "https://x/a", "chunk_id": "c", "score": 0.5}]
+
+    def sparse(text, terms, limit=8, query_filter=None, collection=None):
+        seen.append(("bm25", query_filter))
+        return [{"url": "https://x/scoped" if query_filter == "SEC" else "https://x/b", "chunk_id": "c", "score": 2.0}]
+    monkeypatch.setattr(vector_store, "search_text", dense)
+    monkeypatch.setattr(vector_store, "keyword_search", sparse)
+    monkeypatch.setattr(vector_store, "_and", lambda a, b: b if a is None else (a, b))
+    hits = query_rewriter.hybrid_search_text([1.0], ["a"], text="bài báo 2021", scope_filter="SEC")
+    assert ("dense", "SEC") in seen and ("bm25", "SEC") in seen
+    assert hits[0]["url"] == "https://x/scoped"                    # có mặt ở 2 danh sách → đứng đầu RRF
+    seen.clear()
+    query_rewriter.hybrid_search_text([1.0], ["a"], text="bài báo 2021")
+    assert all(qf is None for _, qf in seen)                      # không có phạm vi → như cũ
