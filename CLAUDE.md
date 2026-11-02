@@ -6,7 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Multi-modal RAG crawler for `https://sict.haui.edu.vn/vn`: crawls the site tree → text, tables, images, video keyframes → PostgreSQL + Qdrant + S3, then serves a RAG Q&A API + chat UI. Code comments, docs and commit-facing text are mostly Vietnamese; keep that convention.
 
-## Commands
+## Fixing quality problems (owner rules, 2026-11-02)
+
+These apply to retrieval, ranking, prompt and indexing fixes found while investigating a failing question or eval case.
+
+1. **A fix found for one problem is provisional until it is checked against the other cases.** After investigating and proposing a fix, check before applying it whether it lowers quality on other cases. Measure it against the whole eval suite (golden_v1, golden_v2, list_v1, plus RAGAS when the answer changes), not only the case that motivated it, and report any case that gets worse.
+2. **Prefer general fixes over case-specific ones.** Aim for a change that fixes the class of problem: ranking structure, chunking, fusion. Avoid keyword lists, one-section rules or thresholds tuned to one question. A small, case-level change is acceptable only when all three hold:
+   - it is clearly small;
+   - it does not affect the rest of the system;
+   - it still improves overall performance.
+
+   Even then, propose it with the measurements and wait for the owner to approve it before applying.
 
 Dependencies are managed **only with uv** (`pyproject.toml` + `uv.lock`). Do not use pip or add `requirements.txt`. Dependency groups: `dev` (pytest), `api` (FastAPI/uvicorn), `ml` (torch CPU, sentence-transformers, transformers, pytesseract, yt-dlp, playwright as a CDP client only — never run `playwright install`).
 
