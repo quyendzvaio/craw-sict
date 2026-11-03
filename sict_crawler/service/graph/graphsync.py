@@ -10,7 +10,9 @@
                      thực thể mới nếu cần → cạnh của bài → payload các point liên quan.
   sync_payloads      payload `entities` / `entities_strong` SINH LẠI từ entity_links (ghi đè, không cộng
                      dồn) → tên bị gỡ khỏi bài cũng biến khỏi ảnh dùng chung.
-Hàng chờ duyệt: review-export → sửa cột status (merged | distinct | blocked) → review-import → các
+graph.mode = concepts (mặc định từ 2026-11-03, graph/concepts.py): rebuild / update_documents đi nhánh khái
+niệm (cụm danh từ, không luật theo loại); sync_payloads, rebuild_relations, API dùng chung.
+Hàng chờ duyệt (chỉ graph luật): review-export → sửa cột status (merged | distinct | blocked) → review-import → các
 quyết định thành entity_aliases (áp ở mọi lần dựng sau) → rebuild.
 
 Usage:
@@ -35,6 +37,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from sict_crawler.core.config import get_settings
 from sict_crawler.model.orm import (
+    ChunkPhrase,
     Document,
     EntityAlias,
     EntityLink,
@@ -47,6 +50,7 @@ from sict_crawler.model.orm import (
     VideoOccurrence,
 )
 from sict_crawler.repository import vector_store
+from sict_crawler.service.graph import concepts as C
 from sict_crawler.service.graph import graph as G
 from sict_crawler.service.index import doc_rules as rules
 
@@ -237,9 +241,156 @@ def _pool(gaz: G.Gazetteer) -> dict[str, list[G.Entity]]:
                              and (e.attrs.get("staff") or e.doc_count >= NEAR_DUP_MIN_DOCS)])
 
 
+# ------------------------------------------------------------------ graph khái niệm (graph.mode = concepts)
+def concept_mode() -> bool:
+    return get_settings().graph.mode == "concepts"
+
+
+def _scroll_concept_chunks(doc_ids: list[int] | None, known_docs: set[int]) -> list[C.ChunkText]:
+    """Mọi đoạn của các collection chữ (chữ, bảng, caption). Caption khớp trên "tiêu đề. caption".
+    Chỉ giữ đoạn của tài liệu có trong PG (entity_links trỏ khoá ngoài documents)."""
+    from qdrant_client.models import FieldCondition, Filter, MatchAny
+    client = vector_store.get_client()
+    flt = Filter(must=[FieldCondition(key="document_id", match=MatchAny(any=doc_ids))]) if doc_ids else None
+    out: list[C.ChunkText] = []
+    for coll in dict.fromkeys(vector_store.text_collections()):
+        offset = None
+        while True:
+            pts, offset = client.scroll(coll, scroll_filter=flt, limit=1000, offset=offset,
+                                        with_payload=["document_id", "chunk_id", "kind", "content", "caption",
+                                                      "title"], with_vectors=False)
+            for p in pts:
+                pl = p.payload
+                d = pl.get("document_id")
+                if not isinstance(d, int) or d not in known_docs:
+                    continue
+                kind = pl.get("kind") or "text"
+                text = pl.get("content") or pl.get("caption") or ""
+                if kind == "media_caption":
+                    text = f"{pl.get('title', '')}. {text}"
+                out.append(C.ChunkText(pl.get("chunk_id") or str(p.id), d, kind, text))
+            if offset is None:
+                break
+    return out
+
+
+async def _chunk_phrases(session, chunks: list[C.ChunkText], prune: bool) -> dict[str, list[str]]:
+    """Cụm danh từ từng đoạn, lấy từ cache chunk_phrases; đoạn mới / đổi nội dung mới tách (underthesea).
+    prune: xoá cache của đoạn không còn (dựng toàn bộ)."""
+    import time
+    have: dict[str, tuple[str, list[str]]] = {}
+    ids = [c.chunk_id for c in chunks]
+    for i in range(0, len(ids), 5000):
+        for cid, h, ph in (await session.execute(select(ChunkPhrase.chunk_id, ChunkPhrase.text_hash,
+                                                        ChunkPhrase.phrases).where(
+                ChunkPhrase.chunk_id.in_(ids[i:i + 5000])))).all():
+            have[cid] = (h, ph or [])
+    out: dict[str, list[str]] = {}
+    todo = []
+    for c in chunks:
+        h = C.text_hash(c.text)
+        if have.get(c.chunk_id, ("",))[0] == h:
+            out[c.chunk_id] = have[c.chunk_id][1]
+        else:
+            todo.append((c, h))
+    if todo:
+        try:
+            import underthesea  # noqa: F401
+        except ImportError as e:
+            raise RuntimeError(f"graph khái niệm: {len(todo)} đoạn chưa tách cụm mà image này thiếu underthesea "
+                               "(uv sync --group graph)") from e
+        t0, batch = time.time(), []
+        for n, (c, h) in enumerate(todo, 1):
+            out[c.chunk_id] = C.noun_phrases(c.text)
+            batch.append({"chunk_id": c.chunk_id, "text_hash": h, "phrases": out[c.chunk_id]})
+            if len(batch) >= 500 or n == len(todo):
+                stmt = pg_insert(ChunkPhrase).values(batch)
+                await session.execute(stmt.on_conflict_do_update(
+                    index_elements=["chunk_id"], set_={"text_hash": stmt.excluded.text_hash,
+                                                       "phrases": stmt.excluded.phrases}))
+                await session.commit()      # cache độc lập với graph: giữ tiến độ nếu lượt dựng hỏng giữa chừng
+                batch = []
+                print(f"[graphsync] tách cụm {n}/{len(todo)} đoạn, {time.time() - t0:.0f}s", flush=True)
+    if prune:
+        keep = set(ids)
+        gone = [cid for (cid,) in (await session.execute(select(ChunkPhrase.chunk_id))).all() if cid not in keep]
+        for i in range(0, len(gone), 1000):
+            await session.execute(delete(ChunkPhrase).where(ChunkPhrase.chunk_id.in_(gone[i:i + 1000])))
+    return out
+
+
+async def _known_docs(session, doc_ids: list[int] | None = None) -> set[int]:
+    stmt = select(Document.id).where(Document.hash_v2.is_not(None))
+    if doc_ids is not None:
+        stmt = stmt.where(Document.id.in_(doc_ids))
+    return {i for (i,) in (await session.execute(stmt)).all()}
+
+
+async def rebuild_concepts(session, sync: bool = True) -> dict:
+    """Dựng lại toàn bộ graph khái niệm: cụm danh từ đoạn chữ → chọn theo số bài → khớp danh bạ trên mọi
+    đoạn → entities / entity_links (mentions) → payload. Thay toàn bộ thực thể cũ (kể cả graph luật)."""
+    import time
+    t0 = time.time()
+    tm: dict[str, float] = {}
+
+    def lap(name: str) -> None:
+        nonlocal t0
+        tm[name] = round(time.time() - t0, 1)
+        print(f"[graphsync] {name}: {tm[name]}s", flush=True)
+        t0 = time.time()
+
+    chunks = _scroll_concept_chunks(None, await _known_docs(session))
+    lap("load")
+    src = [c for c in chunks if c.phrase_source]
+    phrases = await _chunk_phrases(session, src, prune=True)
+    lap("phrases")
+    pairs = [(c.document_id, phrases.get(c.chunk_id, [])) for c in src]
+    n_docs = len({c.document_id for c in src})
+    ents = C.select_concepts(pairs, n_docs, get_settings().graph.concept_df_max_ratio)
+    eids = await upsert_entities(session, ents)
+    keep = set(eids.values())
+    stale = [i for (i,) in (await session.execute(select(GraphEntity.id))).all() if i not in keep]
+    for i in range(0, len(stale), 1000):
+        await session.execute(delete(GraphEntity).where(GraphEntity.id.in_(stale[i:i + 1000])))
+    for e in ents:
+        e.id = eids[(e.kind, e.key)]
+    rows = C.link_rows(G.Gazetteer(ents), chunks, eids)
+    lap("link")
+    await write_links(session, None, rows)
+    n_rel = await rebuild_relations(session)
+    lap("write")
+    await session.commit()
+    stats = {"mode": "concepts", "documents": n_docs, "chunks": len(chunks), "entities": len(ents),
+             "removed_entities": len(stale), "entity_links": len(rows), "entity_relations": n_rel}
+    if sync:
+        stats.update(await sync_payloads(session, None))
+        lap("payload")
+    stats["seconds"] = tm
+    return stats
+
+
+async def update_concept_documents(session, doc_ids: list[int]) -> dict:
+    """Incremental: khớp danh bạ khái niệm hiện có trên đoạn của các bài mới/sửa (không cần underthesea).
+    Khái niệm mới chỉ xuất hiện ở lượt dựng toàn bộ kế tiếp (rebuild hằng đêm)."""
+    if not doc_ids:         # danh sách rỗng: không lọc theo bài thì scroll sẽ lấy MỌI đoạn
+        return {"mode": "concepts", "documents": 0}
+    chunks = _scroll_concept_chunks(doc_ids, await _known_docs(session, doc_ids))
+    gaz = await load_gazetteer(session)
+    ents = [e for e in gaz.entities.values() if e.kind == C.KIND]
+    eids = {(e.kind, e.key): e.id for e in ents}
+    rows = C.link_rows(G.Gazetteer(ents), chunks, eids)
+    await write_links(session, doc_ids, rows)
+    await session.commit()
+    stats = {"mode": "concepts", "documents": len({c.document_id for c in chunks}), "entity_links": len(rows)}
+    stats.update(await sync_payloads(session, doc_ids))
+    return stats
+
+
 # ------------------------------------------------------------------ dựng / cập nhật
 async def rebuild(session, sync: bool = True) -> dict:
     """Dựng lại toàn bộ graph từ PG + Qdrant (bulk sau loader, hằng đêm từ incremental)."""
+    if concept_mode():
+        return await rebuild_concepts(session, sync)
     import time
     t0 = time.time()
     tm: dict[str, float] = {}
@@ -299,6 +450,8 @@ async def rebuild(session, sync: bool = True) -> dict:
 async def update_documents(session, doc_ids: list[int]) -> dict:
     """Incremental: graph của các bài mới/sửa theo cùng luật bulk, rồi payload các point liên quan.
     Gộp toàn cục (biến thể chỉ gặp ở nhiều bài sau này) để rebuild hằng đêm làm."""
+    if concept_mode():
+        return await update_concept_documents(session, doc_ids)
     inputs = await load_inputs(session, doc_ids)
     if not inputs:
         return {"documents": 0}
@@ -422,6 +575,8 @@ async def sync_payloads(session, doc_ids: list[int] | None = None) -> dict:
                         keys = cap.get((d, "v", vkey_id.get(pl.get("video_key"))), [])
                     else:
                         keys = cap.get((d, "m", sha_id.get(pl.get("media_key"))), [])
+                    # graph khái niệm khớp cả caption (graph luật không có cạnh mentions trên caption)
+                    keys = [*keys, *chunk_m.get(pl.get("chunk_id") or str(p.id), [])]
                 else:
                     keys = [*about.get(d, []), *chunk_m.get(pl.get("chunk_id") or str(p.id), [])]
                 want[tc][p.id] = (("entities", tuple(dict.fromkeys(keys))),)

@@ -134,3 +134,10 @@ retrieval:
   restore_accents: true  # câu không dấu: nhánh dense dùng câu đã khôi phục dấu (golden_v1 bỏ dấu R@5 0,881 → 0,985)
   min_cosine: 0.45     # 2026-10-25, 89 câu (golden + list_v1): đáp án thấp nhất 0,476, ngoài phạm vi 0,29–0,58
   min_term_cover: 0.8  # đáp án thấp nhất 0,8; chặn 7/8 câu ngoài phạm vi (cùng cosine)
+
+# Graph D20 (graphsync). concepts: cụm danh từ của corpus (graph/concepts.py, 2026-11-03: golden_v1 MRR
+# 0,933 → 0,954, golden_v2 MRR 0,690 → 0,701, list_v2 0,871 → 0,916); rules: graph luật cũ (quay lại = đổi
+# mode + `graphsync rebuild`). Env GRAPH_MODE ghi đè.
+graph:
+  mode: concepts
+  concept_df_max_ratio: 0.0557  # khái niệm ở > 5,57% số bài (115 / 2.066 lúc đo) là quá phổ biến → bỏ

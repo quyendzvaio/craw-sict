@@ -9,13 +9,15 @@ nằm trong payload Qdrant. Point id = uuid5 cố định (doc_rules.stable_id) 
   media_occurrence(document_id, media_id, alt, pos, caption_point_id)  — 1 dòng / 1 lần xuất hiện
   videos(id, video_key unique [YouTube id], url, title, subs, frames, status)
   video_occurrence(document_id, video_id, caption_point_id)
-  entities(id, kind[person|event|org], key, name, aliases, doc_count)   — graph D20 (graph.py)
+  entities(id, kind[person|event|org|concept], key, name, aliases, doc_count)   — graph D20 (graph.py,
+           concept: graph khái niệm graph/concepts.py)
   entity_links(entity_id, document_id, media_id?, video_id?, rel[about|mentions|depicts], weight,
                source, evidence)
   entity_aliases(kind, alias_key unique, entity_key|NULL=chặn, source[staff|review|manual])
   entity_review(kind, key, surface, reason, candidate_key, document_id, context, status) — hàng chờ duyệt
   entity_relations(src_id < dst_id, rel "<kind>-<kind>", weight, doc_count, media_count, doc_ids)
                — thực thể ↔ thực thể suy từ entity_links (graph.relations_from_links)
+  chunk_phrases(chunk_id, text_hash, phrases)  — cache cụm danh từ cho graph khái niệm
 Bảng v1 (giữ tới khi xoá collection cũ — rollback): chunks, media_assets.
 
 Callers: db.py, main.py, api.py, indexer.py, loader.py.
@@ -256,3 +258,13 @@ class EntityReview(Base):
     status: Mapped[str] = mapped_column(String(16), default="pending")  # pending | merged | distinct | blocked
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc))
+
+
+class ChunkPhrase(Base):
+    """Cache cụm danh từ (underthesea) của từng đoạn cho graph khái niệm (graph.concepts): tách cụm toàn
+    corpus mất ~10 phút / 1 lõi, nên mỗi lần dựng chỉ tách đoạn mới hoặc nội dung đổi (text_hash khác)."""
+    __tablename__ = "chunk_phrases"
+
+    chunk_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    text_hash: Mapped[str] = mapped_column(String(40))
+    phrases: Mapped[list] = mapped_column(JSONB, default=list)

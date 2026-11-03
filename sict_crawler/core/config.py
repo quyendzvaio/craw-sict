@@ -257,6 +257,18 @@ class RetrievalConfig:
 
 
 @dataclass
+class GraphConfig:
+    """Cách dựng graph D20 (graphsync). concepts (mặc định từ 2026-11-03): cụm danh từ của corpus, không luật
+    theo loại (graph/concepts.py); rules: graph luật người / sự kiện / CLB (graph.py) — giữ để quay lại bằng
+    cấu hình + `graphsync rebuild`. Đo 2026-11-03 (index v3, so với rules): golden_v1 MRR 0,933 → 0,954,
+    golden_v2 MRR 0,690 → 0,701 (url_hit 70/80 cả hai), list_v2 0,871 → 0,916; mất 1 câu từ chối đúng (g080)."""
+    mode: str = "concepts"
+    # khái niệm gặp ở quá tỷ lệ này số bài → quá phổ biến, không phân biệt được bài; 0,0557 = 115 / 2.066 bài
+    # có đoạn chữ lúc đo (chọn từ 2026-11-03, tỷ lệ để giữ nguyên ý nghĩa khi corpus lớn lên)
+    concept_df_max_ratio: float = 0.0557
+
+
+@dataclass
 class Settings:
     site: SiteConfig
     crawl: CrawlConfig
@@ -273,6 +285,7 @@ class Settings:
     llm: LlmConfig
     router: RouterConfig = field(default_factory=RouterConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    graph: GraphConfig = field(default_factory=GraphConfig)
 
 
 def _build(data: dict[str, Any]) -> Settings:
@@ -310,6 +323,10 @@ def _build(data: dict[str, Any]) -> Settings:
     llm = LlmConfig(**data.get("llm", {}))
     router = RouterConfig(**(data.get("router") or {}))
     retrieval = RetrievalConfig(**(data.get("retrieval") or {}))
+    gdata = dict(data.get("graph") or {})
+    if os.environ.get("GRAPH_MODE"):
+        gdata["mode"] = os.environ["GRAPH_MODE"]
+    graph = GraphConfig(**gdata)
     redis_url = os.environ.get("REDIS_URL", data["redis"]["url"])
     return Settings(
         site=site,
@@ -327,6 +344,7 @@ def _build(data: dict[str, Any]) -> Settings:
         llm=llm,
         router=router,
         retrieval=retrieval,
+        graph=graph,
     )
 
 
