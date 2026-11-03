@@ -392,12 +392,17 @@ def _mark(key: str) -> None:
 
 
 async def corpus_signature() -> str:
-    """Chữ ký corpus: bài mới / sửa nội dung / đổi cấu trúc / bị xoá đều đổi chữ ký."""
+    """Chữ ký corpus: bài mới / sửa nội dung / đổi cấu trúc / bị xoá đều đổi chữ ký. Gồm cả phiên bản luật chọn
+    khái niệm và tỷ lệ df: đổi luật hay cấu hình graph thì lượt sau dựng lại dù không bài nào đổi."""
     import hashlib
+
+    from sict_crawler.core.config import get_settings
+    from sict_crawler.service.graph import concepts
     async with db.get_session() as s:
         rows = (await s.execute(select(Document.id, Document.hash_v2, Document.hash_struct)
                                 .where(Document.hash_v2.is_not(None)).order_by(Document.id))).all()
-    return hashlib.sha1("\n".join(f"{i}:{h}:{hs or ''}" for i, h, hs in rows).encode()).hexdigest()
+    head = f"rules={concepts.RULES_VERSION};df={get_settings().graph.concept_df_max_ratio}\n"
+    return hashlib.sha1((head + "\n".join(f"{i}:{h}:{hs or ''}" for i, h, hs in rows)).encode()).hexdigest()
 
 
 async def _graph_stage() -> dict | None:

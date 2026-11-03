@@ -168,3 +168,68 @@ golden_v2: chạy lại code thử nghiệm trên index hiện tại cũng ra 70
 - Mất theo thiết kế: dòng `[graph]` trong ngữ cảnh (không có cạnh thực thể ↔ thực thể) và nhánh ảnh theo tên người;
   `media_mode_acc` giữ 0,871, ảnh bắt buộc 7/7.
 - Chưa chấm RAGAS (ngữ cảnh mất dòng `[graph]` nên câu trả lời có thể đổi); chờ quota LLM.
+
+## 2026-11-03 — RAGAS golden_v2 sau PR #30 + #31 (trả lời gpt-oss-120b-free, giám khảo qwen3.5-flash-free)
+
+Hai bộ câu trả lời cùng một giám khảo: `results/ragas/2026-11-03-g2-prev` (câu trả lời 11-02, trước PR #30 / #31)
+và `results/ragas/2026-11-03-g2` (develop sau PR #30 ngữ cảnh đủ đoạn + đoạn liền kề + khôi phục dấu, PR #31 graph
+khái niệm). Ghép cặp theo câu (chỉ câu có điểm ở cả hai bộ; 2 + 5 chỉ số lỗi 504 của kiraai bị bỏ). Không so thẳng
+với lần 11-02 (giám khảo deepseek).
+
+| | cũ | mới |
+|---|---|---|
+| faithfulness (n=76) | 0,959 | 0,946 |
+| answer_relevancy (n=79) | 0,742 | 0,739 |
+| context_precision (n=78) | 0,754 | 0,758 |
+| context_recall (n=78) | 0,833 | **0,887** |
+| url_hit | 0,885 | 0,897 |
+| false_abstain | 0,100 | 0,075 |
+| abstain_ok | 1,0 | 1,0 |
+
+- Câu liệt kê (6): context_recall 0,49 → 0,85, faithfulness 0,86 → 0,98, context_precision 0,78 → 0,53 (thêm đoạn liền kề).
+- Faithfulness −0,99 điểm tổng trên 76 câu, chấm lại 2 lần để tách nhiễu: g031, g032 lên 1,0 khi chấm lại (nhiễu giám
+  khảo); lỗi thật: **g018** (truy xuất mất đoạn có "750", xem mục dưới), g021 (gpt-oss chép sai số điện thoại
+  `0383371290` → "038 3372 90"), g061 (tả ảnh "giảng viên hướng dẫn, logo" không có nguồn).
+- false_abstain: 5 câu hết né nhờ PR #30 (g052, g053, g054, g058, g061); mới né g018, g029 (bài đúng rơi khỏi top 5
+  từ PR #31), g050 / g056 là bắt nhầm (câu trả lời đúng, có câu ghi chú "không có thông tin chi tiết").
+
+## 2026-11-04 — graph khái niệm: bỏ khoá hư từ / từ hỏi (nhánh fix/graph-func-words)
+
+Nguyên nhân g018 "Lễ tốt nghiệp năm 2025 của SICT có bao nhiêu sinh viên nhận bằng?": câu hỏi khớp 2 khái niệm
+"tốt nghiệp" và **"bao nhiêu"** (underthesea gắn nhầm cụm danh từ, 4 bài) → danh sách AND (cả hai) chỉ còn 1 đoạn
+(bài "Hơn 1.000 tân Thạc sĩ…") được đẩy lên hạng 2, đoạn 0 / 1 của bài lễ tốt nghiệp (có "750") rơi khỏi top 5.
+Bỏ "bao nhiêu" thì đoạn đó vào lại top 5. golden_v1 6/70, golden_v2 21/88 câu khớp ít nhất một khái niệm hư từ.
+
+Đo 4 biến thể trên CÙNG trạng thái index (chỉ lọc danh bạ khớp câu hỏi, payload không đổi; biến thể "giữ nguyên"
+tái lập đúng số lần đo D33):
+
+| Biến thể | golden_v1 R@5 / MRR | golden_v2 url_hit / MRR | list_v2 coverage / sufficient_acc | abstain |
+|---|---|---|---|---|
+| giữ nguyên | 1,0 / 0,954 | 70/80 / 0,701 | 0,916 (37/42) / 0,96 | 3/8 |
+| **① bỏ hư từ** (20 khái niệm) | 1,0 / 0,954 | 70/80 / **0,708** | 0,916 (37/42) / 0,94 | 3/8 |
+| ② trần df trên số bài liên kết (258) | 1,0 / 0,958 | 70/80 / 0,688 | 0,916 (37/42) / 0,98 | 3/8 |
+| ① + ② | 1,0 / 0,958 | 71/80 / 0,696 | 0,916 (37/42) / 0,98 | 3/8 |
+
+- ①: g007 hạng 2 → 1, g018 5 → 4 (đoạn có "750" vào ngữ cảnh), không câu nào xuống; list m03 vẫn đủ 4/4 mục nhưng
+  `sufficient` lật False (sát ngưỡng).
+- ② loại: trần 115 bài liên kết bỏ cả khái niệm rộng mà có ích ("tốt nghiệp" 741 bài, "Đa phương tiện"): g016, g020,
+  g058, g085 xuống, g018 mất hẳn (chỉ còn "bao nhiêu"); lên g048, g023, g053. ① + ②: g018 không còn khái niệm nào
+  → lại mất đoạn có "750".
+- RAGAS 11 câu golden_v2 đổi ngữ cảnh khi áp ① (trả lời gpt-oss-120b-sale, giám khảo qwen3.5-flash-sale — kiraai gỡ
+  mọi model `-free` ngày 2026-11-04; mỗi bản sinh câu trả lời 1 lần), 9 câu có đáp án:
+
+| | giữ nguyên | ① |
+|---|---|---|
+| faithfulness | 0,806 | **0,988** |
+| answer_relevancy | 0,741 | **0,871** |
+| context_precision | **0,798** | 0,734 |
+| context_recall | 0,889 | **0,944** |
+
+  Phần lớn mức tăng là g018 ("Không có thông tin…" → "hơn 750 sinh viên nhận bằng cử nhân [5]", F 0 → 1,0);
+  context_precision giảm ở g018, g086, g009, g004 (danh sách graph không còn kéo về đúng 1 đoạn); 2 câu ngoài phạm vi
+  (g075, g078) vẫn từ chối đúng.
+- Áp dụng: khoá bị bỏ khi số bài đọc theo hư từ > số bài đọc theo khái niệm (quyết định theo khoá vì câu hỏi khớp chữ
+  bỏ dấu: "hien tai" 112 bài "hiện tại" / 2 "HIỀN TÀI"). Dựng lại trên dev: đúng 20 khái niệm như biến thể ①.
+  Sau khi ghi lại payload, Qdrant tối ưu lại segment nên vài hạng trôi dù khái niệm khớp không đổi (q50 1 → 2;
+  g029 vào lại top 5, g055 / g057 / g058 lên, g031 xuống; list m11 0/8 → 8/8). Số trên index mới (2 lần đo trùng nhau):
+  golden_v1 1,0 / 0,947, golden_v2 71/80 / 0,731, list_v2 0,940 (38/42) / sufficient_acc 0,94, abstain 3/8.
