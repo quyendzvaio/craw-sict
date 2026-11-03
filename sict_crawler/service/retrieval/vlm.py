@@ -329,6 +329,11 @@ def stream_answer(question: str, context: str, image_b64: str | None = None, max
     try:
         with _client(cfg) as c:
             with c.stream("POST", "/chat/completions", json=body) as r:
+                if r.status_code != 200:
+                    # VD 404 model_not_found khi nhà cung cấp gỡ model: thân lỗi là JSON, không phải SSE, nên
+                    # trước đây không yield gì mà cũng không báo → /chat lặng lẽ echo ngữ cảnh (2026-11-04)
+                    print(f"[llm] stream_answer HTTP {r.status_code}: {r.read()[:300].decode('utf-8', 'replace')}")
+                    return
                 for line in r.iter_lines():
                     line = (line or "").strip()
                     if not line.startswith("data:"):

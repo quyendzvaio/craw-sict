@@ -41,6 +41,26 @@ def test_select_concepts_by_document_frequency():
     assert (e.kind, e.name, e.doc_count) == ("concept", "Thị giác máy tính", 2)   # tên = cách viết gặp đầu
 
 
+def test_function_phrase_on_accented_form():
+    # cụm toàn hư từ / từ hỏi: underthesea hay gắn nhầm là cụm danh từ
+    for p in ("bao nhiêu", "Như thế nào", "những ai", "lúc nào", "CHO CÁC", "có thể", "hiện tại"):
+        assert C.is_function_phrase(p), p
+    # bỏ dấu thì trùng hư từ ("bao ve", "co the", "de thi"…) nhưng có dấu là khái niệm thật → giữ
+    for p in ("bảo vệ", "cơ thể", "đề thi", "báo chí", "bản đồ", "tự do", "tốt nghiệp", "Trí tuệ nhân tạo"):
+        assert not C.is_function_phrase(p), p
+
+
+def test_select_concepts_drops_function_phrases():
+    pairs = [(1, ["bao nhiêu", "có thể", "hiện tại"]), (2, ["bao nhiêu", "cơ thể", "hiện tại"]),
+             (3, ["Bao nhiêu", "có thể", "hiện tại"]), (4, ["cơ thể", "HIỀN TÀI"])]
+    ents = {e.key: e for e in C.select_concepts(pairs, n_docs=100, df_max_ratio=0.5)}
+    assert "bao nhieu" not in ents
+    # khoá quyết định theo đa số bài: "hiện tại" (3 bài) át "HIỀN TÀI" (1 bài) → bỏ cả khoá, vì câu hỏi khớp chữ bỏ dấu
+    assert "hien tai" not in ents
+    # "có thể" (2 bài) ngang "cơ thể" (2 bài) → giữ, tên là cách viết khái niệm, đếm mọi bài của khoá
+    assert ents["co the"].name == "cơ thể" and ents["co the"].doc_count == 4
+
+
 def test_select_concepts_floor_two_docs():
     # corpus nhỏ: trần không dưới 2 bài
     ents = C.select_concepts([(1, ["máy học"]), (2, ["máy học"])], n_docs=3, df_max_ratio=0.01)
@@ -139,3 +159,30 @@ def test_incremental_graph_stage_rebuilds_only_when_corpus_changed(monkeypatch):
     sig[0] = "s2"
     assert "rebuild" in asyncio.run(inc._graph_stage())
     assert calls == ["s1", "boom", "s2"]
+
+
+def test_corpus_signature_includes_concept_rules_version(monkeypatch):
+    """Đổi luật chọn khái niệm (không đổi bài nào) cũng phải dựng lại graph: chữ ký gồm phiên bản luật + tỷ lệ df."""
+    import asyncio
+    import contextlib
+
+    from sict_crawler.pipeline import incremental as inc
+
+    class Res:
+        def all(self):
+            return [(1, "h1", "s1"), (2, "h2", None)]
+
+    class Sess:
+        async def execute(self, *a, **k):
+            return Res()
+
+    @contextlib.asynccontextmanager
+    async def fake_session():
+        yield Sess()
+
+    monkeypatch.setattr(inc.db, "get_session", fake_session)
+    a = asyncio.run(inc.corpus_signature())
+    assert a == asyncio.run(inc.corpus_signature())
+    monkeypatch.setattr(C, "RULES_VERSION", C.RULES_VERSION + 1)
+    b = asyncio.run(inc.corpus_signature())
+    assert b != a

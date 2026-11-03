@@ -243,10 +243,15 @@ def test_retrieve_widens_list_questions(monkeypatch, fake_search):
 
 # --- model suy luận: hết max_tokens trong phần suy nghĩ ----------------------------------------------------------
 
-def _fake_stream(monkeypatch, lines):
+def _fake_stream(monkeypatch, lines, status=200, body=b""):
     from sict_crawler.service.retrieval import vlm
 
     class R:
+        status_code = status
+
+        def read(self):
+            return body
+
         def __enter__(self):
             return self
 
@@ -279,6 +284,16 @@ def test_stream_answer_skips_reasoning_and_yields_content(monkeypatch, capsys):
         'data: ' + json.dumps({"choices": [{"delta": {"content": "Trả lời [1]."}}]}), "data: [DONE]"])
     assert list(vlm.stream_answer("q", "ctx")) == ["Trả lời [1]."]
     assert "max_new_tokens" not in capsys.readouterr().out
+
+
+def test_stream_answer_logs_http_error(monkeypatch, capsys):
+    """Upstream trả lỗi HTTP (VD 404 model_not_found khi nhà cung cấp gỡ model): không yield gì (caller echo
+    ngữ cảnh) nhưng phải in mã lỗi + thông điệp — trước đây lỗi bị nuốt, /chat lặng lẽ echo (2026-11-04)."""
+    err = b'{"error":{"message":"Model \'gpt-oss-120b-free\' is not supported","code":"model_not_found"}}'
+    vlm = _fake_stream(monkeypatch, [err.decode()], status=404, body=err)
+    assert list(vlm.stream_answer("q", "ctx")) == []
+    out = capsys.readouterr().out
+    assert "404" in out and "model_not_found" in out
 
 
 def test_answer_prompt_covers_documents_and_images_without_ui_claims():
