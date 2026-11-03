@@ -153,21 +153,13 @@ def test_br_inside_table_cell_keeps_item_boundary():
     p = parse_html(BASE, html)
     assert "Cao Bá Lộc (CN); Lê Minh Hiếu; Lương Thị Sao Mai" in p.markdown
     assert re.sub(r"\s+;", ";", next(b for b in p.blocks if b["type"] == "table")["text"]).count(";") == 2
-    names = [m.name for m in ix_graph().extract_persons(p.markdown)]
-    assert "Lê Minh Hiếu" in names and "Lương Thị Sao Mai" in names and not any(len(n.split()) > 4 for n in names)
-
-
-def ix_graph():
-    from sict_crawler.service.graph import graph
-    return graph
 
 
 def test_pdf_layout_columns_kept_apart():
     text = "1   Nguyễn Văn An      Trần Thị Bình     CNTT01\n2   Lê Văn Cường       Phạm Thị Dung     CNTT02"
     clean = ix._clean_page(text)
     assert "Nguyễn Văn An | Trần Thị Bình | CNTT01" in clean
-    names = {m.name for m in ix_graph().extract_persons(clean)}
-    assert {"Nguyễn Văn An", "Trần Thị Bình", "Lê Văn Cường", "Phạm Thị Dung"} <= names
+    assert "Lê Văn Cường | Phạm Thị Dung | CNTT02" in clean
 
 
 def test_short_paragraph_before_table_labels_every_piece():

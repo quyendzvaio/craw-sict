@@ -20,7 +20,9 @@ recheck; hết giờ → dừng giữa chừng, phần còn lại để lượt 
      - 404/410 → indexer.remove_document (bài + file đính kèm; point media chỉ gỡ id bài).
      - còn lại → _process_page (indexer.index_page, index spec v2): markdown sạch không đổi
        (hash_v2) → chỉ bump crawled_at; đổi → gỡ dữ liệu cũ của bài rồi ghi lại.
-  4. graph (graphsync): mỗi 20h dựng lại toàn bộ; các lượt khác tính lại cạnh thực thể ↔ thực thể.
+  4. graph khái niệm (graphsync, D33): dựng lại toàn bộ sau MỖI lượt ingest có thay đổi — chữ ký corpus (id,
+     hash_v2, hash_struct mọi bài) khác lần dựng thành công trước (Redis `graph:corpus_sig`); không đổi → bỏ qua.
+     Lượt dựng lỗi không ghi chữ ký → lượt sau dựng lại.
   4b. reconcile (mỗi 20h): đối soát PG ↔ Qdrant, dọn point mồ côi (reconcile.py).
   5. OCR: index v2 OCR ảnh/frame ngay khi index (media.ocr_status) → không còn pass OCR riêng;
      pass --annotate-ocr cũ chỉ chạy khi collection còn là v1.
@@ -363,7 +365,7 @@ def _abort_startup(errors: list[str]) -> None:
 
 
 RECONCILE_EVERY_SEC = 20 * 3600
-GRAPH_REBUILD_EVERY_SEC = 20 * 3600
+GRAPH_SIG_KEY = "graph:corpus_sig"
 
 
 def _redis():
@@ -389,21 +391,35 @@ def _mark(key: str) -> None:
         pass
 
 
+async def corpus_signature() -> str:
+    """Chữ ký corpus: bài mới / sửa nội dung / đổi cấu trúc / bị xoá đều đổi chữ ký."""
+    import hashlib
+    async with db.get_session() as s:
+        rows = (await s.execute(select(Document.id, Document.hash_v2, Document.hash_struct)
+                                .where(Document.hash_v2.is_not(None)).order_by(Document.id))).all()
+    return hashlib.sha1("\n".join(f"{i}:{h}:{hs or ''}" for i, h, hs in rows).encode()).hexdigest()
+
+
 async def _graph_stage() -> dict | None:
-    """Graph D20 sau khi index bài mới. Mỗi 20h: dựng lại toàn bộ (gộp biến thể toàn cục, nối bài cũ
-    với thực thể mới, gỡ thực thể không còn bằng chứng, payload từ PG) — cùng đường code với bulk.
-    Các lượt khác: chỉ tính lại cạnh thực thể ↔ thực thể (vài giây)."""
+    """Graph khái niệm D33 sau khối ingest: dựng lại toàn bộ khi corpus đổi so với lần dựng thành công trước
+    (cùng đường code với loader). Cụm danh từ cache theo đoạn nên chỉ đoạn mới/đổi tốn tách cụm."""
     from sict_crawler.service.graph import graphsync
     if not vector_store.has_sparse():
         return None
+    sig = await corpus_signature()
+    try:
+        last = _redis().get(GRAPH_SIG_KEY)
+    except Exception:
+        last = None
+    if last == sig:
+        return {"skipped": "corpus không đổi"}
     async with db.get_session() as session:
-        if _due("graph:last_rebuild", GRAPH_REBUILD_EVERY_SEC):
-            stats = await graphsync.rebuild(session)
-            _mark("graph:last_rebuild")
-            return {"rebuild": stats}
-        n = await graphsync.rebuild_relations(session)
-        await session.commit()
-        return {"entity_relations": n}
+        stats = await graphsync.rebuild(session)
+    try:
+        _redis().set(GRAPH_SIG_KEY, sig)
+    except Exception:
+        pass
+    return {"rebuild": stats}
 
 
 async def _maybe_reconcile() -> dict | None:

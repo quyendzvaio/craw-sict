@@ -20,7 +20,7 @@ commit messages are mostly Vietnamese; keep that convention.
 - **Never commit without the owner saying so.** The working tree carries an uncommitted v3 batch (~89 modified/untracked
   files incl. `AGENTS.md`, `CLAUDE.md`); do not revert or stash it. Owner splits it into commits when ready.
 - Never copy review data into the repo: `/DATA/craw-sict-data/review/` (entity review CSV) is deliberately outside the
-  repo because it contains student names (PII). `sict_crawler/service/graph/graph_catalog.yaml` is a draft that needs owner review.
+  repo because it contains student names (PII). The rules graph (catalog, review loop) was removed on 2026-11-03 (D33).
 
 ## In-flight: v3 multimodal migration (uncommitted; index v3 not built yet)
 
@@ -66,7 +66,7 @@ Bulk (re)index path: `snapshot --out _snapshot/<date>` → `compute --snapshot S
   artifact manifest. Only HTTP 404/410 deletes a doc, and a mass-delete guard aborts past thresholds.
   `--rechunk`, `--videos-backfill`, `--annotate-ocr` are v1-only and refuse v2/v3 collections.
 - Eval before touching models/thresholds/chunking: `eval/golden_v1.jsonl` (70 q) with `scripts/eval_retrieval.py`
-  (offline) / `eval_api.py` (over HTTP), `scripts/eval_graph.py` on `eval/graph_gold_v1.jsonl`. `scripts/eval_multimodal.py`
+  (offline) / `eval_api.py` (over HTTP). `scripts/eval_multimodal.py`
   does not exist yet; the BM25/jina/bge-m3 12-question comparison is `scripts/eval_compare.py` → `eval/results/COMPARE.md`.
 - Point ids are deterministic uuid5, so re-index/loader overwrite instead of duplicating.
 - Schema changes go through `db.init_db()` `create_all` + `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`

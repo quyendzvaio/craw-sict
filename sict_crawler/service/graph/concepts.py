@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from sict_crawler.service.graph import graph as G
 
-KIND = "concept"
+KIND = G.KIND
 SENT_MAX_CHARS = 1500      # câu dài hơn (bảng dán liền, danh sách không dấu chấm) bị cắt trước khi tách
 
 

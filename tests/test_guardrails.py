@@ -281,14 +281,6 @@ def test_stream_answer_skips_reasoning_and_yields_content(monkeypatch, capsys):
     assert "max_new_tokens" not in capsys.readouterr().out
 
 
-def test_graph_facts_go_after_numbered_sources():
-    """[graph] là thông tin phụ: đứng sau các nguồn [n] (đứng đầu thì LLM đọc nó trước nguồn trả lời, và RAGAS
-    context_precision tính nó là nguồn hạng 1 vô ích)."""
-    ctx = sources.build_context([_src(1, "Email: hapv@haui.edu.vn")], [], ["Phạm Văn Hà liên quan — OLP (3 bài)"])
-    parts = ctx.split("\n\n---\n\n")
-    assert parts[0].startswith("[1] ") and parts[-1].startswith("[graph] ")
-
-
 def test_answer_prompt_covers_documents_and_images_without_ui_claims():
     from sict_crawler.service.retrieval import vlm
     p = vlm.answer_prompt("Quy định làm đồ án tốt nghiệp", "[1] (file) Quy định …")

@@ -1,11 +1,10 @@
 """Graph khái niệm (graph.mode = concepts): khoá khái niệm, chọn theo số bài, khớp danh bạ trên đoạn,
-cấu hình và đường dựng trong graphsync.
+cấu hình, khớp câu hỏi.
 
 Run: pytest tests/test_graph_concepts.py
 """
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 
@@ -13,10 +12,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from sict_crawler.core.config import GraphConfig, _build, get_settings
+from sict_crawler.core.config import GraphConfig, _build
 from sict_crawler.service.graph import concepts as C
 from sict_crawler.service.graph import graph as G
-from sict_crawler.service.graph import graphsync
 
 
 def test_concept_key_normalises_and_rejects():
@@ -78,38 +76,66 @@ def test_noun_phrases_underthesea():
     assert nps and all(isinstance(p, str) for p in nps)
 
 
-def test_graph_config_default_and_env(monkeypatch):
+def test_graph_config_from_yaml():
     import yaml
-    assert GraphConfig().mode == "concepts"
     data = yaml.safe_load((Path(__file__).parent.parent / "config.yaml").read_text())
-    monkeypatch.delenv("GRAPH_MODE", raising=False)
-    assert _build(data).graph.mode == "concepts"
-    data["graph"] = {"mode": "concepts", "concept_df_max_ratio": 0.1}
+    assert _build(data).graph.concept_df_max_ratio == GraphConfig().concept_df_max_ratio == 0.0557
+    data["graph"] = {"concept_df_max_ratio": 0.1}
     assert _build(data).graph.concept_df_max_ratio == 0.1
-    monkeypatch.setenv("GRAPH_MODE", "rules")
-    assert _build(data).graph.mode == "rules"
 
 
-def test_rebuild_dispatches_by_mode(monkeypatch):
-    calls = []
-
-    async def fake_concepts(session, sync=True):
-        calls.append(("concepts", sync))
-        return {"mode": "concepts"}
-
-    async def fake_update(session, doc_ids):
-        calls.append(("update", tuple(doc_ids)))
-        return {"mode": "concepts"}
-
-    monkeypatch.setattr(graphsync, "rebuild_concepts", fake_concepts)
-    monkeypatch.setattr(graphsync, "update_concept_documents", fake_update)
-    monkeypatch.setattr(get_settings().graph, "mode", "concepts")
-    assert asyncio.run(graphsync.rebuild(None, sync=False)) == {"mode": "concepts"}
-    assert asyncio.run(graphsync.update_documents(None, [3, 4])) == {"mode": "concepts"}
-    assert calls == [("concepts", False), ("update", (3, 4))]
+def test_gazetteer_query_match_folds_accents():
+    g = G.Gazetteer([G.Entity(kind="concept", key="hoc phi", name="học phí", doc_count=5)])
+    assert [e.key for e in g.match("Học phí năm 2025 bao nhiêu?")] == ["hoc phi"]
+    assert [e.key for e in g.match("hoc phi nam 2025")] == ["hoc phi"]      # câu không dấu
+    G.set_current(g)
+    try:
+        assert G.ekeys(G.match_question("học phí", "Học phí ngành CNTT")) == ["concept:hoc phi"]
+    finally:
+        G.set_current(None)
 
 
-def test_update_concepts_empty_doc_list_does_nothing(monkeypatch):
-    # [] không được hiểu là "mọi bài" (scroll không lọc) → không đọc Qdrant, không ghi PG
-    monkeypatch.setattr(graphsync, "_scroll_concept_chunks", lambda *a: pytest.fail("không được scroll"))
-    assert asyncio.run(graphsync.update_concept_documents(None, []))["documents"] == 0
+def test_incremental_graph_stage_rebuilds_only_when_corpus_changed(monkeypatch):
+    """Dựng lại sau lượt ingest khi chữ ký corpus đổi; không đổi → bỏ qua; lượt dựng lỗi không ghi chữ ký."""
+    import asyncio
+    import contextlib
+
+    from sict_crawler.pipeline import incremental as inc
+    from sict_crawler.service.graph import graphsync
+
+    store, sig, calls = {}, ["s1"], []
+
+    class FakeRedis:
+        def get(self, k):
+            return store.get(k)
+
+        def set(self, k, v):
+            store[k] = v
+
+    async def fake_sig():
+        return sig[0]
+
+    async def fake_rebuild(session, sync=True):
+        calls.append(sig[0])
+        if sig[0] == "boom":
+            raise RuntimeError("hỏng")
+        return {"entities": 1}
+
+    @contextlib.asynccontextmanager
+    async def fake_session():
+        yield None
+
+    monkeypatch.setattr(inc, "_redis", lambda: FakeRedis())
+    monkeypatch.setattr(inc, "corpus_signature", fake_sig)
+    monkeypatch.setattr(inc.vector_store, "has_sparse", lambda: True)
+    monkeypatch.setattr(inc.db, "get_session", fake_session)
+    monkeypatch.setattr(graphsync, "rebuild", fake_rebuild)
+    assert "rebuild" in asyncio.run(inc._graph_stage())          # chưa dựng lần nào
+    assert "skipped" in asyncio.run(inc._graph_stage())          # corpus không đổi
+    sig[0] = "boom"
+    with pytest.raises(RuntimeError):
+        asyncio.run(inc._graph_stage())
+    assert store[inc.GRAPH_SIG_KEY] == "s1"                      # lỗi → giữ chữ ký cũ, lượt sau dựng lại
+    sig[0] = "s2"
+    assert "rebuild" in asyncio.run(inc._graph_stage())
+    assert calls == ["s1", "boom", "s2"]

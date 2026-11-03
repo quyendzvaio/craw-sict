@@ -135,11 +135,11 @@ def ensure_collections():
 
 # document_id: delete/filter theo doc. section/doc_type/year: metadata filtering (filters.py).
 # kind: tách chunk / caption. media_key, video_key: gắn/gỡ bài khỏi point media (indexer).
-# entities / entities_strong: lọc theo thực thể graph ("person:<key>", "event:<key>", "org:<key>").
+# entities: lọc theo khái niệm graph D33 ("concept:<key>") trên đoạn chữ / caption.
 _PAYLOAD_INDEXES = (("document_id", "integer"), ("section", "keyword"),
                     ("doc_type", "keyword"), ("year", "integer"), ("kind", "keyword"),
                     ("media_key", "keyword"), ("video_key", "keyword"),
-                    ("entities", "keyword"), ("entities_strong", "keyword"),  # graph D20
+                    ("entities", "keyword"),  # graph khái niệm D33
                     ("page", "integer"))  # D24: lọc theo trang PDF/PPTX
 
 
