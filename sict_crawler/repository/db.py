@@ -38,10 +38,10 @@ _ADD_COLUMNS = (
     ("documents", "doc_type", "VARCHAR(16)"), ("documents", "published_at", "TIMESTAMPTZ"),
     ("documents", "year", "INTEGER"), ("documents", "parent_url", "VARCHAR(2048)"),
     ("documents", "hash_v2", "VARCHAR(64)"),
-    # graph D20
+    # graph (D20, nay D33 khái niệm)
     ("entity_links", "evidence", "VARCHAR(300) DEFAULT ''"), ("entity_links", "chunk_id", "VARCHAR(36)"),
     ("entities", "attrs", "JSONB DEFAULT '{}'::jsonb"), ("media_occurrence", "context", "TEXT DEFAULT ''"),
-    ("entity_links", "roles", "JSONB DEFAULT '[]'::jsonb"), ("entity_relations", "roles", "JSONB DEFAULT '{}'::jsonb"),
+    ("entity_links", "roles", "JSONB DEFAULT '[]'::jsonb"),
     # D23: cấu trúc trong trang (outline block) + hash cấu trúc; vị trí ảnh/video trong bài
     ("documents", "structure", "JSONB"), ("documents", "hash_struct", "VARCHAR(64)"),
     ("media_occurrence", "block_idx", "INTEGER"), ("media_occurrence", "heading_path", "JSONB DEFAULT '[]'::jsonb"),
@@ -51,6 +51,9 @@ _ADD_COLUMNS = (
 )
 
 
+_DROPPED_TABLES = ("entity_relations", "entity_review", "entity_aliases")
+
+
 async def init_db():
     """create_all + thêm cột còn THIẾU. Chỉ ALTER khi cột chưa có (ALTER cần khoá độc quyền: chạy khi
     tiến trình khác — incremental, loader, graphsync — đang giữ giao dịch sẽ xếp hàng và chặn mọi truy
@@ -58,6 +61,9 @@ async def init_db():
     async with get_engine().begin() as conn:
         await conn.execute(text("SET LOCAL lock_timeout = '10s'"))
         await conn.run_sync(Base.metadata.create_all)
+        # graph luật D20 đã gỡ (chủ dự án, 2026-11-03, D33): bảng duyệt tên / alias / cạnh thực thể ↔ thực thể
+        for tbl in _DROPPED_TABLES:
+            await conn.execute(text(f"DROP TABLE IF EXISTS {tbl}"))
         have = {(t, c) for t, c in (await conn.execute(text(
             "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'"
         ))).all()}

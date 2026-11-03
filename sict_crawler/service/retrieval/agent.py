@@ -57,7 +57,7 @@ def run(question: str, top_k: int = 5,
         attempts = 2
         log.append("attempt2: lexical fallback (không có hit)")
     budget = get_settings().llm.list_context_chars if getattr(route, "list_question", False) else None
-    ctx = sources.build_context(tsrcs, msrcs, getattr(route, "facts", None), context_chars=budget)
+    ctx = sources.build_context(tsrcs, msrcs, context_chars=budget)
     ev = evidence(question, tsrcs, msrcs, ctx)
     log.append(f"evidence: {ev}")
     return _result(tsrcs, msrcs, ctx, attempts, ev["sufficient"], log, route)

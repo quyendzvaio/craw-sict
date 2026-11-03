@@ -64,3 +64,17 @@ if __name__ == "__main__":
     test_listing_page_main_column()
     test_unknown_layout_flags_fallback()
     print("OK — parser theme irs-*")
+
+
+def test_parser_image_context():
+    html = (FIX / "sict_article.html").read_text(encoding="utf-8")
+    p = parse_html("https://sict.haui.edu.vn/vn/tin-tuc/x/1", html)
+    assert len(p.image_contexts) == len(p.image_urls)
+    t = """<html><body><div class="irs-blog-single-col"><h2>Tiêu đề bài</h2>
+    <table><tr><td><img src="/a.jpg" alt="x"></td><td>ThS. Nguyễn Thị Cẩm Ngoan</td></tr></table>
+    <p>Đoạn mở đầu về sự kiện.</p><p><img src="/b.jpg"></p><p>TS. Đặng Trọng Hợp phát biểu.</p>
+    </div></body></html>"""
+    p = parse_html("https://sict.haui.edu.vn/vn/tin-tuc/y/2", t)
+    ctx = dict(zip([u.rsplit("/", 1)[-1] for u in p.image_urls], p.image_contexts))
+    assert "Cẩm Ngoan" in ctx["a.jpg"]                   # ô bảng cùng hàng
+    assert "Đặng Trọng Hợp" in ctx["b.jpg"] and "mở đầu" in ctx["b.jpg"]   # đoạn trước + sau

@@ -225,7 +225,6 @@ class RouterConfig:
     caption_min: float = 0.82    # cosine E5 câu hỏi↔caption (E5 nén điểm: lạc đề ~0.72–0.78)
     optional_max: int = 3        # media tối đa ở mức optional
     optional_top_docs: int = 3   # optional: chỉ media thuộc N bài chữ đứng đầu
-    graph_min: float = 0.6       # media gắn thực thể trong câu hỏi (graph D20): trọng số cạnh tối thiểu
     # D21/D22 — không gian jina chung chữ+ảnh, ngưỡng tách theo cặp (truy vấn → đích). TẠM tới khi hiệu chỉnh
     # bằng eval/golden_images_v1 (scripts/eval_multimodal.py). Chỉ dùng khi embedding.backend=api.
     t2i_min: float = 0.25        # chữ → ảnh
@@ -257,6 +256,17 @@ class RetrievalConfig:
 
 
 @dataclass
+class GraphConfig:
+    """Graph khái niệm D33 (graph/concepts.py, graphsync): cụm danh từ của corpus, không luật theo loại, không LLM.
+    Graph luật D20 (người / sự kiện / CLB) gỡ hẳn theo quyết định của chủ dự án 2026-11-03. Đo 2026-11-03 (index v3,
+    cùng trạng thái index, so với graph luật): golden_v1 MRR 0,933 → 0,954, golden_v2 MRR 0,690 → 0,701 (url_hit
+    70/80 cả hai), list_v2 0,871 → 0,916; mất 1 câu từ chối đúng (g080)."""
+    # khái niệm gặp ở quá tỷ lệ này số bài → quá phổ biến, không phân biệt được bài; 0,0557 = 115 / 2.066 bài
+    # có đoạn chữ lúc đo (chọn từ 2026-11-03, tỷ lệ để giữ nguyên ý nghĩa khi corpus lớn lên)
+    concept_df_max_ratio: float = 0.0557
+
+
+@dataclass
 class Settings:
     site: SiteConfig
     crawl: CrawlConfig
@@ -273,6 +283,7 @@ class Settings:
     llm: LlmConfig
     router: RouterConfig = field(default_factory=RouterConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    graph: GraphConfig = field(default_factory=GraphConfig)
 
 
 def _build(data: dict[str, Any]) -> Settings:
@@ -310,6 +321,7 @@ def _build(data: dict[str, Any]) -> Settings:
     llm = LlmConfig(**data.get("llm", {}))
     router = RouterConfig(**(data.get("router") or {}))
     retrieval = RetrievalConfig(**(data.get("retrieval") or {}))
+    graph = GraphConfig(**(data.get("graph") or {}))
     redis_url = os.environ.get("REDIS_URL", data["redis"]["url"])
     return Settings(
         site=site,
@@ -327,6 +339,7 @@ def _build(data: dict[str, Any]) -> Settings:
         llm=llm,
         router=router,
         retrieval=retrieval,
+        graph=graph,
     )
 
 

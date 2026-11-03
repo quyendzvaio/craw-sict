@@ -71,11 +71,9 @@ def _date_tag(s: Source) -> str:
 MIN_SOURCE_CHARS = 400   # nhiều nguồn: mỗi nguồn vẫn giữ ít nhất chừng này ký tự
 
 
-def build_context(tsrcs: list[Source], msrcs: list[Source], facts: list[str] | None = None,
+def build_context(tsrcs: list[Source], msrcs: list[Source],
                   source_chars: int | None = None, context_chars: int | None = None) -> str:
-    """facts: dữ kiện graph D20 (thực thể trong câu hỏi + thực thể liên quan, số bài làm chứng).
-
-    D27: mỗi nguồn đưa nội dung đầy đủ (`content`, rỗng ở bản cache cũ → excerpt), cắt ở min(source_chars,
+    """D27: mỗi nguồn đưa nội dung đầy đủ (`content`, rỗng ở bản cache cũ → excerpt), cắt ở min(source_chars,
     context_chars / số nguồn) — chia đều để nguồn cuối không bị cắt mất (câu hỏi liệt kê có tới 10 nguồn)."""
     cfg = get_settings().llm
     srcs = tsrcs + msrcs
@@ -85,8 +83,4 @@ def build_context(tsrcs: list[Source], msrcs: list[Source], facts: list[str] | N
     # D24: nguồn đánh số [1]…[n] (chữ trước, media sau) — LLM trích dẫn bằng [n], citations.enforce kiểm lại
     parts = [f"[{i}] ({s.kind}) {s.cite or s.title or s.url}{_date_tag(s)}\n{(s.content or s.excerpt)[:per]}"
              for i, s in enumerate(srcs, 1)]
-    # Dữ kiện graph đứng SAU các nguồn: chỉ là thông tin phụ (thực thể liên quan, số bài). Đứng đầu thì
-    # LLM đọc nó trước nguồn chứa câu trả lời, và RAGAS context_precision coi nó là nguồn hạng 1 vô ích
-    # (18 câu có graph: 0.554 so với 0.788, 2026-10-26).
-    parts += [f"[graph] {f}" for f in (facts or [])]
     return "\n\n---\n\n".join(parts)

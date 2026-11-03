@@ -122,7 +122,6 @@ router:
   caption_min: 0.82
   optional_max: 3
   optional_top_docs: 3
-  graph_min: 0.6       # media gắn thực thể nêu trong câu hỏi (graph D20): trọng số cạnh tối thiểu
 
 # Guardrail truy xuất không phụ thuộc LLM (D27). Ngưỡng TẠM — hiệu chỉnh bằng eval/golden_v1 + eval/list_v1.
 retrieval:
@@ -134,3 +133,9 @@ retrieval:
   restore_accents: true  # câu không dấu: nhánh dense dùng câu đã khôi phục dấu (golden_v1 bỏ dấu R@5 0,881 → 0,985)
   min_cosine: 0.45     # 2026-10-25, 89 câu (golden + list_v1): đáp án thấp nhất 0,476, ngoài phạm vi 0,29–0,58
   min_term_cover: 0.8  # đáp án thấp nhất 0,8; chặn 7/8 câu ngoài phạm vi (cùng cosine)
+
+# Graph khái niệm D33 (graphsync, graph/concepts.py): cụm danh từ của corpus, dựng lại sau mỗi lượt ingest có
+# thay đổi. 2026-11-03, so với graph luật đã gỡ: golden_v1 MRR 0,933 → 0,954, golden_v2 MRR 0,690 → 0,701,
+# list_v2 0,871 → 0,916.
+graph:
+  concept_df_max_ratio: 0.0557  # khái niệm ở > 5,57% số bài (115 / 2.066 lúc đo) là quá phổ biến → bỏ

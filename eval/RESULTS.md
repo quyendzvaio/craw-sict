@@ -129,3 +129,42 @@ Hai câu lật thứ hạng ở ranh giới top 10 sau các thay đổi nhỏ c�
 - Không câu nào tụt ở bất kỳ bộ nào; `sufficient_acc` giữ 0,96.
 - Còn 0: m03, m11 (bài đúng đã vào top nhờ khôi phục dấu, nhưng mục nằm sâu trong bài dài, ngoài ±1 đoạn), m22 (câu thường nhiều nguồn, ngân sách chia đều vẫn cắt).
 - Chưa chấm RAGAS cho thay đổi này (câu trả lời đổi vì ngữ cảnh dài hơn 20–40%); chủ dự án duyệt áp dụng ngay 2026-11-03, RAGAS chạy sau khi có quota LLM.
+
+## 2026-11-03 — graph khái niệm (cụm danh từ, kiểu LazyGraphRAG) thay graph luật (nhánh feat/graph-concepts, D33)
+
+**Vì sao.** Graph luật (người / sự kiện / CLB) cần một luật cho mỗi dạng tên, nên luôn sót trường hợp ngoài dự tính.
+Đã thử 3 hướng dựng graph, không LLM, giữ nguyên code truy xuất (chỉ thay danh bạ + liên kết đoạn):
+- **luật cũ**;
+- **GLiNER** đa ngôn ngữ (`urchade/gliner_multi-v2.1`, nhãn người / sự kiện / CLB-đội, ngưỡng 0,5 / 0,6 / 0,7);
+- **cụm danh từ** (underthesea `chunk`): cụm ≥ 2 từ gặp ở 2 bài đến 5,57% số bài (115 / 2.066).
+
+**Lần đo thử nghiệm** (graph nạp từ file, lọc theo id đoạn; golden_v1 ghi recall@5 / MRR@10):
+
+| | golden_v1 | golden_v2 url_hit / MRR | từ chối đúng | list_v2 coverage (đủ mục) |
+|---|---|---|---|---|
+| luật | 1,0 / 0,928 | 70/80 / 0,716 | 4/8 | 0,878 (34/42) |
+| **cụm danh từ** | **1,0 / 0,954** | **71** / 0,719 | 3/8 | **0,916 (37/42)** |
+| GLiNER 0,5 | 0,985 / 0,940 | 71 / 0,706 | 4/8 | 0,892 (33/42) |
+| GLiNER 0,6 | 1,0 / 0,946 | 71 / 0,712 | 4/8 | 0,834 (32/42) |
+| GLiNER 0,7 | 0,985 / 0,935 | 72 / 0,716 | 4/8 | 0,834 (32/42) |
+
+- GLiNER ngưỡng cao lọc quá chặt: list m20 3/4 → 0, m31 6/6 → 0; g058 (ảnh lễ tốt nghiệp) hạng 1 → 4. Dựng ~2,7 giờ CPU
+  (6 luồng), ~3 GB RAM. F1 trên `graph_gold_v1` (150 bài) thấp hơn luật ở mọi ngưỡng (tất cả: 0,64–0,66 vs 0,73 trên 75 bài).
+- Cụm danh từ: m03 0/4 → 4/4, m20 → 4/4, m24 → 3/3, g085 ngoài top → hạng 1; mất g080 (câu không có đáp án, khớp
+  khái niệm "học phí" nên `sufficient` thành đúng). Dựng ~10 phút / 1 lõi, < 1 GB.
+
+**Bản code thật** (`graph.mode: concepts`, `graphsync rebuild` trên PG + Qdrant máy dev, lọc theo payload `entities`):
+danh bạ 4.958 khái niệm và 330.992 liên kết, trùng 100% với file thử nghiệm (payload `entities` của 22.583 điểm khớp
+từng điểm). Ghi lại payload 16 nghìn điểm làm Qdrant tối ưu lại segment, và tìm kiếm HNSW xấp xỉ đổi hạng ở vài câu
+golden_v2: chạy lại code thử nghiệm trên index hiện tại cũng ra 70 / 0,701 thay vì 71 / 0,719. So trên **cùng trạng thái index**:
+
+| | golden_v1 | golden_v2 url_hit / MRR | từ chối đúng | list_v2 coverage (đủ mục) | sufficient_acc |
+|---|---|---|---|---|---|
+| luật | 1,0 / 0,933 | 70/80 / 0,690 | 4/8 | 0,871 (34/42) | 0,98 |
+| **khái niệm** | **1,0 / 0,954** | **70/80 / 0,701** | 3/8 | **0,916 (37/42)** | 0,96 |
+
+- golden_v2 tốt lên: g020, g060 (hạng 2 → 1), g051, g070 (lên 1 bậc), g085 (ngoài top → 1); tụt: g018 (2 → 5), g023, g053, g055
+  (1 bậc), g029 "chủ nhiệm CLB HIT" (hạng 4 → ngoài top), g080 (mất từ chối đúng).
+- Mất theo thiết kế: dòng `[graph]` trong ngữ cảnh (không có cạnh thực thể ↔ thực thể) và nhánh ảnh theo tên người;
+  `media_mode_acc` giữ 0,871, ảnh bắt buộc 7/7.
+- Chưa chấm RAGAS (ngữ cảnh mất dòng `[graph]` nên câu trả lời có thể đổi); chờ quota LLM.

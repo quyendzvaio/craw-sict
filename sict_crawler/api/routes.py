@@ -30,7 +30,7 @@ _GRAPH_REFRESH_SEC = 600
 
 
 async def _refresh_graph() -> None:
-    """Nạp danh bạ thực thể (graph D20) từ Postgres. Lỗi/không có PG → giữ bản cũ (hoặc tắt graph)."""
+    """Nạp danh bạ khái niệm (graph D33) từ Postgres. Lỗi/không có PG → giữ bản cũ (hoặc tắt graph)."""
     import asyncio
 
     from sict_crawler.service.graph import graph as G
@@ -38,10 +38,8 @@ async def _refresh_graph() -> None:
     try:
         async with db.get_session() as s:
             gaz = await asyncio.wait_for(graphsync.load_gazetteer(s), timeout=20)
-            rels = await asyncio.wait_for(graphsync.load_relations(s), timeout=20)
         G.set_current(gaz if len(gaz) else None)
-        G.set_relations(rels, gaz)
-        print(f"[graph] danh bạ {len(gaz)} thực thể, {len(rels)} cạnh thực thể–thực thể")
+        print(f"[graph] danh bạ {len(gaz)} khái niệm")
     except Exception as e:  # noqa: BLE001
         print(f"[graph] không nạp được danh bạ: {e}")
 

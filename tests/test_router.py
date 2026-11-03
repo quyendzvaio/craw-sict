@@ -148,3 +148,9 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
     print("OK — router")
+
+
+def test_router_accented_anh_is_image_intent():
+    assert R.classify_rules("Ảnh PGS.TS Nguyễn Thị Kim Sơn").media == "required"
+    assert R.classify_rules("Ảnh hưởng của AI tới việc làm?").media == "none"
+    assert R.classify_rules("anh Nguyễn Việt Hoàng là ai").media == "none"

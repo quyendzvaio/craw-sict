@@ -79,12 +79,12 @@ Import tuyệt đối và chỉ trỏ xuống tầng dưới; `api` và `pipelin
 | `sict_crawler/service/index/` | luật index v2, chunker, OCR, video, đường ghi `indexer` |
 | `sict_crawler/service/embedding/` | client embedding (torch / HTTP), dịch vụ ONNX tự host |
 | `sict_crawler/service/retrieval/` | retriever, agent, router media, bộ lọc, trích dẫn, gọi LLM |
-| `sict_crawler/service/graph/` | luật trích thực thể, `graphsync`, catalog CLB / sự kiện |
+| `sict_crawler/service/graph/` | graph khái niệm (cụm danh từ, D33): `concepts`, danh bạ `graph`, `graphsync` |
 | `sict_crawler/pipeline/` | CLI: crawl, incremental, snapshot, compute, loader, reconcile |
 | `sict_crawler/api/` | FastAPI, `/metrics`, giao diện chat tĩnh |
 | `tests/` | pytest, fixture HTML thật, Gherkin, tiêu chí nghiệm thu |
 | `scripts/` | đánh giá, nghiệm thu qua HTTP, cutover, giám sát |
-| `eval/` | bộ câu hỏi vàng, bộ câu liệt kê, bộ vàng graph, kết quả đo |
+| `eval/` | bộ câu hỏi vàng, bộ câu liệt kê, kết quả đo |
 
 ## Chạy local
 
@@ -114,7 +114,7 @@ Index hàng loạt từ đầu:
 python -m sict_crawler.pipeline.snapshot --out _snapshot/2026-10-12        # chạy lại = resume
 python -m sict_crawler.pipeline.compute  --snapshot _snapshot/2026-10-12   # stages docs,text,images,videos
 python -m sict_crawler.pipeline.loader   --artifacts _snapshot/2026-10-12/artifacts/v2-multilingual-e5-small
-python -m sict_crawler.service.graph.graphsync rebuild                      # graph thực thể
+python -m sict_crawler.service.graph.graphsync rebuild                      # graph khái niệm (cụm danh từ)
 python -m sict_crawler.pipeline.reconcile --dry-run                         # kiểm PG ↔ Qdrant
 ```
 
@@ -167,7 +167,6 @@ uv run python -m tests.test_agent
 | `eval/golden_v1.jsonl` (70 câu, URL đáp án, chế độ media) | `scripts/eval_retrieval.py` (offline), `scripts/eval_api.py` (HTTP) | recall@5 0,985 · MRR@10 0,898 · chế độ media 0,871 |
 | `eval/list_v1.jsonl` (12 câu liệt kê + 8 câu ngoài phạm vi) | `scripts/eval_api.py --list` | độ phủ mục 0,970 · `sufficient` đúng 0,95 |
 | RAGAS trên golden + list | `scripts/eval_ragas.py collect / score` | faithfulness 0,884 · answer relevancy 0,750 · context precision 0,735 · context recall (list) 0,937 |
-| `eval/graph_gold_v1.jsonl` (150 tài liệu, nhãn còn ở dạng draft) | `scripts/eval_graph.py`, CI gate `tests/test_eval_graph.py` | chờ người duyệt nhãn (`eval/GRAPH_ANNOTATION.md`) |
 | Nghiệm thu U1–U6 qua HTTP | `scripts/accept_api.py --api URL` | 54/54 |
 
 Chạy đánh giá trước khi đổi model, ngưỡng hay luật chunk. Lịch sử số đo ở `eval/RESULTS.md` và
