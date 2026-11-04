@@ -18,6 +18,10 @@ h1{font-size:18px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 20px;font-si
 .src{display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border:1px solid var(--border);border-radius:99px;color:var(--muted);text-decoration:none}
 .src.image,.src.video_frame{border-color:var(--accent);color:var(--accent)}
 .srcimg{display:block;width:100%;max-width:320px;border-radius:8px;margin:6px 0;border:1px solid var(--border)}
+.mhead{margin:8px 0 4px}.mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
+.mcard{margin:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg);display:flex;flex-direction:column}
+.mcard img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;background:var(--border)}
+.mcard figcaption{padding:4px 6px}.mcard .src{display:block;margin:0;padding:0;border:0;border-radius:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 form{display:flex;gap:8px}input#q{flex:1;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--fg);font-size:14px}
 button{padding:12px 20px;border:0;border-radius:10px;background:var(--accent);color:#fff;font-size:14px;cursor:pointer}
 button:disabled{opacity:.5}
@@ -48,6 +52,6 @@ button:disabled{opacity:.5}
   </form>
 </div>
 <script src="md.js?v=1"></script>
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

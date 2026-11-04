@@ -1,6 +1,8 @@
 """Hit Qdrant → Source (chữ / media) và ngữ cảnh đánh số [1]…[n] cho LLM (D24)."""
 from __future__ import annotations
 
+import re
+
 from sict_crawler.core.config import get_settings
 from sict_crawler.model.schemas import Source
 from sict_crawler.service.retrieval.citations import make_cite
@@ -82,5 +84,58 @@ def build_context(tsrcs: list[Source], msrcs: list[Source],
         per = max(MIN_SOURCE_CHARS, min(per, (context_chars or cfg.context_chars) // len(srcs)))
     # D24: nguồn đánh số [1]…[n] (chữ trước, media sau) — LLM trích dẫn bằng [n], citations.enforce kiểm lại
     parts = [f"[{i}] ({s.kind}) {s.cite or s.title or s.url}{_date_tag(s)}\n{(s.content or s.excerpt)[:per]}"
-             for i, s in enumerate(srcs, 1)]
+             for i, s in enumerate(tsrcs, 1)]
+    parts += _media_parts(msrcs, len(tsrcs) + 1, per)
     return "\n\n---\n\n".join(parts)
+
+
+# Phần đầu caption lặp lại header bài (doc_rules.image_caption_text: "Tiêu đề | Mục | dd/mm/yyyy. alt. OCR")
+_CAPTION_HEAD = re.compile(r"(?:\s*\|\s*[^|.]+){0,2}\.\s*")
+
+
+def media_text(s: Source) -> str:
+    """Chữ riêng của một ảnh/video: caption bỏ header bài và alt trùng tiêu đề (còn alt khác, OCR, phụ đề)."""
+    t = (s.content or s.excerpt or "").strip()
+    title = (s.title or "").strip()
+    if not title or not t.startswith(title):
+        return t
+    t = t[len(title):]
+    m = _CAPTION_HEAD.match(t)
+    if m:
+        t = t[m.end():]
+    while title and t.startswith(title):            # alt = tiêu đề bài (site đặt alt như vậy)
+        t = t[len(title):].lstrip(" .")
+    return t.strip(" .|")
+
+
+def _media_parts(msrcs: list[Source], start: int, per: int) -> list[str]:
+    """Ảnh/video gom theo bài (2026-11-04): mỗi bài một khối "tên bài + ngày", mỗi ảnh một dòng [n] chỉ với chữ
+    riêng của nó, gắn nhãn là chữ máy đọc (OCR / phụ đề, có thể sai). Trước đây mỗi ảnh lặp tiêu đề bài 3 lần,
+    chữ OCR trông như chữ của bài: 6 ảnh của một bài → LLM mô tả 6 ý gần giống nhau và chép nguyên link OCR
+    đọc sai ("tracuu.euni.hqui.edu.vn"). Số [n] giữ nguyên thứ tự msrcs; khối theo thứ tự ảnh đầu tiên của bài."""
+    groups: dict[str, list[tuple[int, Source]]] = {}
+    for i, s in enumerate(msrcs, start):
+        groups.setdefault(s.parent_url or s.cite or s.title or s.url, []).append((i, s))
+    parts = []
+    for items in groups.values():
+        first = items[0][1]
+        # Tên bài (không kèm mục: cite "Bài › Mục:" + "(ngày)" làm model tưởng không có ngày đăng, g064) + "đăng ngày"
+        head = [f"Bài: {first.title or first.cite or first.url}"]
+        if _date_tag(first):
+            head.append("đăng ngày " + _date_tag(first).strip(" ()"))
+        counts: dict[str, int] = {}
+        for _, s in items:
+            counts[_kind_vi(s.kind)] = counts.get(_kind_vi(s.kind), 0) + 1
+        head.append(", ".join(f"{c} {k}" for k, c in counts.items()))
+        lines = [" — ".join(head)]
+        for i, s in items:
+            text = media_text(s)[:per]
+            label = "phụ đề / chữ trong video (máy đọc, có thể sai)" if _kind_vi(s.kind) == "video" \
+                else "chữ đọc từ ảnh (OCR, có thể sai)"
+            lines.append(f"[{i}] ({s.kind}) {label}: {text}" if text else f"[{i}] ({s.kind}) không có chữ đọc được")
+        parts.append("\n".join(lines))
+    return parts
+
+
+def _kind_vi(kind: str) -> str:
+    return "video" if (kind or "").startswith("video") else "ảnh"

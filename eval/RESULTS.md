@@ -278,3 +278,35 @@ thuộc đúng bài). Scorer: `video_hit` nhận `kind=video` (v2/v3 gộp mỗi
   v008 / v013 tiếng Anh: `sufficient=false`, v013 không tìm được bài.
 - **Ngoài phạm vi đòi ảnh** (x002 tháp Eiffel, x004 nấu phở): `sufficient=false` đúng nhưng vẫn trả 8 ảnh ngẫu nhiên
   (ngưỡng `clip_min` / `caption_min` không chặn) — trái AC-R9.
+
+## 2026-11-05 — trả lời có ảnh: gom theo bài, nhãn OCR, chặn link chưa kiểm (nhánh fix/media-answer)
+
+Sửa ba lỗi thấy khi thử câu hỏi có ảnh trên UI:
+- link OCR đọc sai ("hqui" thay "haui") bị chép thành link;
+- 6 ảnh cùng bài thành 6 gạch đầu dòng gần giống nhau;
+- lưới ảnh trên UI.
+
+Ngữ cảnh ảnh giờ gom theo bài: một dòng "Bài: … — đăng ngày … — N ảnh", rồi mỗi ảnh một dòng `[n]` chỉ mang chữ máy đọc của chính nó, có nhãn "OCR, có thể sai". `citations.enforce` bỏ dạng link của URL không có trong nguồn văn bản (`unlink_unverified`), gộp `[n]` lặp (`dedupe_runs`) và nhận thêm các kiểu trích dẫn của gpt-oss: `【2†L1-L4】`, chỗ giữ chỗ `[n]` chép nguyên từ prompt, và `[Nguồn: 6, 7]`.
+
+Truy xuất không đổi so với develop: golden_v1 1,0 / 0,947, golden_v2 71/80 / 0,731, list_v2 0,940 (38/42) / sufficient_acc 0,94.
+
+RAGAS chạy 2 lượt mỗi bản: trả lời bằng gpt-oss-120b-sale, giám khảo qwen3.5-flash-sale, cache tắt.
+
+| | 14 câu có ảnh: dev / dev2 / fix / fix2 | 20 câu chỉ chữ: dev / dev2 / fix / fix2 |
+|---|---|---|
+| faithfulness | 0,911 / 0,896 / 0,864 / **0,954** | 0,992 / 0,959 / 0,931 / 0,993 |
+| answer_relevancy | 0,838 / 0,842 / 0,794 / 0,795 | 0,657 / 0,659 / 0,679 / 0,656 |
+| context_precision* | 0,611 / 0,596 / 0,629 / 0,627 | 0,787 / 0,781 / 0,757 / 0,813 |
+| context_recall | 0,952 cả 4 lượt | 0,838 / 0,808 / 0,850 / 0,810 |
+
+\* context_precision của câu có ảnh không so được giữa dev và fix, vì gom theo bài làm đổi số đoạn ngữ cảnh.
+
+**Câu có ảnh.** Lượt fix đầu tụt faithfulness vì 4 lỗi đã sửa trước lượt fix2:
+- dòng tiêu đề thiếu ngày đăng;
+- trích dẫn dạng `【n†…】`;
+- chỗ giữ chỗ `[n]`;
+- câu trả lời quá cụt.
+
+answer_relevancy vẫn thấp hơn khoảng 0,045, chủ yếu do g061 (0,37): model bỏ qua prompt và tả từng ảnh. Ở g064 model nói "không có thông tin ngày đăng" dù dòng tiêu đề có ngày. Cả hai là hành vi của model, chưa sửa.
+
+**Câu chỉ chữ.** Mức tụt 0,931 ở lượt fix đầu là nhiễu: fix2 0,993 ngang dev. Hai lượt dev cũng lệch nhau 0,03.
