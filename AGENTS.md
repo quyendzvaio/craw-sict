@@ -9,7 +9,7 @@ commit messages are mostly Vietnamese; keep that convention.
 ## Hard rules (do not violate)
 
 - **S3 / VM freeze (owner, 2026-10-14):** never upload to S3 and never run anything on the VMs
-  (CD workflow, `scripts/cutover_v2.sh` VM steps, `loader --upload-media`) unless the owner explicitly
+  (CD workflow, `scripts/cutover_v3.sh` VM steps, `loader --upload-media`) unless the owner explicitly
   says so. `upload-media` also requires `CONFIRM_S3_UPLOAD=yes`. Local runs use the local store (no AWS env).
 - **uv only.** Never use `pip` and never add `requirements.txt`. Deps live in `pyproject.toml`
   dependency groups: `dev` (pytest), `api` (FastAPI), `ml` (torch/sentence-transformers/OCR/yt-dlp/playwright).

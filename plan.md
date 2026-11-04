@@ -212,14 +212,16 @@ Còn lại theo thứ tự:
    `.pgdata.corrupt-20261014`), nạp lại v2 khớp 100%.
 
 **Cutover production — đã chuẩn bị, CHƯA chạy** (2026-10-14: chủ dự án chốt **không upload S3, không
-chạy gì trên VM cho tới khi có lệnh**). Kịch bản `scripts/cutover_v2.sh`, mỗi bước gọi tay:
+chạy gì trên VM cho tới khi có lệnh**). Kịch bản `scripts/cutover_v2.sh` (2026-11-05 đổi thành `cutover_v3.sh`:
+artifact v3, nạp bằng image worker trên VM2 vì loader gọi graphsync cần underthesea, không build trên VM, thêm
+`env-check`; thứ tự mới ở `docs/deploy_v3.md`), mỗi bước gọi tay:
 `pack` (máy dev, ~140 MB artifact + HTML) → `backup` (VM1: `pg_dump` + snapshot Qdrant v1) → `load`
 (VM1: build image mới, API cũ vẫn chạy; loader `--skip-media-upload`) → deploy code (workflow CD,
 API + worker cùng lúc — worker v2 từ chối ghi collection v1) → `verify` (`scripts/eval_api.py`, bộ
 vàng qua `/query`) → `upload-media` (chỉ khi có lệnh: `CONFIRM_S3_UPLOAD=yes`, loader `--media-only
 --upload-media`, ~1,9 GB, key `media/<sha256>.<ext>` đã có thì bỏ qua). Loader không bao giờ ghi S3
 nếu thiếu `--upload-media`. Ảnh v2 hỏng (404) tới khi upload xong → muốn tránh thì upload trước deploy.
-Rollback: `cutover_v2.sh rollback` (env API về `sict_text`/`sict_image`, worker image cũ).
+Rollback: `cutover_v3.sh rollback` (env API về collection cũ, worker image cũ).
 
 Output: `_snapshot/2026-10-12/` (`pages.jsonl`, `images.jsonl`, `videos.jsonl`, `files.jsonl`, `html/`,
 `media/`, `files/`), artifact ở `_snapshot/2026-10-12/artifacts/<spec>-<model>/`. Keyframe video cần
