@@ -56,7 +56,7 @@ def test_index_matches_context_numbering():
     t, m = [_src(), _src(title="B")], [_src(title="Ảnh", kind="image")]
     ctx = sources.build_context(t, m)
     idx = C.index(t + m)
-    assert [e["n"] for e in idx] == [1, 2, 3] and "[3] (image) Ảnh" in ctx and idx[2]["title"] == "Ảnh"
+    assert [e["n"] for e in idx] == [1, 2, 3] and "Bài: Ảnh — 1 ảnh\n[3] (image)" in ctx and idx[2]["title"] == "Ảnh"
 
 
 def test_chat_stream_emits_citations_and_footer(monkeypatch):
@@ -127,6 +127,22 @@ def test_enforce_accepts_fullwidth_brackets():
     assert ans == "Quyết định 2536/QĐ-TTg[3], xem thêm [1] và ." and "Nguồn:" not in ans
     assert [c["n"] for c in cites] == [3, 1]
     assert C.used("a【2】 b［1］", 3) == [2, 1]
+    # gpt-oss còn kèm số dòng: 【2†L1-L4】 (golden_v2 g032 2026-11-04 bị ghép footer dù đã trích dẫn)
+    ans, cites = C.enforce("Có 3 đội【2†L1-L4】【1†L1-L3】.", srcs)
+    assert ans == "Có 3 đội[2][1]." and "Nguồn:" not in ans
+
+
+def test_enforce_accepts_nguon_bracket():
+    """gpt-oss còn viết "[Nguồn: 6, 7]" thay cho [6][7] (g061/g065 2026-11-04) → bị coi là không trích dẫn, ghép footer."""
+    srcs = [_src(title=str(i)) for i in range(8)]
+    ans, cites = C.enforce("Ảnh lễ. [Nguồn: 6,\u202f7] và [nguồn 3].", srcs)
+    assert ans == "Ảnh lễ. [6][7] và [3]." and [c["n"] for c in cites] == [6, 7, 3] and "Nguồn:" not in ans
+
+
+def test_enforce_drops_placeholder_n():
+    """Model chép nguyên chỗ giữ chỗ "[n]" của prompt ("Video recap: [6]   [n]", golden_v2 g065 2026-11-04)."""
+    ans, _ = C.enforce("Video recap: [1]   [n]", [_src()])
+    assert ans == "Video recap: [1]"
 
 
 def test_enforce_normalizes_fullwidth_punctuation():
@@ -136,3 +152,67 @@ def test_enforce_normalizes_fullwidth_punctuation():
     ans, cites = C.enforce("Khoảng 6.000 người [4]。 （Ước tính）：25.22 điểm【3】。Hết！", srcs)
     assert ans == "Khoảng 6.000 người [4]. (Ước tính): 25.22 điểm[3]. Hết!"
     assert [c["n"] for c in cites] == [4, 3]
+
+
+def _cap(title, ocr, n=0, parent="https://sict.haui.edu.vn/vn/tin-tuc/le/1", kind="image"):
+    cap = f"{title} | Tin tức | 26/08/2024. {title}." + (f" {ocr}" if ocr else "")
+    return _src(url=f"https://sict.haui.edu.vn/media/{n}.jpg", title=title, kind=kind, content=cap, excerpt=cap,
+                parent_url=parent, published_at="2024-08-26T08:00:00+07:00")
+
+
+def test_media_context_grouped_by_post_with_ocr_label():
+    """2026-11-04: mỗi ảnh lặp tiêu đề bài 3 lần, OCR không gắn nhãn → LLM mô tả 6 ảnh một bài thành 6 ý và chép
+    link OCR sai. Giờ: một khối mỗi bài, mỗi ảnh một dòng [n] chỉ với chữ OCR, gắn nhãn có thể sai."""
+    t = [_src()]
+    m = [_cap("Lễ Tốt nghiệp 2024", "", 1), _cap("Hướng dẫn dự lễ", "https://tracuu.euni.hqui.edu.vn", 2,
+                                                parent="https://sict.haui.edu.vn/vn/thong-bao/hd/2"),
+         _cap("Lễ Tốt nghiệp 2024", "Hà Nội, ngày 24 tháng 8", 3)]
+    ctx = sources.build_context(t, m)
+    parts = ctx.split("\n\n---\n\n")
+    assert len(parts) == 3 and parts[0].startswith("[1] (text) Bài A")
+    assert parts[1].splitlines() == [
+        "Bài: Lễ Tốt nghiệp 2024 — đăng ngày 26/08/2024 — 2 ảnh",
+        "[2] (image) không có chữ đọc được",
+        "[4] (image) chữ đọc từ ảnh (OCR, có thể sai): Hà Nội, ngày 24 tháng 8"]
+    assert parts[2].splitlines()[1] == "[3] (image) chữ đọc từ ảnh (OCR, có thể sai): https://tracuu.euni.hqui.edu.vn"
+    assert ctx.count("Lễ Tốt nghiệp 2024") == 1
+    assert [e["n"] for e in C.index(t + m)] == [1, 2, 3, 4]       # số [n] không đổi
+
+
+def test_media_header_counts_kinds_and_uses_post_title():
+    """Header dùng tên bài (không kèm mục) và ghi rõ "đăng ngày": g064 2026-11-04 header "… › Các cuộc thi công
+    nghệ: (30/03/2025)" → model nói video "không có ngày đăng"."""
+    v = _src(url="https://youtu.be/x", title="IT FESTIVAL 2025", kind="video", content="Video: Bản tin. a b",
+             parent_url="https://sict.haui.edu.vn/vn/tin-tuc/it/3", published_at="2025-03-30T08:00:00+07:00")
+    v.cite = "IT FESTIVAL 2025 › 2. Chuỗi sự kiện › Các cuộc thi:"
+    i = _cap("IT FESTIVAL 2025", "TRƯỜNG ĐẠI HỌC", 1, parent="https://sict.haui.edu.vn/vn/tin-tuc/it/3")
+    ctx = sources.build_context([], [v, i])
+    assert ctx.splitlines()[0] == "Bài: IT FESTIVAL 2025 — đăng ngày 30/03/2025 — 1 video, 1 ảnh"
+
+
+def test_media_text_keeps_caption_without_header():
+    s = _src(title="Bài X", kind="video", content="Video: Giới thiệu. phụ đề a b")
+    assert sources.media_text(s) == "Video: Giới thiệu. phụ đề a b"
+    assert sources.media_text(_cap("A. B", "chữ", 1)) == "chữ"
+
+
+def test_unverified_links_lose_link_form():
+    t = [_src(content="Tra cứu tại https://tracuu.euni.haui.edu.vn/tracuu hoặc [web](https://sict.haui.edu.vn/)")]
+    m = [_cap("Hướng dẫn", "https://tracuu.euni.hqui.edu.vn/tracuu", 1)]
+    ans, _ = C.enforce("Vào https://tracuu.euni.hqui.edu.vn/tracuu [1], [trang tra cứu](https://tracuu.euni.hqui.edu.vn/x) "
+                       "hoặc https://tracuu.euni.haui.edu.vn/tracuu/ và [SICT](https://sict.haui.edu.vn) [2]. "
+                       "Ảnh: https://sict.haui.edu.vn/media/1.jpg.", t + m)
+    assert ans == ("Vào `https://tracuu.euni.hqui.edu.vn/tracuu` [1], trang tra cứu "
+                   "hoặc https://tracuu.euni.haui.edu.vn/tracuu/ và [SICT](https://sict.haui.edu.vn) [2]. "
+                   "Ảnh: https://sict.haui.edu.vn/media/1.jpg.")
+
+
+def test_answer_rules_on_media_and_ocr():
+    from sict_crawler.service.retrieval import vlm
+    r = vlm.ANSWER_RULES
+    assert "gom theo bài" in r and "không mô tả lặp lại từng ảnh" in r and "không chép đường link" in r
+
+
+def test_citation_runs_deduped():
+    assert C.dedupe_runs("Ảnh kèm: [9] , [10] [9][10]\n\nB [3], [4]. C [5] và [5]") == \
+        "Ảnh kèm: [9][10]\n\nB [3][4]. C [5] và [5]"

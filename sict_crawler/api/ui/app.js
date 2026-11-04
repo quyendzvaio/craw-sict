@@ -124,16 +124,28 @@ form.addEventListener('submit', async (ev) => {
                                          ['Ảnh & Video: ', s => s.via !== 'i2i']]) {
               const group = mediaWithImg.filter(pick);
               if (!group.length) continue;
-              box.appendChild(el('span', null, title));
+              box.appendChild(el('div', 'mhead', title));
+              // lưới thẻ ảnh (2026-11-04: xếp dọc 320 px/ảnh → 8 ảnh dài ~3.500 px); bấm ảnh mở ảnh gốc
+              const grid = el('div', 'mgrid');
               for (const s of group) {
+                const card = el('figure', 'mcard');
+                const src = s.media_key ? '/media/s/' + s.media_key : '/media/' + s.media_id;
+                const a = el('a');
+                a.href = src; a.target = '_blank';
                 const img = document.createElement('img');
-                img.className = 'srcimg';
-                img.src = s.media_key ? '/media/s/' + s.media_key : '/media/' + s.media_id;
+                img.src = src;
                 img.alt = (s.excerpt || s.kind).slice(0, 80);
                 img.loading = 'lazy';
-                box.appendChild(img);
-                box.appendChild(srcLink(s));
+                a.appendChild(img);
+                card.appendChild(a);
+                const cap = el('figcaption');
+                const link = srcLink(s);
+                link.title = link.textContent;
+                cap.appendChild(link);
+                card.appendChild(cap);
+                grid.appendChild(card);
               }
+              box.appendChild(grid);
             }
             bot.appendChild(box);
           }

@@ -300,7 +300,7 @@ def test_answer_prompt_covers_documents_and_images_without_ui_claims():
     from sict_crawler.service.retrieval import vlm
     p = vlm.answer_prompt("Quy định làm đồ án tốt nghiệp", "[1] (file) Quy định …")
     assert "Ảnh & Video" not in p                       # câu về giao diện: không nguồn nào chứng minh được
-    assert "không được trả lời là không tìm thấy" in p and "(image)/(video)" in p and "[graph]" in p
+    assert "không được trả lời là không tìm thấy" in p and "Ảnh/video được gom theo bài" in p and "[graph]" in p
     assert p.endswith("Câu hỏi: Quy định làm đồ án tốt nghiệp")
 
 
