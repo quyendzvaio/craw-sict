@@ -145,8 +145,17 @@ async def index():
 
 @app.get("/app.js")
 async def app_js():
-    return Response((UI_DIR / "app.js").read_text(),
-                    media_type="application/javascript",
+    return _ui_js("app.js")
+
+
+@app.get("/md.js")
+async def md_js():
+    return _ui_js("md.js")
+
+
+def _ui_js(name: str) -> Response:
+    # index.html (no-store) gắn ?v=N vào link script: đổi N khi sửa JS để trình duyệt không dùng bản cache cũ
+    return Response((UI_DIR / name).read_text(), media_type="application/javascript",
                     headers={"Cache-Control": "public, max-age=3600"})
 
 

@@ -127,3 +127,12 @@ def test_enforce_accepts_fullwidth_brackets():
     assert ans == "Quyết định 2536/QĐ-TTg[3], xem thêm [1] và ." and "Nguồn:" not in ans
     assert [c["n"] for c in cites] == [3, 1]
     assert C.used("a【2】 b［1］", 3) == [2, 1]
+
+
+def test_enforce_normalizes_fullwidth_punctuation():
+    """gpt-oss-120b-sale chấm câu bằng 。 (2026-11-04: "… gần 6.000 người [4]。 (Các số khác …"): đổi về dấu ASCII,
+    thêm khoảng trắng khi dấu dính liền chữ sau; không đụng số thập phân."""
+    srcs = [_src(), _src(title="B"), _src(title="C"), _src(title="D")]
+    ans, cites = C.enforce("Khoảng 6.000 người [4]。 （Ước tính）：25.22 điểm【3】。Hết！", srcs)
+    assert ans == "Khoảng 6.000 người [4]. (Ước tính): 25.22 điểm[3]. Hết!"
+    assert [c["n"] for c in cites] == [4, 3]

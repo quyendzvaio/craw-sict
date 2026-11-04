@@ -47,7 +47,10 @@ form.addEventListener('submit', async (ev) => {
   btn.disabled = true;
 
   const bot = el('div', 'msg');
-  const body = el('div');
+  const body = el('div', 'md');
+  let raw = '', cites = {};
+  // câu trả lời là markdown: dựng lại toàn bộ sau mỗi delta (md.js escape HTML trước khi dựng thẻ)
+  const paint = () => { body.innerHTML = renderMarkdown(raw, cites); };
   bot.appendChild(body);
   log.appendChild(bot);
   bot.scrollIntoView();
@@ -72,10 +75,12 @@ form.addEventListener('submit', async (ev) => {
         const data = line.slice(6);
         if (data === '[DONE]') continue;
         const obj = JSON.parse(data);
-        if (obj.delta) body.textContent += obj.delta;
-        if (obj.answer) body.textContent = obj.answer;          // server chuẩn hoá lại câu trả lời (bỏ [n] ảo)
+        if (obj.delta) { raw += obj.delta; paint(); }
+        if (obj.answer) { raw = obj.answer; paint(); }          // server chuẩn hoá lại câu trả lời (bỏ [n] ảo)
         // D24: trích dẫn bắt buộc — [n] ↔ nguồn (file PDF/PPTX kèm số trang trong nhãn cite)
         if (obj.citations && obj.citations.length) {
+          for (const c of obj.citations) cites[c.n] = c;      // [n] trong câu trả lời → link tới nguồn n
+          paint();
           const cbox = el('div', 'srcs');
           cbox.appendChild(el('span', null, 'Trích dẫn: '));
           for (const c of obj.citations) {
