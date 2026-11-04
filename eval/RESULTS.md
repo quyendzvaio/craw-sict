@@ -310,3 +310,50 @@ RAGAS chạy 2 lượt mỗi bản: trả lời bằng gpt-oss-120b-sale, giám 
 answer_relevancy vẫn thấp hơn khoảng 0,045, chủ yếu do g061 (0,37): model bỏ qua prompt và tả từng ảnh. Ở g064 model nói "không có thông tin ngày đăng" dù dòng tiêu đề có ngày. Cả hai là hành vi của model, chưa sửa.
 
 **Câu chỉ chữ.** Mức tụt 0,931 ở lượt fix đầu là nhiễu: fix2 0,993 ngang dev. Hai lượt dev cũng lệch nhau 0,03.
+
+## 2026-11-05 — nhánh cụm tên riêng + evidence đòi nguyên cụm tên (nhánh feat/person-name-retrieval)
+
+Sự cố: "khoảnh khắc của sinh viên Phạm Văn Tùng" không ra bài "Chúc mừng đội thi HaUI_Submission". Dense nhúng tên theo
+"âm hưởng" (Nguyễn Thanh Tùng cosine 0,53–0,62; đoạn chứa đúng tên 0,37–0,45, ngoài top 200), BM25 bỏ dấu coi
+pham / van / tung là từ phổ biến (20,6 / 34,4 / 6,4 % số điểm), graph chỉ có ~4 % tên (78 % tên chỉ ở 1 bài) và danh sách
+OR bị "khoảnh khắc" (85 điểm) chôn. `sufficient` True vì evidence đếm token rời.
+
+Sửa (tổng quát, không danh sách từ):
+- **A.** `query_rewriter.name_phrases`: cụm ≥ 2 từ liên tiếp viết hoa chữ đầu (bỏ từ đầu câu trừ khi cả câu là cụm; cắt ở
+  dấu câu / số / viết tắt toàn hoa). Mỗi cụm thêm 1 dense + 1 BM25 lọc `vector_store.phrase_filter` (MatchPhrase trên
+  index text `phrase_matching` của `content` / `caption`), bỏ cụm có ≥ 200 điểm ở một collection. `_rrf` giữ `dense_score`
+  từ bất kỳ danh sách dense nào (hit vào trước qua BM25 không còn cosine None).
+- **C.** `agent.evidence`: thiếu nguyên cụm tên (so bỏ dấu) trong ngữ cảnh → `sufficient` False ("thấp: tên riêng …").
+- Index tạo mới (một lần, `ensure_payload_indexes`, không re-embed; RAM Qdrant 211 → 293 MiB): text `phrase_matching`
+  `content` + `caption` trên `sict_text_v3` (16.628 điểm có `content`) và `sict_ocr_v3` (4.449 điểm có `caption`).
+- Cache truy vấn `q:v10` → `q:v11`.
+- Bộ mới `eval/person_v1.jsonl`: 40 câu dương (giảng viên có trang riêng 6, sinh viên có tên trong tiêu đề 8, tên CHỈ
+  nhắc trong thân bài 22, tên là khái niệm 4; dạng "X là ai", "thành tích của X", "khoảnh khắc của sinh viên X", "ảnh X",
+  1 không dấu, 1 gõ sai) + 4 câu âm tính (tên không có trong corpus, `expected_urls` rỗng: eval_api bỏ qua, chấm
+  `sufficient` riêng). Mọi url có trong `documents.url`, chữ của bài (Qdrant v3) chứa nguyên cụm tên; câu âm tính:
+  MatchPhrase đếm 0 điểm.
+
+Đo qua `/query` trên 2 API cùng index v3, cache Redis tắt, develop (`b68132c`) vs nhánh:
+
+| Bộ | develop | nhánh |
+|---|---|---|
+| golden_v1 R@5 / MRR@10 / media_mode | 1,0 / 0,947 / 0,871 | 1,0 / 0,947 / 0,871 |
+| golden_v2 url_hit@5 / MRR / abstain / false_abstain | 71/80 / 0,731 / 3/8 / 7/80 | **72/80 / 0,738** / 3/8 / 7/80 |
+| list_v2 coverage / full / sufficient_acc | 0,940 / 38/42 / 0,94 | 0,940 / 38/42 / 0,94 |
+| person_v1 R@5 / hit@8 / MRR | 0,650 / 0,650 / 0,577 | **0,975 / 0,975 / 0,933** |
+| person_v1 hit@8 theo nhóm (giảng viên / tiêu đề / thân bài / khái niệm) | 6/6 · 8/8 · 10/22 · 2/4 | 6/6 · 8/8 · **21/22** · **4/4** |
+| person_v1 `sufficient` đúng (dương: True khi trúng; âm: False) | 29/44 (âm 1/4) | **39/44 (âm 4/4)** |
+
+- Câu đổi hạng: golden_v2 g084 (tiếng Anh, "Information Technology") None → 2; golden_v1, list_v2 không câu nào đổi;
+  person_v1 16 câu lên (p15 "khoảnh khắc … Phạm Văn Tùng" None → 1, p16 bản gõ sai None → 1, p17 3 → 1, p40 4 → 3…),
+  **không câu nào tụt** ở cả 4 bộ.
+- `sufficient` lật: golden_v1 0/70, golden_v2 0/88, list_v2 0/50. person_v1 5 câu True → False: 3 câu âm tính (đúng);
+  p29 (bài đích hạng 1 nhưng tên ở ký tự 1.385 của đoạn 1.563 ký tự, ngân sách 11.000 / 8 nguồn = 1.375 cắt mất tên → LLM
+  thật sự không thấy tên); p33 (cụm có trong ngữ cảnh, False do cosine tốt nhất 0,42 < 0,45). Hai câu kia của báo cáo
+  điều tra (g004 "Năm Trường…", m30 "No Solution") không còn nhận nhầm vì cách lấy cụm (từ đầu câu, token lẫn ký hiệu).
+- Biến thể đã thử: 1 danh sách dense / cụm → person_v1 hit@8 0,925, MRR 0,726 (p25 "khoảnh khắc … Nguyễn Hồng Đông"
+  ngoài top 8: 1/61 RRF thua đoạn có mặt ở dense + BM25 + graph); 2 danh sách (dense + BM25) → 0,975 / 0,933, 3 bộ kia
+  như nhau.
+- Độ trễ `/query` (không LLM, cache nhúng nóng, xen kẽ 2 vòng, máy dev có tải khác): câu không tên p50 / p90 develop
+  0,08 / 0,12 s vs nhánh 0,09 / 0,14 s; câu có tên 0,07 / 0,11 s vs 0,10 / 0,15 s (+2 count + 2 tìm / cụm, song song).
+- Còn trượt: p20 "Chu Thi Lan Anh la ai" (không dấu: cụm không khớp index có dấu; khôi phục dấu chỉ dùng cho dense).
