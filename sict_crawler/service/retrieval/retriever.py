@@ -30,7 +30,7 @@ def index_tag() -> str:
 
 def query_cache_key(question: str, top_k: int, filters_key: str = "", index: str | None = None) -> str:
     index = index_tag() if index is None else index
-    return "q:v10:" + hashlib.sha256(   # v10: graph khái niệm D33 (bỏ [graph], ảnh theo người); v9: đoạn đủ dài, đoạn liền kề câu liệt kê, khôi phục dấu; v8: phạm vi mục + năm nhãn bảng + tiêu đề; v7: bảng mang nhãn; v6: D30
+    return "q:v11:" + hashlib.sha256(   # v11: nhánh cụm tên riêng; v10: graph khái niệm D33 (bỏ [graph], ảnh theo người); v9: đoạn đủ dài, đoạn liền kề câu liệt kê, khôi phục dấu; v8: phạm vi mục + năm nhãn bảng + tiêu đề; v7: bảng mang nhãn; v6: D30
         f"{question}\x00{top_k}\x00{filters_key}\x00{index}".encode()).hexdigest()
 
 
@@ -320,11 +320,13 @@ def retrieve(question: str, top_k: int = 5,
             clip_min, caption_min = rc.clip_min, rc.caption_min
         mfut = _STAGE_POOL.submit(_media_candidates, img_query_vecs, r["terms"], max(top_k, 10), f, r["rewritten"],
                                   image_vecs)
+    # cụm tên riêng (2026-11-05): "Phạm Văn Tùng" → 1 danh sách dense chỉ trong đoạn chứa nguyên cụm (xem name_phrases)
     t_hits = query_rewriter.hybrid_search_text(tvec, terms, limit=max(k * (3 if route.list_question else 2), 10),
                                                query_filter=qf, text=q0 or None,
                                                graph_filter=[_graph_filter(ekeys, all_of=True),
                                                              _graph_filter(ekeys)],
-                                               extra_vecs=extra, alt_queries=alt, scope_filter=F.scope_qdrant(f))
+                                               extra_vecs=extra, alt_queries=alt, scope_filter=F.scope_qdrant(f),
+                                               phrases=query_rewriter.name_phrases(q0) if has_text else None)
     if has_text:
         # raw_score = cosine câu hỏi↔đoạn (ngưỡng caption của router). v2: giữ thứ tự RRF dense+BM25
         # (xem rerank_text); v1: xếp lại theo cosine như cũ.
