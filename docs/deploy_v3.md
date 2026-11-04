@@ -5,6 +5,12 @@ Hai VM Docker Compose (D15, D32): **VM1** (2 vCPU / 4 GB) postgres + redis + qdr
 (`docker-compose.worker.yml`). Image kéo từ GHCR bằng workflow CD theo SHA của `main` (D10), VM không build.
 Mọi bước trên VM / S3 chỉ chạy khi chủ dự án đã cho phép (quy tắc 2026-10-14).
 
+**Quyết định chủ dự án 2026-11-05:**
+- Mọi nhánh chỉ merge vào `develop`. `develop → main` là bước cuối cùng, ngay trước khi lên production.
+- CD chỉ chạy ở bước cuối, sau khi đã merge vào `main` (bước 0 bên dưới mở đầu chuỗi đó).
+- Dữ liệu production được thay bằng bản mới nhất (index v3), không giữ dữ liệu hiện có trên VM. Bước 8 vẫn backup trước khi thay.
+- Grafana Cloud / Alloy chỉ bật khi lên production (bước 13), không bật sớm hơn.
+
 ## 1. Thứ tự bước
 
 | # | Ở đâu | Lệnh | Kiểm |
