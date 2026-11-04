@@ -101,6 +101,17 @@ main{flex:1;width:100%;max-width:760px;margin:0 auto;padding:8px 16px 24px;displ
 .src.image,.src.video_frame,.src.video{color:var(--link)}
 .mhead{display:block;margin:12px 0 6px;font-size:12.5px;font-weight:600;color:var(--faint)}
 .lbl+.mhead,.srcs>.mhead:first-child{margin-top:0}
+.media{margin-top:16px}.media>.mhead:first-child{margin-top:0}
+.src.cite-file{color:var(--link);border-color:color-mix(in srgb,var(--link) 35%,var(--border))}
+/* "Nguồn tham khảo (N)": thu gọn mặc định, bấm để mở */
+.refs>summary{display:inline-flex;align-items:center;gap:6px;cursor:pointer;list-style:none;user-select:none;font-size:13px;color:var(--muted);
+  padding:3px 12px 3px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg)}
+.refs>summary::-webkit-details-marker{display:none}
+.refs>summary::before{content:"";width:6px;height:6px;border-right:1.6px solid currentColor;border-bottom:1.6px solid currentColor;transform:rotate(-45deg);transition:transform .15s}
+.refs[open]>summary::before{transform:rotate(45deg) translate(-1px,-1px)}
+.refs>summary:hover{background:var(--soft);color:var(--fg)}
+.reflist{margin-top:8px}
+.files{margin-bottom:2px}
 .mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
 .mcard{margin:0;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--bg);display:flex;flex-direction:column;min-width:0}
 .mcard>a{display:block;overflow:hidden}
@@ -213,6 +224,6 @@ main{flex:1;width:100%;max-width:760px;margin:0 auto;padding:8px 16px 24px;displ
 </div>
 
 <script src="md.js?v=1"></script>
-<script src="app.js?v=4"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

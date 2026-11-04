@@ -101,37 +101,41 @@ lb.addEventListener('click', (ev) => { if (ev.target === lb) closeImage(); });
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !lb.hidden) closeImage(); });
 
 // ---------- nguồn ----------
-function srcLink(s) {
-  const date = s.published_at ? ' (' + s.published_at.slice(0, 10).split('-').reverse().join('/') + ')' : '';
-  const kind = s.kind === 'file' ? 'tải file' : s.kind;
+// Thứ tự dưới một câu trả lời (2026-11-05): câu trả lời → ghi chú → lưới "Ảnh & Video" → "Trích dẫn" (gộp theo bài)
+// → tệp đính kèm (hành động, luôn hiện) → "Nguồn tham khảo (N)" (mọi đoạn văn bản tìm được, thu gọn mặc định).
+const fmtDate = (d) => d ? d.slice(0, 10).split('-').reverse().join('/') : '';
+const pageOf = (s) => (s.kind !== 'file' && s.parent_url) || s.url;    // ảnh/video → bài chứa nó
+const VIDEO = new Set(['video', 'video_frame']);
+
+function srcLabel(s) {
+  // không còn tiền tố kỹ thuật "text ·" / "image ·"; file giữ "tải file", video có dấu ▶ (kèm giây nếu có)
+  const pre = s.kind === 'file' ? 'tải file · '
+    : VIDEO.has(s.kind) ? '▶ ' + (s.timestamp != null ? `${s.timestamp.toFixed(0)}s · ` : '') : '';
   // D23: mục chứa đoạn trích trong bài (heading_path) giúp biết đoạn nằm ở đâu
   const where = s.heading_path && s.heading_path.length ? ' › ' + s.heading_path.join(' › ') : '';
-  const label = kind + (s.timestamp != null ? ` @ ${s.timestamp.toFixed(1)}s` : '') +
-    ' · ' + (s.title || s.excerpt || s.url).slice(0, 60) + where.slice(0, 80) + date;
-  const a = link('src ' + s.kind, label, s.url);
+  const date = s.published_at ? ` (${fmtDate(s.published_at)})` : '';
+  return pre + (s.title || s.excerpt || s.url).slice(0, 70) + where.slice(0, 80) + date;
+}
+
+function srcLink(s, href) {
+  const label = srcLabel(s);
+  const a = link('src ' + s.kind, label, href || s.url);
   a.title = label;
   return a;
 }
 
-function renderSources(box, obj) {
-  const mediaWithImg = (obj.media || []).filter((s) => s.media_key || s.media_id);
-  if (!(obj.text || []).length && !mediaWithImg.length) return;
+// lưới ảnh/video ngay dưới câu trả lời: câu hỏi xin ảnh thấy ảnh ngay, không phải cuộn qua các chip nguồn
+function renderMedia(box, media) {
+  const withImg = (media || []).filter((s) => s.media_key || s.media_id);
+  if (!withImg.length) return;
   box.hidden = false;
-  if ((obj.text || []).length) {
-    box.appendChild(el('span', 'lbl', 'Văn bản:'));
-    // nguồn chữ chỉ là link (ảnh chỉ hiện ở khung media khi router cho phép — AC-R12)
-    for (const s of obj.text) {
-      box.appendChild(srcLink(s));
-      if (s.kind === 'file' && s.parent_url) box.appendChild(link('src text', 'trang chứa file', s.parent_url));
-    }
-  }
   // D21: ảnh giống ảnh người gửi (via=i2i) tách khỏi ảnh liên quan tới câu hỏi
-  for (const [title, pick] of [['Ảnh tương tự:', (s) => s.via === 'i2i'],
-                               ['Ảnh & Video:', (s) => s.via !== 'i2i']]) {
-    const group = mediaWithImg.filter(pick);
+  for (const [title, pick] of [['Ảnh tương tự', (s) => s.via === 'i2i'],
+                               ['Ảnh & Video', (s) => s.via !== 'i2i']]) {
+    const group = withImg.filter(pick);
     if (!group.length) continue;
     box.appendChild(el('span', 'mhead', title));
-    // lưới thẻ ảnh; bấm ảnh mở khung xem lớn (Ctrl/⌘ + bấm hoặc "Mở ảnh gốc" mở tab mới)
+    // bấm ảnh mở khung xem lớn (Ctrl/⌘ + bấm mở ảnh trong tab mới); chú thích là link tới bài chứa ảnh
     const grid = el('div', 'mgrid');
     for (const s of group) {
       const card = el('figure', 'mcard');
@@ -139,17 +143,17 @@ function renderSources(box, obj) {
       const a = link(null, null, src);
       const img = document.createElement('img');
       img.src = src;
-      img.alt = (s.excerpt || s.kind).slice(0, 80);
+      img.alt = (s.excerpt || s.title || s.kind).slice(0, 80);
       img.loading = 'lazy';
       a.appendChild(img);
       a.addEventListener('click', (ev) => {
         if (ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.button !== 0) return;
         ev.preventDefault();
-        openImage(src, s.title || s.excerpt || '', s.url);
+        openImage(src, s.title || s.excerpt || '', pageOf(s));
       });
       card.appendChild(a);
       const cap = el('figcaption');
-      cap.appendChild(srcLink(s));
+      cap.appendChild(srcLink(s, pageOf(s)));
       card.appendChild(cap);
       grid.appendChild(card);
     }
@@ -157,13 +161,73 @@ function renderSources(box, obj) {
   }
 }
 
-function renderCitations(box, list) {
+// tệp đính kèm là hành động (tải về / mở trang chứa file) → luôn hiện; mọi đoạn văn bản tìm được → mục thu gọn
+function renderText(box, text) {
+  if (!(text || []).length) return;
+  box.hidden = false;
+  const files = [], seenFile = new Set();
+  for (const s of text) if (s.kind === 'file' && !seenFile.has(s.url)) { seenFile.add(s.url); files.push(s); }
+  if (files.length) {
+    const row = el('div', 'files');
+    for (const s of files) {
+      row.appendChild(srcLink(s));
+      if (s.parent_url) row.appendChild(link('src text', 'trang chứa file', s.parent_url));
+    }
+    box.appendChild(row);
+  }
+  // nguồn chữ chỉ là link (ảnh chỉ hiện ở khung media khi router cho phép — AC-R12); file đã ở hàng trên;
+  // bỏ chip trùng nhãn + link
+  const items = [], seen = new Set();
+  for (const s of text) {
+    const key = s.url + '|' + srcLabel(s);
+    if (s.kind !== 'file' && !seen.has(key)) { seen.add(key); items.push(s); }
+  }
+  if (!items.length) return;
+  const det = el('details', 'refs');
+  det.appendChild(el('summary', null, `Nguồn tham khảo (${items.length})`));
+  const list = el('div', 'reflist');
+  for (const s of items) list.appendChild(srcLink(s));
+  det.appendChild(list);
+  box.appendChild(det);
+}
+
+// "[3][7]", "[11]–[16]": số liền nhau ≥ 3 gộp thành khoảng
+function fmtNums(ns) {
+  const out = [];
+  for (let i = 0; i < ns.length;) {
+    let j = i;
+    while (j + 1 < ns.length && ns[j + 1] === ns[j] + 1) j++;
+    if (j - i >= 2) out.push(`[${ns[i]}]–[${ns[j]}]`);
+    else for (let k = i; k <= j; k++) out.push(`[${ns[k]}]`);
+    i = j + 1;
+  }
+  return out.join('');
+}
+
+// D24: mỗi chip một bài/tài liệu: các [n] trỏ cùng bài (đoạn văn của bài + ảnh của bài) gộp lại, link tới bài đó.
+// all = nguồn chữ + nguồn media theo đúng thứ tự đánh số [1]…[n] của server (citations.index / enforce).
+function renderCitations(box, list, all) {
   box.textContent = '';
   box.hidden = false;
-  box.appendChild(el('span', 'lbl', 'Trích dẫn:'));
+  box.appendChild(el('span', 'lbl', 'Trích dẫn'));
+  const groups = new Map();
   for (const c of list) {
-    const a = link('src ' + (c.kind || 'text'), `[${c.n}] ${c.cite || c.title || c.url}`.slice(0, 120), c.url);
-    a.title = c.cite || c.title || c.url;
+    const s = all[c.n - 1];
+    const href = (s && s.url === c.url ? pageOf(s) : null) || c.url;
+    const key = (href || c.title || String(c.n)).replace(/^https?:\/\//, '').replace(/\/+$/, '').toLowerCase();
+    if (!groups.has(key)) groups.set(key, {href, items: []});
+    groups.get(key).items.push(c);
+  }
+  const ordered = [...groups.values()].sort((x, y) => Math.min(...x.items.map((c) => c.n)) - Math.min(...y.items.map((c) => c.n)));
+  for (const g of ordered) {
+    const ns = g.items.map((c) => c.n).sort((a, b) => a - b);
+    const first = g.items[0];
+    // một [n]: nhãn cite đầy đủ (file kèm trang, bài kèm mục); nhiều [n] cùng bài: tên bài
+    const cites = new Set(g.items.map((c) => c.cite || c.title));
+    const name = cites.size === 1 ? (first.cite || first.title || g.href) : (first.title || first.cite || g.href);
+    const kind = g.items.some((c) => c.kind === 'file') ? 'file' : 'text';
+    const a = link('src cite-' + kind, `${fmtNums(ns)} ${name}`.slice(0, 140), g.href);
+    a.title = [...cites].join('\n');
     box.appendChild(a);
   }
 }
@@ -204,14 +268,15 @@ async function ask(q, b64, imgUrl) {
   phase.append(dots, phaseText);
   const body = el('div', 'md');
   const notes = el('div');
-  const cbox = el('div', 'srcs'); cbox.hidden = true;     // "Trích dẫn:" — [n] ↔ nguồn (D24)
-  const sbox = el('div', 'srcs'); sbox.hidden = true;     // "Văn bản:" + lưới "Ảnh & Video:"
-  bot.append(phase, body, notes, cbox, sbox);
+  const mbox = el('div', 'media'); mbox.hidden = true;   // lưới "Ảnh & Video" ngay dưới câu trả lời
+  const cbox = el('div', 'srcs'); cbox.hidden = true;     // "Trích dẫn" — [n] ↔ nguồn (D24), gộp theo bài
+  const sbox = el('div', 'srcs'); sbox.hidden = true;     // tệp đính kèm + "Nguồn tham khảo (N)" thu gọn
+  bot.append(phase, body, notes, mbox, cbox, sbox);
   bt.append(av, bot);
   log.append(ut, bt);
   toBottom();
 
-  let raw = '', cites = {}, done = false;
+  let raw = '', cites = {}, done = false, all = [];
   // câu trả lời là markdown: dựng lại toàn bộ sau mỗi delta (md.js escape HTML trước khi dựng thẻ)
   const paint = () => {
     const stick = nearBottom();
@@ -259,7 +324,7 @@ async function ask(q, b64, imgUrl) {
         if (obj.citations && obj.citations.length) {
           for (const c of obj.citations) cites[c.n] = c;      // [n] trong câu trả lời → link tới nguồn n
           paint();
-          renderCitations(cbox, obj.citations);
+          renderCitations(cbox, obj.citations, all);
         }
         if (obj.status) {
           if (phase.isConnected) phaseText.textContent = 'Đang soạn câu trả lời';
@@ -270,7 +335,13 @@ async function ask(q, b64, imgUrl) {
             notes.appendChild(el('div', 'note', 'Tài liệu tìm được chỉ liên quan một phần, câu trả lời có thể chưa đầy đủ.'));
           }
         }
-        if (obj.text || obj.media) { const stick = nearBottom(); renderSources(sbox, obj); if (stick) toBottom(); }
+        if (obj.text || obj.media) {
+          all = [...(obj.text || []), ...(obj.media || [])];   // đánh số [n] như server: chữ trước, media sau
+          const stick = nearBottom();
+          renderMedia(mbox, obj.media);
+          renderText(sbox, obj.text);
+          if (stick) toBottom();
+        }
       }
     }
     body.classList.remove('streaming');
