@@ -233,3 +233,48 @@ tái lập đúng số lần đo D33):
   Sau khi ghi lại payload, Qdrant tối ưu lại segment nên vài hạng trôi dù khái niệm khớp không đổi (q50 1 → 2;
   g029 vào lại top 5, g055 / g057 / g058 lên, g031 xuống; list m11 0/8 → 8/8). Số trên index mới (2 lần đo trùng nhau):
   golden_v1 1,0 / 0,947, golden_v2 71/80 / 0,731, list_v2 0,940 (38/42) / sufficient_acc 0,94, abstain 3/8.
+
+## 2026-11-05 — media_v1: bộ đo use case ảnh / video / file (nhánh feat/eval-media-v1)
+
+Chủ dự án: "trong tập test chưa có mấy câu yêu cầu response ra ảnh". `eval/media_v1.jsonl` (101 câu, tiêu chí
+`eval/media_v1.md`, chấm bằng `scripts/eval_media.py` trên nguồn của `/query`, không phụ thuộc LLM). Lần chạy đầu
+trên API dev :8003 (nhánh fix/media-answer, index v3, cache Redis), `eval/results/media_v1_2026-11-05.json`:
+
+| số đo | tổng | image (36) | video (15) | file (15) | optional (16) | none (15) | ngoài phạm vi (4) |
+|---|---|---|---|---|---|---|---|
+| media_mode_acc | 0,970 (98/101) | 0,944 | 1,0 | 1,0 | 0,938 | 1,0 | 1,0 |
+| wants_file_acc | 0,950 (96/101) | 0,972 | 1,0 | 0,733 | 1,0 | 1,0 | 1,0 |
+| url_hit | 0,979 (95/97) | 1,0 | 0,867 | 1,0 | 1,0 | 1,0 | – |
+| text_mrr@10 | 0,850 | 0,863 | 0,598 | 1,0 | 0,854 | 0,913 | – |
+| required_has_media | 0,980 (50/51) | 0,972 | 1,0 | – | – | – | – |
+| media_on_target | 0,892 (58/65) | 0,917 | 0,733 | 1,0 | 1,0 | – | – |
+| media_precision (micro) | 0,677 | 0,782 | 0,333 | 1,0 | 0,974 | – | – |
+| none_clean | 0,939 (31/33) | – | – | 1,0 | – | 1,0 | 0,5 |
+| file_hit | 1,0 (15/15) | – | – | 1,0 | – | – | – |
+| video_hit | 0,667 (10/15) | – | 0,667 | – | – | – | – |
+| abstain_ok / false_abstain | 4/4 / 4/97 | | | | | | |
+
+Theo kiểu gõ (media_mode_acc / url_hit / text_mrr): question 0,971 / 1,0 / 0,902; phrase 1,0 / 0,963 / 0,907;
+no_accent 0,929 / 1,0 / 0,875; abbrev 1,0 / 1,0 / 0,944; typo 1,0 / 1,0 / 0,611; chatty 1,0 / 1,0 / 0,708;
+english 0,667 / 0,667 / 0,131 (3 câu).
+
+Sửa bộ câu sau lần chạy đầu (lỗi ở câu / đáp án, không phải hệ thống): m018 đổi câu ("phòng lab của trường" trùng bài
+khai trương Lab VTIT); m025 / m036 thêm thông báo 71714 của cùng hội thảo; m027 thêm bài "Chúc mừng thành công OLP'24…
+ICPC 2024" (cũng là bài bế mạc); f013 đổi `media_mode` mong đợi sang `optional` (câu có "lễ tốt nghiệp", ảnh trả về
+thuộc đúng bài). Scorer: `video_hit` nhận `kind=video` (v2/v3 gộp mỗi video thành 1 nguồn), bản đầu chỉ nhận
+`video_frame` nên 1/15.
+
+18 câu còn trượt, đều do hệ thống (chưa sửa code, chỉ ghi nhận):
+- **Router (luật từ khoá)**: m033 "Show me photos…" → `none` (không có từ tiếng Anh); m015 "anh it festival 2016" →
+  `optional` ("anh" đầu câu không dấu không có ngữ cảnh trong `_REQUIRED`); m021 "lễ trao quyết định bổ nhiệm" →
+  `wants_file=true`; f002 "tải ở đâu", f007 / f010 / f013 nêu tên văn bản (kế hoạch học kỳ, mẫu sơ yếu lý lịch, sơ đồ hội
+  trường) → `wants_file=false` (file vẫn được tìm thấy: file_hit 15/15); o014 buổi làm việc với Portsmouth → `none`.
+- **Ảnh trả về không thuộc bài đúng dù bài đứng hạng 1 chữ**: m001 (8 ảnh từ thông báo tổ chức lễ 71845 và 4 bài
+  khác, không ảnh nào của bài tường thuật 71855 có 16 ảnh); m023 "ảnh cựu sinh viên Phạm Văn Cương" (tên chỉ ở thân bài,
+  caption = tiêu đề + OCR nên nhánh media không khớp; 8 ảnh của bài khác).
+- **Video**: v002 "video giới thiệu CTĐT Công nghệ thông tin" → trang CTĐT html và 4 bài tin, bài có video 71355 ngoài
+  top 10; v003 (MMT&TTDL) và v004 (Đa phương tiện) → bài tin giới thiệu ngành 2026 không có video đứng trên bài
+  tuyển sinh 2025 có video (hạng 4), media toàn ảnh bài khác; v015 (gõ sai) có 4 ảnh đúng bài nhưng mất slot video;
+  v008 / v013 tiếng Anh: `sufficient=false`, v013 không tìm được bài.
+- **Ngoài phạm vi đòi ảnh** (x002 tháp Eiffel, x004 nấu phở): `sufficient=false` đúng nhưng vẫn trả 8 ảnh ngẫu nhiên
+  (ngưỡng `clip_min` / `caption_min` không chặn) — trái AC-R9.
