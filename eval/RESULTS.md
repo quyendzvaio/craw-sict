@@ -357,3 +357,19 @@ Sửa (tổng quát, không danh sách từ):
 - Độ trễ `/query` (không LLM, cache nhúng nóng, xen kẽ 2 vòng, máy dev có tải khác): câu không tên p50 / p90 develop
   0,08 / 0,12 s vs nhánh 0,09 / 0,14 s; câu có tên 0,07 / 0,11 s vs 0,10 / 0,15 s (+2 count + 2 tìm / cụm, song song).
 - Còn trượt: p20 "Chu Thi Lan Anh la ai" (không dấu: cụm không khớp index có dấu; khôi phục dấu chỉ dùng cho dense).
+
+RAGAS trên 21 câu đổi nguồn: 20 câu person_v1 và golden_v2 g084. Câu trả lời sinh bằng gpt-oss-120b-sale, giám khảo là qwen3.5-flash-sale, mỗi bản sinh câu trả lời 1 lần, cache tắt. Một phần lượt chấm trúng lúc kiraai báo lỗi 402 hết tiền nên phải chấm lại bằng `--retry-errors`. Còn 2 câu ở develop và 5 câu ở nhánh không chấm được, nên số câu (n) mỗi chỉ số khác nhau.
+
+| | develop | nhánh |
+|---|---|---|
+| faithfulness (n=17) | 0,973 | 0,907 |
+| answer_relevancy (n=20) | 0,156 | **0,567** |
+| context_precision (n=20) | 0,557 | **0,899** |
+
+- **develop** trả lời "Không có thông tin về …" ở 15/21 câu, vì tên người không vào ngữ cảnh. Câu từ chối thì faithfulness luôn đúng nhưng answer_relevancy gần 0.
+- **Nhánh** trả lời đúng người, ví dụ p15 "Phạm Văn Tùng là một trong ba thành viên…" và p20 "Chu Thị Lan Anh là học viên thạc sĩ ngành Hệ thống thông tin…".
+- **Faithfulness giảm** chủ yếu do giám khảo:
+  - n04: cả hai bản cùng từ chối "Không có thông tin về giảng viên Lý Thị Phương Thảo", nhưng nhánh bị chấm 0,20.
+  - p24: 0,50.
+  - p16: 0,83.
+- Các câu âm tính n02–n04 vẫn từ chối đúng.
