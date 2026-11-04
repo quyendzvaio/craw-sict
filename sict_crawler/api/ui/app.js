@@ -102,7 +102,7 @@ document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !lb.hi
 
 // ---------- nguồn ----------
 // Thứ tự dưới một câu trả lời (2026-11-05): câu trả lời → ghi chú → lưới "Ảnh & Video" → "Trích dẫn" (gộp theo bài)
-// → tệp đính kèm (hành động, luôn hiện) → "Nguồn tham khảo (N)" (mọi đoạn văn bản tìm được, thu gọn mặc định).
+// → tệp đính kèm (hành động, luôn hiện). Không còn danh sách mọi đoạn tìm được: chỉ một danh sách nguồn là "Trích dẫn".
 const fmtDate = (d) => d ? d.slice(0, 10).split('-').reverse().join('/') : '';
 const pageOf = (s) => (s.kind !== 'file' && s.parent_url) || s.url;    // ảnh/video → bài chứa nó
 const VIDEO = new Set(['video', 'video_frame']);
@@ -175,20 +175,9 @@ function renderText(box, text) {
     }
     box.appendChild(row);
   }
-  // nguồn chữ chỉ là link (ảnh chỉ hiện ở khung media khi router cho phép — AC-R12); file đã ở hàng trên;
-  // bỏ chip trùng nhãn + link
-  const items = [], seen = new Set();
-  for (const s of text) {
-    const key = s.url + '|' + srcLabel(s);
-    if (s.kind !== 'file' && !seen.has(key)) { seen.add(key); items.push(s); }
-  }
-  if (!items.length) return;
-  const det = el('details', 'refs');
-  det.appendChild(el('summary', null, `Nguồn tham khảo (${items.length})`));
-  const list = el('div', 'reflist');
-  for (const s of items) list.appendChild(srcLink(s));
-  det.appendChild(list);
-  box.appendChild(det);
+  // Không hiện danh sách "Nguồn tham khảo" (mọi đoạn tìm được): chủ dự án 2026-11-05 chỉ giữ một danh sách nguồn
+  // dưới câu trả lời là "Trích dẫn" (nguồn câu trả lời thật sự dùng; không trích gì thì server thêm "Nguồn:").
+  if (!files.length) box.hidden = true;
 }
 
 // "[3][7]", "[11]–[16]": số liền nhau ≥ 3 gộp thành khoảng
@@ -270,7 +259,7 @@ async function ask(q, b64, imgUrl) {
   const notes = el('div');
   const mbox = el('div', 'media'); mbox.hidden = true;   // lưới "Ảnh & Video" ngay dưới câu trả lời
   const cbox = el('div', 'srcs'); cbox.hidden = true;     // "Trích dẫn" — [n] ↔ nguồn (D24), gộp theo bài
-  const sbox = el('div', 'srcs'); sbox.hidden = true;     // tệp đính kèm + "Nguồn tham khảo (N)" thu gọn
+  const sbox = el('div', 'srcs'); sbox.hidden = true;     // tệp đính kèm (tải file / trang chứa file)
   bot.append(phase, body, notes, mbox, cbox, sbox);
   bt.append(av, bot);
   log.append(ut, bt);
