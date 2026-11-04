@@ -30,7 +30,7 @@ _GRAPH_REFRESH_SEC = 600
 
 
 async def _refresh_graph() -> None:
-    """Nạp danh bạ thực thể (graph D20) từ Postgres. Lỗi/không có PG → giữ bản cũ (hoặc tắt graph)."""
+    """Nạp danh bạ khái niệm (graph D33) từ Postgres. Lỗi/không có PG → giữ bản cũ (hoặc tắt graph)."""
     import asyncio
 
     from sict_crawler.service.graph import graph as G
@@ -38,10 +38,8 @@ async def _refresh_graph() -> None:
     try:
         async with db.get_session() as s:
             gaz = await asyncio.wait_for(graphsync.load_gazetteer(s), timeout=20)
-            rels = await asyncio.wait_for(graphsync.load_relations(s), timeout=20)
         G.set_current(gaz if len(gaz) else None)
-        G.set_relations(rels, gaz)
-        print(f"[graph] danh bạ {len(gaz)} thực thể, {len(rels)} cạnh thực thể–thực thể")
+        print(f"[graph] danh bạ {len(gaz)} khái niệm")
     except Exception as e:  # noqa: BLE001
         print(f"[graph] không nạp được danh bạ: {e}")
 
@@ -147,9 +145,33 @@ async def index():
 
 @app.get("/app.js")
 async def app_js():
-    return Response((UI_DIR / "app.js").read_text(),
-                    media_type="application/javascript",
+    return _ui_js("app.js")
+
+
+@app.get("/md.js")
+async def md_js():
+    return _ui_js("md.js")
+
+
+def _ui_js(name: str) -> Response:
+    # index.html (no-store) gắn ?v=N vào link script: đổi N khi sửa JS để trình duyệt không dùng bản cache cũ
+    return Response((UI_DIR / name).read_text(), media_type="application/javascript",
                     headers={"Cache-Control": "public, max-age=3600"})
+
+
+# Logo HaUI của khung chat (lấy từ chính site sict.haui.edu.vn): chỉ phục vụ đúng các file này, không đọc đường dẫn tuỳ ý
+_UI_ASSETS = {"haui-logo.svg", "haui-logo-dark.svg", "haui-emblem.svg"}
+
+
+@app.get("/ui/{name}")
+async def ui_asset(name: str) -> Response:
+    if name not in _UI_ASSETS:
+        raise HTTPException(404, "not found")
+    # SVG mở thẳng như một trang: CSP chặn script/tài nguyên ngoài, chỉ cho <style> nội tuyến của file
+    return Response((UI_DIR / name).read_bytes(), media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400",
+                             "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+                             "X-Content-Type-Options": "nosniff"})
 
 
 @app.get("/media/s/{key}")

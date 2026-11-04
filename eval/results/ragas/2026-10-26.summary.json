@@ -1,0 +1,33 @@
+{
+ "golden": {
+  "n": 70,
+  "faithfulness": 0.868,
+  "faithfulness_n": 69,
+  "answer_relevancy": 0.744,
+  "answer_relevancy_n": 70,
+  "context_precision": 0.75,
+  "context_precision_n": 67
+ },
+ "list": {
+  "n": 12,
+  "faithfulness": 0.985,
+  "faithfulness_n": 11,
+  "answer_relevancy": 0.781,
+  "answer_relevancy_n": 12,
+  "context_precision": 0.652,
+  "context_precision_n": 12,
+  "context_recall": 0.937,
+  "context_recall_n": 12
+ },
+ "all": {
+  "n": 82,
+  "faithfulness": 0.884,
+  "faithfulness_n": 80,
+  "answer_relevancy": 0.75,
+  "answer_relevancy_n": 82,
+  "context_precision": 0.735,
+  "context_precision_n": 79,
+  "context_recall": 0.937,
+  "context_recall_n": 12
+ }
+}

@@ -84,3 +84,43 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
     print("OK — filters")
+
+
+def test_infer_scope_section_when_question_names_published_works():
+    """Câu nêu đúng loại công bố ("bài báo khoa học", "báo cáo khoa học", "công trình đã công bố") → mục
+    danh-muc-cong-trinh-da-cong-bo là phạm vi tìm thêm; đề tài NCKH sinh viên thì không (golden_v2 g053/g054)."""
+    for q in ["Năm 2021 giảng viên của trường công bố những bài báo khoa học nào?",
+              "Báo cáo khoa học năm 2021 có những báo cáo nào?", "cac cong trinh da cong bo nam 2020"]:
+        f = F.infer(q, TODAY)
+        assert f.scope_sections == ["danh-muc-cong-trinh-da-cong-bo"], q
+        assert "sinh-vien-nckh" not in f.prefer_sections, q       # không cộng điểm cho đề tài sinh viên
+    for q in ["Tổng hợp đề tài sinh viên nghiên cứu khoa học năm 2021", "Ngành khoa học máy tính học gì?",
+              "báo cáo thực tập tốt nghiệp nộp khi nào"]:
+        assert F.infer(q, TODAY).scope_sections == [], q
+    assert "scope_sections" in F.infer("bài báo khoa học 2021", TODAY).cache_key()
+
+
+def test_year_boost_uses_table_label_year_of_the_chunk():
+    """Một trang gom bảng nhiều năm (Bài báo khoa học: NĂM 2021 … NĂM 2013) có year = năm đăng trang. Mảnh bảng
+    mang nhãn năm thì so năm theo nhãn, không theo năm đăng."""
+    f = F.QueryFilters(prefer_years=[2021])
+    head = "[Bài báo khoa học | Công trình đã công bố | 10/12/2021] "
+    assert F.boost({"year": 2021, "content": head + "[Bảng: NĂM 2021] | STT | Tên bài báo |"}, f) == F.YEAR_BOOST
+    assert F.boost({"year": 2021, "content": head + "[Bảng: NĂM 2014] | STT | Tên bài báo |"}, f) == 1.0
+    assert F.boost({"year": 2019, "content": head + "[Bảng: Danh sách năm học 2020-2021] | STT |"}, f) == F.YEAR_BOOST
+    assert F.boost({"year": 2021, "content": head + "[Bảng] | STT |"}, f) == F.YEAR_BOOST    # không nhãn năm
+    assert F.boost({"year": 2021, "content": head + "Bài báo khoa học"}, f) == F.YEAR_BOOST
+
+
+def test_title_boost_when_question_names_the_page():
+    """Tiêu đề trang (≥ 3 từ) nằm nguyên văn trong câu hỏi → nhân điểm: "bài báo khoa học" chọn trang "Bài báo khoa
+    học", không phải "Báo cáo khoa học" (cùng mục, cùng năm, bảng giống nhau)."""
+    hits = [{"title": "Báo cáo khoa học", "score": 1.0}, {"title": "Bài báo khoa học", "score": 0.9},
+            {"title": "Tin tức", "score": 0.95}]
+    out = F.apply_title_boost([dict(h) for h in hits], "Năm 2021 giảng viên công bố những bài báo khoa học nào?")
+    assert [h["title"] for h in out] == ["Bài báo khoa học", "Báo cáo khoa học", "Tin tức"]
+    out = F.apply_title_boost([dict(h) for h in hits], "tin tức mới")        # tiêu đề 2 từ: không tính
+    assert [h["title"] for h in out] == ["Báo cáo khoa học", "Bài báo khoa học", "Tin tức"]   # không khớp: giữ thứ tự
+    out = F.apply_title_boost([dict(h) for h in hits], "bao cao khoa hoc nam 2021")   # không dấu vẫn khớp
+    assert out[0]["title"] == "Báo cáo khoa học" and out[0]["score"] == F.TITLE_BOOST
+    assert F.apply_title_boost([{"title": "Bài báo khoa học", "score": 1.0}], "bài báo khoa họcxyz")[0]["score"] == 1.0

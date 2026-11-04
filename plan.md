@@ -24,8 +24,9 @@ Tiêu chí chấp nhận: `tests/acceptance_criteria.md` (AC-B/E/G/H/O) và
 video sidebar 1→0, markdown 15.099→8.425 ký tự. Bộ đếm lượt xem nằm trong HTML → hash raw
 đổi mỗi lần có người đọc → trang bị coi là "sửa" và xử lý lại toàn bộ.
 
-Phần cứng: VM1, VM2 = c7i-flex.large (2 vCPU, 4 GB). Tổng `mem_limit` VM1 = 3.650 MB
-(gần hết RAM), VM2 = 6.150 MB (vượt RAM nếu svc-ocr + cron chạy cùng lúc).
+Phần cứng (D32, 2026-10-29): VM1 = c7i-flex.large (2 vCPU, 4 GB): postgres, redis, qdrant, api, nginx.
+VM2 = EC2 riêng 2 vCPU / 8 GB: dịch vụ embed + worker `cron` + obscura. Tổng `mem_limit` VM1 = 3.650 MB,
+VM2 = 7.150 MB (svc-ocr chỉ chạy tay). Số đo thật ở mục "Ngân sách RAM".
 
 ## Quyết định đã chốt
 
@@ -42,7 +43,7 @@ Phần cứng: VM1, VM2 = c7i-flex.large (2 vCPU, 4 GB). Tổng `mem_limit` VM1 
 | D9 | Giữ 2 VM; VM2 chạy Spot hoặc bật/tắt theo lịch; **1 đường triển khai** trên VM2 (compose `cron`; CD gỡ `sict-worker-24h` từ 2026-10-21), bỏ `sict-worker-24h`/`loop24h.sh` | 2 đường deploy song song |
 | D10 | CI build image → GHCR, tag theo commit SHA; VM chỉ `pull`; rollback = đổi tag — **đã làm 2026-10-21** (`release.yml`, `cd.yml`; chưa chạy trên VM) | tar + scp + build trên VM 4 GB |
 | D11 | Swap 2 GB trên cả 2 VM; pin version mọi image (bỏ `:latest`) — **ghim xong 2026-10-21** trừ `minio/mc` (profile minio local) | không swap, `:latest` |
-| D12 | Bảo mật: bind cổng DB/cache vào IP private (hoặc SG chỉ cho VM2), Redis `requirepass`, Qdrant API key (`QDRANT__SERVICE__API_KEY`), mật khẩu PG mạnh, LLM qua TLS/tunnel | cổng 0.0.0.0, `sict/sict`, Qdrant không khoá, HTTP thường |
+| D12 | Bảo mật: bind cổng DB/cache vào IP private (hoặc SG chỉ cho VM2), Redis `requirepass`, Qdrant API key (`QDRANT__SERVICE__API_KEY`), mật khẩu PG mạnh, LLM qua TLS/tunnel. **Đã làm phần store 2026-11-01** (chưa chạy trên VM): mật khẩu / khoá từ `.env`, cổng store nghe `STORE_BIND` (mặc định 127.0.0.1; VM1 đặt 0.0.0.0 vì card mạng EC2 chỉ có IP private → cửa thật là SG chỉ cho VM2), `scripts/store_auth.sh` (`init-env` / `check vm1\|vm2` / `sync-pg`) được CD gọi trước `up`, Alloy nhận mật khẩu qua `--stack-env`. Kiểm trên bộ store tạm: mật khẩu cũ `sict` bị từ chối, Redis không mật khẩu bị từ chối, Qdrant không khoá bị từ chối (cả `/metrics`), code dự án (asyncpg, redis cache db 3, Qdrant gRPC) chạy với khoá. Còn lại: LLM qua TLS/tunnel; SG + đổi mật khẩu trên VM thật. | cổng 0.0.0.0, `sict/sict`, Qdrant không khoá, HTTP thường |
 | D13 | Giám sát (chốt 2026-10-21): **Grafana Cloud Free** (Prometheus/Mimir + Loki + Grafana host sẵn) — mỗi VM 1 Grafana Alloy (systemd, ~50 MB RAM) đẩy metric (60 s/lần: gói Free tính 1 điểm/phút/chuỗi) + log; nhãn `instance` = `sict-vm1` / `sict-vm2`; token ở `/etc/alloy/secrets.env` (root 600) qua systemd EnvironmentFile, config dùng `sys.env`. Template `monitor/alloy/`, render `scripts/render_alloy.py`, triển khai `scripts/deploy_alloy_vm.sh`, giả lập 2 VM local `scripts/monitor_sim.sh`, kiểm chứng phía cloud `scripts/verify_gcloud.py`. Không cảnh báo (chỉ dashboard). Không chạy Prometheus/Grafana trên VM (VM1 4 GB) | `docker-compose.monitor.yml` (Prometheus/Grafana local, thư mục `monitor/` cũ không còn) |
 | D14 | Bucket S3 cùng region với VM — đã đúng: VM1, VM2 và bucket `sict-crawl-media-quyen-ohio` đều ở `us-east-2` (kiểm tra 2026-10-20) | ghi nhầm VM ở `ap-southeast-2` |
 | D15 | **Chỉ dùng Docker Compose**, không k8s. Lịch chạy = service `cron` trong compose (không crontab host, không CronJob) | k8s (đã gỡ), crontab host `auto_process.sh` |
@@ -63,6 +64,8 @@ Phần cứng: VM1, VM2 = c7i-flex.large (2 vCPU, 4 GB). Tổng `mem_limit` VM1 
 | D29 | **Ngân sách ngữ cảnh riêng cho câu hỏi liệt kê (2026-10-26)**: `llm.list_context_chars` 15.000 (10 nguồn × `source_chars` 1.500) thay vì `context_chars` 9.000 chia đều (900 ký tự / nguồn). Đo trên `eval/list_v1` (cùng 10 nguồn): độ phủ 0,724 ở mức cắt 900, 0,970 ở 1.500, 0,970 khi không cắt → chỗ nghẽn là cắt đầu đoạn (VD bảng ngành nằm sau ký tự 900 của bài tuyển sinh 2025), không phải chọn nguồn. Đã thử và bỏ: MMR khi chọn nguồn (λ 0,5–0,85, tập ứng viên 30 hoặc 60 / nhánh: 0,688–0,733), 2 đoạn / bài (0,886 ở mức cắt 1.500). Chi phí: thêm tối đa ~6.000 ký tự đầu vào LLM, chỉ với câu liệt kê; truy xuất không đổi nên cache `q:v5` giữ nguyên | đã làm |
 | D30 | **Chất lượng câu trả lời sau RAGAS (2026-10-27)**, đọc tay 8 câu điểm thấp của `eval/results/ragas/2026-10-26`: (1) model suy luận (glm-5.3-flash-sale, kiraai) tiêu 300–700 token suy nghĩ trước khi trả lời, `llm.max_new_tokens` 256 → `/chat` không còn chữ nào, rơi về echo ngữ cảnh (tham số tắt suy luận bị gateway bỏ qua) → mặc định 2048, `stream_answer` ghi log khi chỉ có suy luận; (2) prompt: ngữ cảnh có một phần thì trả lời phần có rồi nói rõ phần thiếu, chỉ nói "không có" khi không nguồn nào liên quan (deepseek trả "không tìm thấy" dù nguồn [1] là đúng bảng đề tài NCKH 2022); (3) **bài áp đảo**: hit đầu thuộc bài chiếm ≥ `retrieval.dominant_min` (6) trong 10 hit đầu (trước diversify) → bài đó được tối đa `retrieval.dominant_doc_max` (4) đoạn thay vì `per_doc_max` 2 / 1 với câu liệt kê ("Danh sách đề tài NCKH 2022" là 1 bảng dài: 7 → 21 đề tài trong ngữ cảnh); kích hoạt ở 8/90 câu golden + list_v1, golden recall@5 0,985 / MRR 0,898 không đổi, độ phủ list_v1 0,970 giữ nguyên ở min 6–7 (min 5: 0,951); (4) **"mới nhất" theo ngày**: câu hỏi chỉ gồm mục + "mới nhất" (`filters.QueryFilters.latest`, VD "Thông báo mới nhất?") → bài mới nhất của mục (`vector_store.latest_text`, lọc mục + năm có index, sắp `published_at` phía client) lên đầu; trước đó trả một bài 10/2025 thay vì 05/10/2026. Cache `q:v6`. Còn tồn: "Chiến lược 2021–2025 là gì?" — đoạn mục tiêu / giải pháp của bài xếp sau các đoạn thực trạng và bảng | đã làm |
 | D31 | **Chu kỳ incremental 12h, ngân sách 5 phút / lượt (2026-10-29)**: `CRON_INTERVAL_SEC` mặc định 43.200; `crawl.cycle_budget_sec` 300 (`--budget-sec`, `CYCLE_BUDGET_SEC`) tính từ đầu lượt, áp cho drain + recheck — hết giờ thì dừng, URL còn lại nằm trong frontier, bài chưa kiểm vẫn là cũ nhất nên lượt sau làm tiếp. Thứ tự mới: drain (bài mới) **trước** recheck. `mark_known_seen`: URL mọi bài trong DB vào `frontier:seen` mỗi lượt (bài nạp qua loader chưa từng qua frontier: seen 840 / 1.938 bài, mỗi bài mới kéo theo vài chục link bài cũ bị tải lại). `--check-edits` 100 → 50 (2 lượt/ngày → mỗi bài được kiểm lại khoảng 19 ngày/lần). Đo trên máy dev, giới hạn như VM2 (2 nhân, embed int8 tách riêng): lượt cũ 30 phút (tồn đọng 11 ngày: 12 bài mới × 78 s — chủ yếu embed ảnh — + 169 bài cũ tải lại + 100 bài kiểm lại); lượt bình thường không có bài mới 1 phút 57 s (17 trang danh sách + 50 bài kiểm lại, 1,3 s / bài); mỗi bài mới thêm ~1–2,5 phút; dựng lại graph toàn bộ (~75 s, mỗi 20h) và reconcile chạy ngoài ngân sách. Cảnh báo heartbeat 7 h → 13 h. Đầu lượt chờ Postgres / Redis / Qdrant tối đa `crawl.startup_wait_sec` 900 s (`wait_for_services`; ngân sách tính từ lúc store đã lên): chạy thử trên máy dev 2 lần reboot (29/10, 31/10) đều mất lượt vì worker lên trước, Postgres mất ~5 phút, Qdrant ~6 phút mới nhận kết nối; hết giờ chờ → bỏ lượt, ghi heartbeat lỗi (trước là traceback, không heartbeat). | 6h/lần, 30 phút, recheck trước drain |
+| D32 | **Bố trí VM (chủ dự án, 2026-10-29)**: dịch vụ embed (jina-clip-v2 int8) nặng nên chạy trên **EC2 riêng 2 vCPU / 8 GB** (VM2), bật 24/7 vì mỗi câu hỏi cần nhúng; VM1 (2 vCPU / 4 GB) giữ postgres, redis, qdrant, api, nginx. Worker `cron` ở chung VM2: gần như không tốn thêm (rỗi 62 MiB, đỉnh 408 MiB, `mem_limit` 1 GB) và gọi embed nội bộ. **Không đưa worker lên serverless**: máy vẫn phải bật cho embed nên không tiết kiệm được; Lambda cần ở trong VPC để tới store, muốn ra internet tải site phải thêm NAT Gateway (~33 USD/tháng), đắt hơn cả phần worker; mở store ra internet thì không được. Nếu sau này bỏ VM2 (embed qua API cloud) thì dùng ECS Fargate theo lịch, không dùng Lambda. VM2 không chạy Spot / bật-tắt theo lịch nữa (thay phần đó của D9). `svc-ocr` chuyển sang profile `manual` (D9) để `up -d` không chạy. Đo trên máy dev 2026-11-01 (API giới hạn 1,5 GB, 2 nhân riêng; embed 2 nhân như VM2): `/query` 70 câu golden, không LLM, không cache: p50 0,44 s / p95 0,69 s, câu hỏi bằng ảnh (10 ảnh) 4,8 / 5,5 s. Khi worker đang embed (giả lập bài mới: mỗi request 2 ảnh + 2 đoạn dài): chữ 0,82 / 1,42 s, ảnh 10,5 / 11,6 s — chậm khoảng gấp đôi nhưng chỉ trong vài phút worker chạy mỗi 12h. | 2× c7i-flex.large 4 GB; VM2 Spot / lịch bật tắt |
+| D33 | **Graph khái niệm thay graph luật (chủ dự án chốt 2026-11-03)**: luật theo loại (người / sự kiện / CLB) luôn để sót dạng tên ngoài dự tính. Đã đo 3 hướng trên index v3 (thay graph, giữ nguyên truy xuất): luật cũ; GLiNER đa ngôn ngữ (`urchade/gliner_multi-v2.1`, ngưỡng 0,5 / 0,6 / 0,7); cụm danh từ kiểu LazyGraphRAG (underthesea). Kết quả golden_v1 R@5 / MRR, golden_v2 url_hit / 80, list_v2: luật 1,0 / 0,928, 70, 0,878; **cụm danh từ 1,0 / 0,954, 71, 0,916**; GLiNER 0,985–1,0 / 0,935–0,946, 71–72, 0,834–0,892 (ngưỡng cao mất hẳn m20, m31). GLiNER dựng ~2,7 giờ CPU, ~3 GB RAM; cụm danh từ ~10 phút / 1 lõi, < 1 GB. → `graph.mode: concepts` (`graph/concepts.py`): khái niệm = cụm danh từ ≥ 2 từ của đoạn chữ, gặp ở 2 bài đến 5,57% số bài; khớp danh bạ trên mọi đoạn → payload `entities`; cache cụm theo đoạn (`chunk_phrases`). Mất: dòng `[graph]` (không có cạnh thực thể ↔ thực thể), nhánh ảnh theo tên người, 1 câu từ chối đúng (g080: cụm "học phí"). Graph luật gỡ hẳn cả code lẫn dữ liệu (chủ dự án 2026-11-03: bảng `entity_relations` / `entity_review` / `entity_aliases`, catalog, vòng duyệt, `eval_graph`); graph dựng lại sau mỗi lượt ingest có thay đổi (chữ ký corpus, gồm cả phiên bản luật khái niệm), không còn lịch hằng đêm. 2026-11-04: bỏ khoá mà cách đọc hư từ / từ hỏi chiếm đa số ("bao nhiêu", "như thế nào", "hiện tại"; 20 khái niệm): golden_v2 MRR 0,701 → 0,708, g018 trả lời đúng lại; trần df trên số bài liên kết đã đo và loại (MRR 0,688) | graph luật D20/D25 |
 
 ### Câu hỏi còn mở (không chặn Giai đoạn 0–1)
 - ~~**Q1** Phạm vi `www.haui.edu.vn`~~ → **chốt 2026-10-12: chỉ SICT** (`external_hosts: []`, thêm `/vn/tags` vào `skip_patterns`).
@@ -209,14 +212,16 @@ Còn lại theo thứ tự:
    `.pgdata.corrupt-20261014`), nạp lại v2 khớp 100%.
 
 **Cutover production — đã chuẩn bị, CHƯA chạy** (2026-10-14: chủ dự án chốt **không upload S3, không
-chạy gì trên VM cho tới khi có lệnh**). Kịch bản `scripts/cutover_v2.sh`, mỗi bước gọi tay:
+chạy gì trên VM cho tới khi có lệnh**). Kịch bản `scripts/cutover_v2.sh` (2026-11-05 đổi thành `cutover_v3.sh`:
+artifact v3, nạp bằng image worker trên VM2 vì loader gọi graphsync cần underthesea, không build trên VM, thêm
+`env-check`; thứ tự mới ở `docs/deploy_v3.md`), mỗi bước gọi tay:
 `pack` (máy dev, ~140 MB artifact + HTML) → `backup` (VM1: `pg_dump` + snapshot Qdrant v1) → `load`
 (VM1: build image mới, API cũ vẫn chạy; loader `--skip-media-upload`) → deploy code (workflow CD,
 API + worker cùng lúc — worker v2 từ chối ghi collection v1) → `verify` (`scripts/eval_api.py`, bộ
 vàng qua `/query`) → `upload-media` (chỉ khi có lệnh: `CONFIRM_S3_UPLOAD=yes`, loader `--media-only
 --upload-media`, ~1,9 GB, key `media/<sha256>.<ext>` đã có thì bỏ qua). Loader không bao giờ ghi S3
 nếu thiếu `--upload-media`. Ảnh v2 hỏng (404) tới khi upload xong → muốn tránh thì upload trước deploy.
-Rollback: `cutover_v2.sh rollback` (env API về `sict_text`/`sict_image`, worker image cũ).
+Rollback: `cutover_v3.sh rollback` (env API về collection cũ, worker image cũ).
 
 Output: `_snapshot/2026-10-12/` (`pages.jsonl`, `images.jsonl`, `videos.jsonl`, `files.jsonl`, `html/`,
 `media/`, `files/`), artifact ở `_snapshot/2026-10-12/artifacts/<spec>-<model>/`. Keyframe video cần
@@ -305,16 +310,30 @@ API (VM1, làm song song):
 ## Giai đoạn 5 — Vận hành & bảo mật
 - D12 bảo mật; D14 region S3; D9 VM2 Spot hoặc lịch bật/tắt (EventBridge) — worker idempotent nên chịu
   được ngắt; D13 giám sát + cảnh báo heartbeat > 13 h (cron 12h, D31); backup hằng ngày giữ 7–14 ngày + thử restore định kỳ.
+- **Sau khi repo public (2026-10-28), kiểm 2026-11-01:** quét toàn bộ lịch sử git (mọi nhánh) không thấy
+  token/khoá (Grafana, OpenAI-style `sk-`, HF, AWS, GitHub, Jina, Groq, private key) và không còn IP thật;
+  `k8s/secrets.example.yaml` cũ chỉ có mật khẩu mẫu. Còn lại:
+  - ~~`docker-compose.yml` để lộ mật khẩu Postgres mặc định `sict`, Redis / Qdrant không khoá, cổng store mở
+    mọi interface~~ → D12 phần store đã làm 2026-11-01. Lần deploy đầu: `scripts/store_auth.sh init-env` trên VM1,
+    chép giá trị sang `.env` VM2, SG VM1 chỉ cho SG VM2 vào 5432 / 6379 / 6333-6334.
+  - Việc của chủ dự án: nhờ GitHub Support xoá ref PR cũ (#4–#17) còn trỏ tới commit có IP thật; coi các
+    IP đó đã lộ (đóng cổng 20128, siết SG); đổi mật khẩu Postgres đang dùng trên VM; email tác giả trong
+    commit là công khai (đổi sang email `noreply` của GitHub cho commit mới nếu muốn).
 
-## Ngân sách RAM mục tiêu (ước tính, đo lại sau mỗi giai đoạn)
+## Ngân sách RAM (MB; `mem_limit` theo compose, đỉnh đo trên máy dev 2026-10-29 → 11-01)
 
-| VM1 | Hiện tại | Mục tiêu | | VM2 | Hiện tại | Mục tiêu |
+| VM1 (4 GB) | mem_limit | Đo đỉnh | | VM2 (8 GB, D32) | mem_limit | Đo đỉnh |
 |---|---|---|---|---|---|---|
-| api | 1.500 | ~600 (ONNX) | | cron (worker) | 3.000 | ~2.000 |
-| qdrant | 900 | ~600 (quantization int8) | | svc-ocr | 3.000 | 0 (profile, chạy tay) |
-| postgres | 800 | 800 | | obscura | 150 | 150 |
-| redis + nginx | 450 | 450 | | | | |
-| **Tổng** | **3.650** | **~2.450** | | **Tổng** | **6.150** | **~2.150** |
+| api | 1.500 (`API_MEM_LIMIT`) | v2/torch: chạm 1.500 (anon ~820 + cache file model); v3/backend `api`: ~200 | | embed | 6.000 | 3.057 (đoạn dài ~2.048 token) |
+| qdrant | 1.100 | 786 (dev giữ cả v1, v2, v3) | | cron (worker) | 1.000 | 408 |
+| postgres | 600 | 148 (shared_buffers 256) | | obscura | 150 | 5 |
+| redis + nginx | 450 | 16 + — | | svc-ocr | chạy tay | — |
+| **Tổng** | **3.650** | **~2.450 (v2) / ~1.150 (v3)** | | **Tổng** | **7.150** | **~3.470** |
+
+Chỉnh 2026-11-01 (tổng giữ 3.650): qdrant 900 → 1.100 (900 chỉ hơn đỉnh 786 khoảng 15 %; production giữ v3 + v2
+để rollback nên dung lượng gần như máy dev), postgres 800 → 600. API giữ 1.500 vì index v2 nạp E5 + CLIP ngay trong
+API; sau cutover v3 đặt `API_MEM_LIMIT=600m`. Các giới hạn đổi được qua `PG_MEM_LIMIT`, `QDRANT_MEM_LIMIT`,
+`API_MEM_LIMIT`, `CRON_MEM_LIMIT`, `EMBED_MEM_LIMIT`.
 
 ---
 

@@ -3,7 +3,7 @@
 # - torch/sentence-transformers/transformers: không có musl wheel → alpine build từ source (fail).
 # - obscura binary: link glibc 2.35+ → không chạy trên musl.
 # - tesseract-ocr-vie: chắc chắn có trên apt, không chắc trên apk.
-# Deps quản lý bằng uv (pyproject.toml group ml + uv.lock), KHÔNG dùng pip/requirements.txt.
+# Deps quản lý bằng uv (pyproject.toml group ml + graph + uv.lock), KHÔNG dùng pip/requirements.txt.
 # Build CPU (mặc định, VM thường): docker build -f Dockerfile.worker -t sict-worker .
 # Build GPU (máy thuê có NVIDIA, chạy compute): docker build -f Dockerfile.worker \
 #     --build-arg VARIANT=gpu -t sict-worker:gpu .   → chạy qua docker-compose.gpu.yml
@@ -36,7 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project --group ml
+    uv sync --frozen --no-dev --no-install-project --group ml --group graph
 # GPU: đổi torch CPU → CUDA cùng version (giữ nguyên mọi deps khác theo uv.lock)
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$VARIANT" = "gpu" ]; then \

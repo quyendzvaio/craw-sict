@@ -50,6 +50,7 @@ class QdrantConfig:
     grpc_port: int = 6334
     prefer_grpc: bool = True
     timeout: int = 30  # giây; worker batch ghi đặt cao hơn qua QDRANT_TIMEOUT
+    api_key: str = ""  # QDRANT_API_KEY (D12), không ghi vào yaml; rỗng = Qdrant không bật khoá (dev)
     collection_text: str = "sict_text_v2"
     collection_image: str = "sict_image_v2"
     # caption ảnh/video (tiêu đề + mục + chữ OCR + phụ đề), cùng không gian vector với chữ. Rỗng = chung
@@ -189,12 +190,15 @@ class LlmConfig:
     rewrite_query: bool = False
     # D27: ngân sách ngữ cảnh gửi LLM (ký tự) — mỗi nguồn tối đa source_chars, tổng ≈ context_chars (chia đều khi nhiều
     # nguồn). Trước đây LLM chỉ thấy 300 ký tự đầu mỗi đoạn (excerpt hiển thị trên UI).
-    source_chars: int = 1500
-    context_chars: int = 9000
+    # 2026-11-03: 1500 → 2200 — 74% đoạn của index dài hơn 1500 ký tự (trung vị ~1940) nên phần lớn nguồn mất ~1/4
+    # cuối; 2200 vừa nguyên đoạn. Đo trên eval/list_v2: độ phủ 0,724 → 0,798 (cùng tổng 11000 / 22000), golden không đổi.
+    source_chars: int = 2200
+    context_chars: int = 11000
     # câu hỏi liệt kê (retrieval.list_top_k = 10 nguồn): 9000 / 10 = 900 ký tự / nguồn cắt mất danh sách nằm giữa đoạn
     # (bảng ngành sau ký tự 900 của bài tuyển sinh) → ngân sách riêng, đủ source_chars cho mỗi nguồn. Đo 2026-10-26 trên
     # eval/list_v1: độ phủ 0,724 → 0,970 (MMR khi chọn nguồn: 0,714–0,733, không giúp)
-    list_context_chars: int = 15000
+    # 2026-11-03: 31000 = 10 nguồn chính × 2200 + đoạn liền kề (retrieval.list_neighbor_docs) — list_v2 0,878
+    list_context_chars: int = 31000
 
     def __post_init__(self):
         self.api_key = os.environ.get("LLM_API_KEY", self.api_key)
@@ -221,7 +225,6 @@ class RouterConfig:
     caption_min: float = 0.82    # cosine E5 câu hỏi↔caption (E5 nén điểm: lạc đề ~0.72–0.78)
     optional_max: int = 3        # media tối đa ở mức optional
     optional_top_docs: int = 3   # optional: chỉ media thuộc N bài chữ đứng đầu
-    graph_min: float = 0.6       # media gắn thực thể trong câu hỏi (graph D20): trọng số cạnh tối thiểu
     # D21/D22 — không gian jina chung chữ+ảnh, ngưỡng tách theo cặp (truy vấn → đích). TẠM tới khi hiệu chỉnh
     # bằng eval/golden_images_v1 (scripts/eval_multimodal.py). Chỉ dùng khi embedding.backend=api.
     t2i_min: float = 0.25        # chữ → ảnh
@@ -240,8 +243,27 @@ class RetrievalConfig:
     # per_doc_max / 1; 0 = tắt
     dominant_min: int = 6
     dominant_doc_max: int = 4
+    # câu liệt kê: thêm đoạn liền trước/sau của N bài đầu (retriever.list_neighbors), đặt sau nguồn chính; 0 = tắt.
+    # Câu liệt kê lấy 1 đoạn / bài, đoạn khớp câu hỏi nhất thường là phần mở đầu còn danh sách ở đoạn sau
+    # (đo 2026-11-03, list_v2: 0,798 → 0,878, full_coverage 30 → 34/42; golden không đổi)
+    list_neighbor_docs: int = 2
+    # câu hỏi hoàn toàn không dấu → nhánh dense dùng câu đã khôi phục dấu (retrieval.accent, bigram từ chính corpus,
+    # không LLM); BM25 vẫn dùng câu gốc. jina-clip-v2 không hiểu tiếng Việt không dấu: golden_v1 bỏ dấu recall@5
+    # 0,881 → 0,985, MRR 0,775 → 0,920 (2026-11-03); câu có dấu không đổi
+    restore_accents: bool = True
     min_cosine: float = 0.45     # sufficient: cosine câu hỏi↔đoạn tốt nhất tối thiểu (jina-clip-v2, index v3)
     min_term_cover: float = 0.8  # sufficient: tỷ lệ từ nội dung của câu hỏi (bỏ dấu, bỏ hư từ) có trong ngữ cảnh
+
+
+@dataclass
+class GraphConfig:
+    """Graph khái niệm D33 (graph/concepts.py, graphsync): cụm danh từ của corpus, không luật theo loại, không LLM.
+    Graph luật D20 (người / sự kiện / CLB) gỡ hẳn theo quyết định của chủ dự án 2026-11-03. Đo 2026-11-03 (index v3,
+    cùng trạng thái index, so với graph luật): golden_v1 MRR 0,933 → 0,954, golden_v2 MRR 0,690 → 0,701 (url_hit
+    70/80 cả hai), list_v2 0,871 → 0,916; mất 1 câu từ chối đúng (g080)."""
+    # khái niệm gặp ở quá tỷ lệ này số bài → quá phổ biến, không phân biệt được bài; 0,0557 = 115 / 2.066 bài
+    # có đoạn chữ lúc đo (chọn từ 2026-11-03, tỷ lệ để giữ nguyên ý nghĩa khi corpus lớn lên)
+    concept_df_max_ratio: float = 0.0557
 
 
 @dataclass
@@ -261,6 +283,7 @@ class Settings:
     llm: LlmConfig
     router: RouterConfig = field(default_factory=RouterConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    graph: GraphConfig = field(default_factory=GraphConfig)
 
 
 def _build(data: dict[str, Any]) -> Settings:
@@ -276,6 +299,8 @@ def _build(data: dict[str, Any]) -> Settings:
         qdata["grpc_port"] = int(os.environ["QDRANT_GRPC_PORT"])
     if os.environ.get("QDRANT_TIMEOUT"):
         qdata["timeout"] = int(os.environ["QDRANT_TIMEOUT"])
+    if os.environ.get("QDRANT_API_KEY"):
+        qdata["api_key"] = os.environ["QDRANT_API_KEY"]
     # cutover blue/green (D8): trỏ API/worker sang collection *_v2 mà không sửa yaml
     if os.environ.get("QDRANT_COLLECTION_TEXT"):
         qdata["collection_text"] = os.environ["QDRANT_COLLECTION_TEXT"]
@@ -296,6 +321,7 @@ def _build(data: dict[str, Any]) -> Settings:
     llm = LlmConfig(**data.get("llm", {}))
     router = RouterConfig(**(data.get("router") or {}))
     retrieval = RetrievalConfig(**(data.get("retrieval") or {}))
+    graph = GraphConfig(**(data.get("graph") or {}))
     redis_url = os.environ.get("REDIS_URL", data["redis"]["url"])
     return Settings(
         site=site,
@@ -313,6 +339,7 @@ def _build(data: dict[str, Any]) -> Settings:
         llm=llm,
         router=router,
         retrieval=retrieval,
+        graph=graph,
     )
 
 

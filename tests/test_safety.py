@@ -34,7 +34,7 @@ def test_mass_delete_guard():
 def test_cache_key_stable_and_scoped():
     a = query_cache_key("tuyển sinh", 5)
     assert a == query_cache_key("tuyển sinh", 5)
-    assert a.startswith("q:v6:")  # v6: bài áp đảo + "mới nhất" (v5: không LLM viết lại, ảnh 336; v4 D27; v3: graph D20)
+    assert a.startswith("q:v11:")  # v11: nhánh cụm tên riêng; v10: graph khái niệm; v9: ngữ cảnh đủ đoạn + đoạn liền kề + khôi phục dấu; v8: phạm vi mục, năm nhãn bảng, tiêu đề; v7: bảng mang nhãn; v6: bài áp đảo + "mới nhất" (v5: không LLM viết lại; v4 D27)
     assert a != query_cache_key("tuyển sinh", 8)
     assert a != query_cache_key("tuyển sinh?", 5)
     assert a != query_cache_key("tuyển sinh", 5, "sections=['thong-bao']")
@@ -108,6 +108,14 @@ def _check_routes():
     js = c.get("/app.js")
     assert js.status_code == 200 and "addEventListener" in js.text
     assert "max-age" in js.headers.get("cache-control", "")
+    # logo HaUI của khung chat: đúng file trong danh sách, không lộ file khác của thư mục / repo
+    for name in ("haui-logo.svg", "haui-logo-dark.svg", "haui-emblem.svg"):
+        lg = c.get("/ui/" + name)
+        assert lg.status_code == 200 and lg.headers["content-type"].startswith("image/svg+xml")
+        assert "<svg" in lg.text and "<script" not in lg.text.lower()
+        assert f"/ui/{name}?v=" in r.text
+    for bad in ("app.js", "index.html", "..%2Fconfig.yaml", "x.svg"):
+        assert c.get("/ui/" + bad).status_code == 404
     assert c.get("/media/999999999").status_code == 404
 
 

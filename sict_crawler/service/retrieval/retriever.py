@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
@@ -29,7 +30,7 @@ def index_tag() -> str:
 
 def query_cache_key(question: str, top_k: int, filters_key: str = "", index: str | None = None) -> str:
     index = index_tag() if index is None else index
-    return "q:v6:" + hashlib.sha256(   # v6: bài áp đảo + "mới nhất" theo ngày (v5: không LLM viết lại, ảnh 336)
+    return "q:v11:" + hashlib.sha256(   # v11: nhánh cụm tên riêng; v10: graph khái niệm D33 (bỏ [graph], ảnh theo người); v9: đoạn đủ dài, đoạn liền kề câu liệt kê, khôi phục dấu; v8: phạm vi mục + năm nhãn bảng + tiêu đề; v7: bảng mang nhãn; v6: D30
         f"{question}\x00{top_k}\x00{filters_key}\x00{index}".encode()).hexdigest()
 
 
@@ -44,39 +45,16 @@ def _graph_filter(keys: list[str], field: str = "entities", all_of: bool = False
 
 
 def _media_candidates(img_query_vecs: list[list[float]], terms: list[str], limit: int,
-                      f: F.QueryFilters, text: str = "", entity_keys: list[str] | None = None,
+                      f: F.QueryFilters, text: str = "",
                       image_vecs: list[list[float]] | None = None) -> list[dict]:
     """Ứng viên media cho router.gate, giữ ĐIỂM GỐC theo loại (không RRF):
-    graph (ảnh/frame gắn thực thể trong câu hỏi: raw_score = trọng số cạnh, thứ tự trong nhóm theo
-    CLIP; +0.1 với lượt lọc đúng năm hỏi) + CLIP ảnh (clip, raw_score=cosine) + caption khớp từ khoá
+    CLIP ảnh (clip, raw_score=cosine) + caption khớp từ khoá
     (caption_kw, không ngưỡng). image_vecs: vector của ẢNH người dùng gửi (D21, không gian jina) →
     modality "i2i", ngưỡng riêng; legacy CLIP thì ảnh gửi lên nằm chung img_query_vecs."""
-    from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-    from sict_crawler.service.graph import graph as G
     qf = F.to_qdrant(f)
     calls: list = []   # mỗi lượt Qdrant 1 hàm → vector_store.parallel; ghép theo đúng thứ tự cũ
-    if entity_keys and img_query_vecs:
-        # chuỗi sự kiện nhiều năm (IT Festival: ~140 ảnh) → hỏi kèm năm thì lấy ảnh đúng năm trước,
-        # không thì top-N theo CLIP dễ toàn năm khác
-        year_f = (Filter(must=[FieldCondition(key="year", match=MatchAny(any=f.prefer_years))])
-                  if f.prefer_years else None)
-        # ≥ 2 thực thể ("ảnh thầy X ở IT Festival") → ảnh gắn CẢ HAI đứng đầu (+0.2)
-        passes = [(_graph_filter(entity_keys, "entities", all_of=True), G.W_DEPICT_STRONG + 0.2)]
-        passes += [(_graph_filter(entity_keys, fld), w) for fld, w in
-                   (("entities_strong", G.W_DEPICT_STRONG), ("entities", G.W_DEPICT_WEAK))]
-        for gf, w in passes:
-            if gf is None:
-                continue
-            for yf in ((year_f, None) if year_f else (None,)):
-                def graph_pass(gf=gf, w=w, yf=yf):
-                    try:
-                        hits = vector_store.search_images(img_query_vecs[0], limit=limit, query_filter=
-                                                          vector_store._and(qf, gf, yf))
-                    except Exception:
-                        hits = []
-                    return [{**h, "modality": "graph", "raw_score": w + (0.1 if yf else 0.0)} for h in hits]
-                calls.append(graph_pass)
     for modality, vecs in (("clip", img_query_vecs), ("i2i", image_vecs or [])):
         for v in vecs:
             calls.append(lambda v=v, modality=modality: [{**h, "modality": modality, "raw_score": h.get("score")}
@@ -135,6 +113,34 @@ def _image_block(media_key: str | None, doc_id: int) -> int | None:
     return next((c["block_idx"] for c in caps if c.get("block_idx") is not None), None)
 
 
+def _doc_chunks(doc_id) -> list[dict]:
+    """Mọi chunk chữ (không caption) của 1 bài trong collection chữ đang phục vụ."""
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+    try:
+        return [c for c in vector_store.scroll_text(Filter(must=[
+            FieldCondition(key="document_id", match=MatchValue(value=doc_id))]),
+            collection=get_settings().qdrant.collection_text) if c.get("kind") != "media_caption"]
+    except Exception:
+        return []
+
+
+def list_neighbors(hits: list[dict], n_docs: int, window: int = 1) -> list[dict]:
+    """Câu liệt kê (thử nghiệm 2026-11-02): đoạn liền trước / liền sau (±window theo `idx`) của các đoạn thuộc `n_docs`
+    bài đứng đầu. Phần mở đầu khớp câu hỏi, còn danh sách hay nằm ở đoạn kế bên; mỗi bài chỉ lấy 1 đoạn nên mất.
+    Bỏ đoạn đã có trong `hits`. Trả về theo thứ tự bài rồi `idx`, gắn via="neighbor"."""
+    docs = list(dict.fromkeys(h.get("document_id") for h in hits if isinstance(h.get("document_id"), int)))[:n_docs]
+    have = {(h.get("document_id"), h.get("idx")) for h in hits}
+    out = []
+    for d in docs:
+        mine = {h.get("idx") for h in hits if h.get("document_id") == d}
+        want = {i + o for i in mine if i is not None for o in range(-window, window + 1) if o}
+        for c in sorted(_doc_chunks(d), key=lambda c: c.get("idx", 0)):
+            if c.get("idx") in want and (d, c.get("idx")) not in have:
+                out.append({**c, "via": "neighbor", "score": 0.0})
+                have.add((d, c.get("idx")))
+    return out
+
+
 def _chunks_around(doc_id: int, block_idx: int, limit: int = 2) -> list[dict]:
     """Chunk chữ sát ảnh ở block `block_idx` (D24 — ngữ cảnh phụ cận để ánh xạ ảnh về trang): chunk có block
     nằm trong khoảng của nó trước; ảnh ở ranh giới giữa hai chunk thì lấy chunk liền trước + liền sau."""
@@ -180,6 +186,27 @@ def _linked_doc_hits(ivec: list[float], kept: list[dict], qf) -> list[dict]:
 def _doc_key(h: dict):
     d = h.get("document_id")
     return tuple(d) if isinstance(d, list) else (d if d is not None else h.get("url"))
+
+
+_HEADER = re.compile(r"^\s*\[[^\]]*\]\s*")
+
+
+def _title_only(h: dict) -> bool:
+    """Mảnh chỉ gồm header ngữ cảnh + đúng tiêu đề (đoạn mở đầu trang có bảng): không có gì cho LLM."""
+    body = _HEADER.sub("", h.get("content") or h.get("text") or "", count=1)
+    return bool(body) and fold(body).strip(" .:") == fold(h.get("title") or "").strip(" .:")
+
+
+def demote_title_only(hits: list[dict]) -> list[dict]:
+    """Mảnh chỉ có tiêu đề xếp ngay sau mảnh nội dung cuối của cùng bài (nếu bài có mảnh nội dung trong danh sách),
+    để diversify (câu liệt kê: 1 mảnh / bài) chọn mảnh nội dung. Bài chỉ có mảnh tiêu đề thì giữ nguyên chỗ."""
+    out = list(hits)
+    for h in [h for h in hits if _title_only(h)]:
+        same = [i for i, x in enumerate(out) if _doc_key(x) == _doc_key(h) and not _title_only(x)]
+        if same and same[-1] > out.index(h):
+            out.remove(h)
+            out.insert(same[-1], h)        # sau khi bỏ h, chỉ số mảnh cuối lùi 1 → chèn đúng sau nó
+    return out
 
 
 def dominant_doc(hits: list[dict], min_hits: int, window: int = 10):
@@ -249,12 +276,11 @@ def retrieve(question: str, top_k: int = 5,
     else:   # chỉ ảnh (D21 U3+U4)
         r = {"rewritten": "", "terms": [], "route_llm": None}
         route = router.Route(media="required", source="image")
-    # graph (D20): người / sự kiện / CLB nêu trong câu hỏi → nhánh chữ + media theo thực thể
+    # graph khái niệm (D33): khái niệm nêu trong câu hỏi → thêm danh sách dense lọc theo khái niệm vào RRF
     from sict_crawler.service.graph import graph as G
     ents = G.match_question(question, r["rewritten"]) if has_text else []
     ekeys = G.ekeys(ents)
     route.entities = [e.name for e in ents]
-    route.facts = G.facts(ents)
     if query_image_b64 and route.media == "none":
         route.media = "optional"  # người dùng gửi ảnh → luôn xét media tương tự
     if route.wants_file:
@@ -268,7 +294,8 @@ def retrieve(question: str, top_k: int = 5,
     # D27: luôn tìm bằng CÂU GỐC; câu LLM viết lại (nếu khác sau khi bỏ dấu) chỉ thêm danh sách vào RRF → đổi/tắt LLM
     # không đổi hẳn kết quả. Nhánh media vẫn dùng vector câu viết lại (rvec) như trước.
     q0 = question.strip()
-    tvec = embedder.embed_query(q0) if has_text else None
+    # câu không dấu đã khôi phục dấu (retrieval.restore_accents): nhánh dense nhúng câu có dấu; BM25 vẫn dùng câu gốc
+    tvec = embedder.embed_query(r.get("restored") or q0) if has_text else None
     rvec, alt = tvec, []
     if has_text and fold(r["rewritten"]).strip() != fold(q0):
         rvec = embedder.embed_query(r["rewritten"])
@@ -292,12 +319,14 @@ def retrieve(question: str, top_k: int = 5,
                 img_query_vecs.append(qvec)
             clip_min, caption_min = rc.clip_min, rc.caption_min
         mfut = _STAGE_POOL.submit(_media_candidates, img_query_vecs, r["terms"], max(top_k, 10), f, r["rewritten"],
-                                  ekeys, image_vecs)
+                                  image_vecs)
+    # cụm tên riêng (2026-11-05): "Phạm Văn Tùng" → 1 danh sách dense chỉ trong đoạn chứa nguyên cụm (xem name_phrases)
     t_hits = query_rewriter.hybrid_search_text(tvec, terms, limit=max(k * (3 if route.list_question else 2), 10),
                                                query_filter=qf, text=q0 or None,
                                                graph_filter=[_graph_filter(ekeys, all_of=True),
                                                              _graph_filter(ekeys)],
-                                               extra_vecs=extra, alt_queries=alt)
+                                               extra_vecs=extra, alt_queries=alt, scope_filter=F.scope_qdrant(f),
+                                               phrases=query_rewriter.name_phrases(q0) if has_text else None)
     if has_text:
         # raw_score = cosine câu hỏi↔đoạn (ngưỡng caption của router). v2: giữ thứ tự RRF dense+BM25
         # (xem rerank_text); v1: xếp lại theo cosine như cũ.
@@ -305,13 +334,13 @@ def retrieve(question: str, top_k: int = 5,
                                               reorder=not vector_store.has_sparse(), qvec=tvec)
     else:   # chỉ ảnh: danh sách duy nhất là cosine ảnh↔chữ → lọc theo i2t_min, điểm gốc = cosine
         reranked = [{**h, "raw_score": h["score"]} for h in t_hits if h["score"] >= rc.i2t_min]
-    boosted = F.apply_boost(reranked, f)
+    boosted = F.apply_title_boost(F.apply_boost(reranked, f), q0) if has_text else F.apply_boost(reranked, f)
     if f.latest and has_text:
         # "thông báo mới nhất?": thứ tự theo nghĩa không biết ngày → bài mới nhất của mục lên đầu (năm nay và năm trước)
         latest = vector_store.latest_text(f.prefer_sections, limit=k, since_year=date.today().year - 1)
         got = {_doc_key(h) for h in latest}
         boosted = [{**h, "via": "latest"} for h in latest] + [h for h in boosted if _doc_key(h) not in got]
-    chunks = [h for h in boosted if h.get("kind") != "media_caption"]
+    chunks = demote_title_only([h for h in boosted if h.get("kind") != "media_caption"])
     text_hits = diversify(chunks, k, per_doc, dominant_doc(chunks, gc.dominant_min), gc.dominant_doc_max)
 
     kept: list[dict] = []
@@ -319,12 +348,8 @@ def retrieve(question: str, top_k: int = 5,
         cands = mfut.result()
         cands += [{**h, "modality": "caption" if has_text else "i2t"}
                   for h in boosted if h.get("kind") == "media_caption"]
-        # hỏi về NGƯỜI và graph đã có ảnh của người đó → bỏ ảnh chỉ khớp CLIP/từ khoá (CLIP không
-        # nhận ra người, chỉ chèn ảnh lạc vào cuối danh sách)
-        if any(e.kind == "person" for e in ents) and any(c["modality"] == "graph" for c in cands):
-            cands = [c for c in cands if c["modality"] in ("graph", "caption")]
         kept = router.gate(route, text_hits[:rc.optional_top_docs], cands, top_k,
-                           clip_min, caption_min, rc.optional_max, rc.graph_min, rc.i2i_min, rc.i2t_min)
+                           clip_min, caption_min, rc.optional_max, rc.i2i_min, rc.i2t_min)
     msrcs = media_sources([_as_media(h) for h in kept])
 
     # U4: ảnh giống ảnh người dùng gửi nằm trong bài nào → lấy đoạn gần ảnh nhất của bài đó làm ngữ cảnh
@@ -335,7 +360,8 @@ def retrieve(question: str, top_k: int = 5,
         lead = [h for h in linked if linked and h.get("document_id") == linked[0].get("document_id")]
         rest = [h for h in linked if h not in lead]
         text_hits = query_rewriter.dedupe_hits(linked + text_hits if not has_text else lead + text_hits + rest)
-    tsrcs = text_sources(text_hits[:k])
+    extra = list_neighbors(text_hits[:k], gc.list_neighbor_docs) if route.list_question and gc.list_neighbor_docs else []
+    tsrcs = text_sources(text_hits[:k] + extra)
     route.inputs = [x for x, on in (("text", bool(question.strip())), ("image", bool(query_image_b64))) if on]
     route.outputs = [x for x, on in (("text", bool(tsrcs)), ("image", bool(msrcs))) if on]
     cache.put(ck, json.dumps(

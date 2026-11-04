@@ -257,13 +257,12 @@ class Loader:
         n_img = len(pts)
         self.log(f"image points: {n_img} (ảnh {len(images)}, frame {len(frames)})")
 
-        # ---- graph (D20): dựng từ PG + Qdrant vừa ghi (cùng đường code với incremental/hằng đêm),
+        # ---- graph khái niệm (D33): dựng từ PG + Qdrant vừa ghi (cùng đường code với incremental),
         # payload `entities` sinh từ PG
         from sict_crawler.service.graph import graphsync
         async with db.get_session() as s:
             g = await graphsync.rebuild(s)
-        self.stats.update({k: g[k] for k in ("entities", "entity_links", "entity_relations",
-                                             "review_queued", "staff")})
+        self.stats.update({k: g[k] for k in ("entities", "entity_links")})
         self.log(f"graph: {json.dumps(g, ensure_ascii=False)}")
 
         # ---- kiểm tra

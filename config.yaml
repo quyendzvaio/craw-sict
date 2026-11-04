@@ -111,6 +111,9 @@ llm:
   # model suy luận (glm-5.3, deepseek…) tiêu 300–700 token "suy nghĩ" trước khi trả lời: 256 → không còn chữ nào,
   # /chat rơi về echo ngữ cảnh (đo 2026-10-27, glm-5.3-flash-sale qua kiraai; tham số tắt suy luận bị bỏ qua)
   max_new_tokens: 2048
+  source_chars: 2200        # 2026-11-03: vừa nguyên 1 đoạn (74% đoạn > 1500 ký tự)
+  context_chars: 11000
+  list_context_chars: 31000 # câu liệt kê: 10 nguồn × 2200 + đoạn liền kề
 
 
 # Router thành phần câu trả lời (D17). Ngưỡng TẠM — hiệu chỉnh bằng eval/golden (AC-G3, AC-R9).
@@ -119,7 +122,6 @@ router:
   caption_min: 0.82
   optional_max: 3
   optional_top_docs: 3
-  graph_min: 0.6       # media gắn thực thể nêu trong câu hỏi (graph D20): trọng số cạnh tối thiểu
 
 # Guardrail truy xuất không phụ thuộc LLM (D27). Ngưỡng TẠM — hiệu chỉnh bằng eval/golden_v1 + eval/list_v1.
 retrieval:
@@ -127,5 +129,13 @@ retrieval:
   dominant_min: 6      # D30: bài chiếm ≥ 6 / 10 hit đầu = câu hỏi nhắm đúng bài đó (min 5: độ phủ list_v1 0,970 → 0,951)
   dominant_doc_max: 4  # … bài đó được tối đa 4 đoạn (thay per_doc_max / 1 của câu liệt kê)
   list_top_k: 10       # câu hỏi liệt kê: ≥ 10 nguồn, mỗi bài 1 đoạn
+  list_neighbor_docs: 2  # câu liệt kê: + đoạn liền trước/sau của 2 bài đầu (2026-11-03, list_v2 0,798 → 0,878)
+  restore_accents: true  # câu không dấu: nhánh dense dùng câu đã khôi phục dấu (golden_v1 bỏ dấu R@5 0,881 → 0,985)
   min_cosine: 0.45     # 2026-10-25, 89 câu (golden + list_v1): đáp án thấp nhất 0,476, ngoài phạm vi 0,29–0,58
   min_term_cover: 0.8  # đáp án thấp nhất 0,8; chặn 7/8 câu ngoài phạm vi (cùng cosine)
+
+# Graph khái niệm D33 (graphsync, graph/concepts.py): cụm danh từ của corpus, dựng lại sau mỗi lượt ingest có
+# thay đổi. 2026-11-03, so với graph luật đã gỡ: golden_v1 MRR 0,933 → 0,954, golden_v2 MRR 0,690 → 0,701,
+# list_v2 0,871 → 0,916.
+graph:
+  concept_df_max_ratio: 0.0557  # khái niệm ở > 5,57% số bài (115 / 2.066 lúc đo) là quá phổ biến → bỏ

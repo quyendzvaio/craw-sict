@@ -4,6 +4,10 @@
 # (scripts/deploy_alloy_vm.sh chép script này lên rồi chạy qua ssh).
 #
 #   <dòng KEY=VALUE bí mật> | sudo scripts/alloy_apply.sh --config <config.alloy đã render> [--docker-logs]
+#                                                           [--stack-env ~/craw-sict/.env]
+# --stack-env (VM1, D12): lấy POSTGRES_PASSWORD / REDIS_PASSWORD / QDRANT_API_KEY từ .env của stack ngay trên máy
+# (bí mật không rời VM) → POSTGRES_EXPORTER_DSN có mật khẩu, REDIS_PASSWORD cho exporter redis, QDRANT_API_KEY cho
+# scrape Qdrant. Exporter đi qua localhost → VM1 cần STORE_BIND=0.0.0.0 (không đặt riêng IP private).
 #
 # stdin = nội dung file bí mật (GCLOUD_RW_API_KEY=…, POSTGRES_EXPORTER_DSN=…) → /etc/alloy/secrets.env root:root 600,
 # nạp bằng drop-in systemd (EnvironmentFile) — token không qua argv, không ra log. Các bước:
@@ -14,11 +18,12 @@
 #  5. daemon-reload, enable + restart; không active sau 30 s → khôi phục bản sao lưu (rollback)
 #  6. kiểm UI chỉ nghe loopback; in trạng thái, cảnh báo/lỗi gần nhất, số mẫu / dòng log đã gửi
 set -euo pipefail
-CONFIG="" DOCKER_LOGS=0
+CONFIG="" DOCKER_LOGS=0 STACK_ENV=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --config) CONFIG="$2"; shift 2 ;;
     --docker-logs) DOCKER_LOGS=1; shift ;;
+    --stack-env) STACK_ENV="$2"; shift 2 ;;
     *) echo "tham số lạ: $1" >&2; exit 2 ;;
   esac
 done
@@ -36,6 +41,18 @@ alloy fmt "$CONFIG" >/dev/null && echo "alloy fmt: OK"
 SECRETS="$(cat)"   # stdin
 printf '%s\n' "$SECRETS" | grep -qE '^GCLOUD_RW_API_KEY=glc_.{20,}' \
   || { echo "BLOCKER: stdin không có GCLOUD_RW_API_KEY hợp lệ" >&2; exit 2; }
+if [ -n "$STACK_ENV" ]; then
+  [ -r "$STACK_ENV" ] || { echo "BLOCKER: không đọc được --stack-env $STACK_ENV" >&2; exit 2; }
+  sval() { grep -E "^$1=" "$STACK_ENV" | tail -1 | cut -d= -f2- | tr -d "\"'" || true; }
+  pgpw="$(sval POSTGRES_PASSWORD)"
+  [ -n "$pgpw" ] && SECRETS="$(printf '%s\n' "$SECRETS" | grep -v '^POSTGRES_EXPORTER_DSN=')
+POSTGRES_EXPORTER_DSN=postgresql://sict:${pgpw}@localhost:5432/sict_crawler?sslmode=disable"
+  SECRETS="$SECRETS
+REDIS_PASSWORD=$(sval REDIS_PASSWORD)
+QDRANT_API_KEY=$(sval QDRANT_API_KEY)"
+  unset pgpw
+  echo "--stack-env: đã lấy mật khẩu store (D12)"
+fi
 
 step "2. file bí mật + systemd drop-in"
 install -d -m 755 /etc/alloy /etc/systemd/system/alloy.service.d

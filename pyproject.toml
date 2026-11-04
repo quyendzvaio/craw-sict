@@ -1,6 +1,7 @@
 [project]
 name = "sict-crawler"
 version = "0.1.0"
+license = "Apache-2.0"
 requires-python = ">=3.10"
 # Common: pipeline cơ bản — crawl nhẹ + parse + DB + vector + storage.
 # Mọi image đều cài nhóm này. ML/API/crawl-render nằm ở dependency-groups.
@@ -56,6 +57,11 @@ ml = [
 eval = [
     "langchain-community>=0.4,<0.4.2",  # ragas 0.4.3 còn import chat_models.vertexai, bị bỏ từ 0.4.2
     "ragas>=0.4.3",
+]
+# Graph khái niệm (graph/concepts.py): tách cụm danh từ tiếng Việt khi dựng graph (worker). CRF có sẵn trong gói,
+# không torch, không tải model. API không cần (chỉ khớp danh bạ đã lưu).
+graph = [
+    "underthesea>=9.5",
 ]
 
 [[tool.uv.index]]

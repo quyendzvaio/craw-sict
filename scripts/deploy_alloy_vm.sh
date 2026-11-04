@@ -36,6 +36,8 @@ if [ "$DRY" = 1 ]; then   # chỉ kiểm: có alloy + cú pháp hợp lệ, khô
   exit 0
 fi
 FLAGS=""; [ "$DOCKER_LOGS" = 1 ] && FLAGS="--docker-logs"
+# D12: mật khẩu store đọc từ .env của stack NGAY TRÊN VM1 (không chép qua máy chạy script)
+[ "$VM" = vm1 ] && FLAGS="$FLAGS --stack-env /home/$USER_SSH/craw-sict/.env"
 # bí mật qua stdin của ssh → stdin của alloy_apply.sh (printf là builtin: token không vào danh sách tiến trình)
 { printf 'GCLOUD_RW_API_KEY=%s\n' "$(grep -E '^GCLOUD_RW_API_KEY=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d "\"'")"
   [ "$VM" = vm1 ] && printf 'POSTGRES_EXPORTER_DSN=%s\n' "${POSTGRES_EXPORTER_DSN:-postgresql://sict:sict@localhost:5432/sict_crawler?sslmode=disable}"

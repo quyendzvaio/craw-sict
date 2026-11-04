@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 
 from qdrant_client import QdrantClient
@@ -61,8 +62,12 @@ def get_client() -> QdrantClient:
     global _client
     if _client is None:
         cfg = get_settings().qdrant
+        # D12: API key gửi cả REST lẫn gRPC. Kết nối VM2 → VM1 đi trong mạng private của VPC (HTTP thường)
+        # → bỏ cảnh báo "Api key is used with an insecure connection" mà client in mỗi lần khởi động.
+        warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
         _client = QdrantClient(host=cfg.host, port=cfg.port, grpc_port=cfg.grpc_port,
-                               prefer_grpc=cfg.prefer_grpc, timeout=cfg.timeout)
+                               prefer_grpc=cfg.prefer_grpc, timeout=cfg.timeout,
+                               api_key=cfg.api_key or None, https=False)
     return _client
 
 
@@ -130,12 +135,23 @@ def ensure_collections():
 
 # document_id: delete/filter theo doc. section/doc_type/year: metadata filtering (filters.py).
 # kind: tách chunk / caption. media_key, video_key: gắn/gỡ bài khỏi point media (indexer).
-# entities / entities_strong: lọc theo thực thể graph ("person:<key>", "event:<key>", "org:<key>").
+# entities: lọc theo khái niệm graph D33 ("concept:<key>") trên đoạn chữ / caption.
 _PAYLOAD_INDEXES = (("document_id", "integer"), ("section", "keyword"),
                     ("doc_type", "keyword"), ("year", "integer"), ("kind", "keyword"),
                     ("media_key", "keyword"), ("video_key", "keyword"),
-                    ("entities", "keyword"), ("entities_strong", "keyword"),  # graph D20
+                    ("entities", "keyword"),  # graph khái niệm D33
                     ("page", "integer"))  # D24: lọc theo trang PDF/PPTX
+
+
+# Index chữ có VỊ TRÍ từ (phrase_matching) trên chữ của điểm, chỉ collection chữ: nhánh "cụm tên riêng" (2026-11-05,
+# search_text_phrase) lọc đoạn chứa nguyên cụm viết hoa của câu hỏi bằng MatchPhrase — đúng thứ tự từ, có dấu, không
+# phân biệt hoa thường. Chunk để chữ ở `content`, caption (collection ocr) ở `caption`.
+_TEXT_INDEX_FIELDS = ("content", "caption")
+
+
+def _text_index_params():
+    from qdrant_client.models import TextIndexParams, TextIndexType, TokenizerType
+    return TextIndexParams(type=TextIndexType.TEXT, tokenizer=TokenizerType.WORD, lowercase=True, phrase_matching=True)
 
 
 def ensure_payload_indexes():
@@ -151,6 +167,12 @@ def ensure_payload_indexes():
             if fld not in schema:
                 client.create_payload_index(name, field_name=fld, field_schema=kind)
                 print(f"[qdrant] payload index {fld} → {name}")
+        if name == cfg.collection_image:
+            continue
+        for fld in _TEXT_INDEX_FIELDS:
+            if fld not in schema:
+                client.create_payload_index(name, field_name=fld, field_schema=_text_index_params())
+                print(f"[qdrant] text index (phrase) {fld} → {name}")
 
 
 _caps: dict[str, bool] = {}
@@ -365,6 +387,26 @@ def search_text(query_vector: list[float], limit: int = 8,
         return [{"score": p.score, "_pid": str(p.id), "_col": name, **p.payload} for p in res.points]
     hits = [h for part in _per_collection(one, [collection] if collection else text_collections()) for h in part]
     return sorted(hits, key=lambda h: -h["score"]) if not collection else hits
+
+
+def phrase_filter(phrase: str, max_hits: int = 200):
+    """Filter "chữ chứa NGUYÊN cụm `phrase`" cho nhánh cụm tên riêng (2026-11-05): MatchPhrase trên index chữ có vị
+    trí từ (_TEXT_INDEX_FIELDS: `content` của chunk, `caption` của điểm caption) — đúng thứ tự từ, có dấu, không
+    phân biệt hoa thường (dense không phân biệt "Phạm Văn Tùng" với một Tùng khác, BM25 bỏ dấu gộp "phạm" với "phẩm").
+    Đếm trước (count exact, ~0,01 s / collection nhờ index): không điểm nào chứa cụm, hoặc một collection có ≥
+    `max_hits` điểm chứa cụm ("Hà Nội" 2.592, "Trường Công" 1.296) → None (cụm quá phổ biến, bỏ như df cap của khái
+    niệm). Caller (query_rewriter.hybrid_search_text) dùng filter này cho một lượt dense + một lượt BM25 (như
+    scope_filter). Không có index (collection v1/v2 chưa chạy ensure_payload_indexes) → Qdrant lỗi, caller coi là
+    không có nhánh."""
+    from qdrant_client.models import MatchPhrase
+    client = get_client()
+    # content HOẶC caption chứa cụm: Filter(should) lồng trong must (_and chỉ gộp must / must_not)
+    flt = Filter(must=[Filter(should=[FieldCondition(key=f, match=MatchPhrase(phrase=phrase))
+                                      for f in _TEXT_INDEX_FIELDS])])
+    counts = _per_collection(lambda name: client.count(name, count_filter=flt, exact=True).count, text_collections())
+    if not any(counts) or max(counts) >= max_hits:
+        return None
+    return flt
 
 
 def search_images(query_vector: list[float], limit: int = 5, query_filter=None) -> list[dict]:

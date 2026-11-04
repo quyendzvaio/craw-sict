@@ -2,15 +2,43 @@
 # LOCAL (khuyen nghi): chay gop voi infra de chung mang:
 #   docker compose -f docker-compose.yml -f docker-compose.worker.yml up -d --build
 #   (mac dinh tro ve service postgres/redis/qdrant, khong can .env dac biet)
-# VM2 rieng: docker compose -f docker-compose.worker.yml up -d --build
+# VM2 rieng: docker compose -f docker-compose.worker.yml up -d   (image từ GHCR do CD ghi vào .env, D10)
 #   + .env theo .env.worker.example (POSTGRES_DSN/REDIS_URL/QDRANT_HOST = IP VM1).
+#
+# Index v3 (2026-11-05): worker đọc cùng bộ biến v3 như API (env_file .env + các dòng EMBED_* / QDRANT_* bên dưới).
+# Bỏ trống = mặc định config.yaml (backend torch, collection *_v2, index v2) — như local. Production v3 phải đặt trong
+# .env VM2: EMBED_BACKEND=api, EMBED_API_BASE, EMBED_MODEL, EMBED_DIM, QDRANT_COLLECTION_TEXT/IMAGE/OCR=*_v3,
+# QDRANT_TEXT_DIM/IMAGE_DIM=1024, CHUNK_STRUCTURED=1 (kiểm: `scripts/cutover_v3.sh env-check vm2`). Trước đó cron
+# không có env_file và không có các biến này → chạy torch 384-d, ghi *_v2, không ghi được *_v3 1024-d.
+# EMBED_API_BASE mặc định http://embed:8090/v1: docker-compose.embed.yml chạy cùng thư mục → cùng project compose
+# (craw-sict) → cùng mạng `craw-sict_default`, tên service `embed` phân giải được. Embed ở nơi khác → đặt trong .env.
+x-worker-v3-env: &worker_v3_env
+  EMBED_BACKEND: ${EMBED_BACKEND:-}
+  EMBED_API_BASE: ${EMBED_API_BASE:-http://embed:8090/v1}
+  EMBED_API_KEY: ${EMBED_API_KEY:-}
+  EMBED_MODEL: ${EMBED_MODEL:-jina-clip-v2}
+  EMBED_DIM: ${EMBED_DIM:-1024}
+  EMBED_QUERY_IMAGE_SIZE: ${EMBED_QUERY_IMAGE_SIZE:-}
+  EMBED_CACHE_PATH: ${EMBED_CACHE_PATH:-}   # sqlite cache vector theo hash; VD /app/_local_store/embed_cache.sqlite
+  QDRANT_PORT: ${QDRANT_PORT:-}
+  QDRANT_GRPC_PORT: ${QDRANT_GRPC_PORT:-}
+  QDRANT_COLLECTION_TEXT: ${QDRANT_COLLECTION_TEXT:-}
+  QDRANT_COLLECTION_IMAGE: ${QDRANT_COLLECTION_IMAGE:-}
+  QDRANT_COLLECTION_OCR: ${QDRANT_COLLECTION_OCR:-}
+  QDRANT_TEXT_DIM: ${QDRANT_TEXT_DIM:-}
+  QDRANT_IMAGE_DIM: ${QDRANT_IMAGE_DIM:-}
+  CHUNK_STRUCTURED: ${CHUNK_STRUCTURED:-}
+  HF_HOME: /cache/hf
+
 services:
   svc-ocr:
     image: ${WORKER_IMAGE:-sict-worker:latest}   # CD đặt ghcr.io/…/sict-worker:<sha> (D10)
     build:
       context: .
       dockerfile: Dockerfile.worker
+    env_file: [{path: .env, required: false}]  # như api: .env (LLM_*, EMBED_*, QDRANT_* v3); thiếu file vẫn up được
     environment:
+      <<: *worker_v3_env
       SICT_CONFIG: /app/config.yaml
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
@@ -18,15 +46,18 @@ services:
       CRAWLER_BACKEND: ${CRAWLER_BACKEND:-auto}
       OBSCURA_BIN: /usr/local/bin/obscura
       OBSCURA_CDP: ws://obscura:9222
-      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql+asyncpg://sict:sict@postgres:5432/sict_crawler}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql+asyncpg://sict:${POSTGRES_PASSWORD:-sict}@postgres:5432/sict_crawler}
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD:-}@redis:6379/0}
       QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       QDRANT_TIMEOUT: ${QDRANT_TIMEOUT:-120}
       YT_COOKIES: ${YT_COOKIES:-/cookies/cookies.txt}
-      HF_HOME: /cache/hf
       AWS_PROFILE: ${AWS_PROFILE:-quyen-admin}
     volumes: [localstore:/app/_local_store, hfcache:/cache/hf, "${AWS_DIR:-${HOME}/.aws}:/home/app/.aws:ro", "./cookies:/cookies:ro"]
     restart: "no"  # chạy 1 lần rồi thoát; cron bên dưới chạy lặp
+    # Chỉ chạy tay (D9): `up -d` bỏ qua → tổng mem_limit VM2 = embed 6 GB + cron 1 GB + obscura (D32).
+    # `docker compose run --rm svc-ocr …` vẫn chạy được. Chỉ có tác dụng với collection v1.
+    profiles: ["manual"]
     mem_limit: 3000m
     logging: {driver: json-file, options: {max-size: 20m, max-file: "3"}}
     command: ["python", "-m", "sict_crawler.pipeline.main", "--annotate-ocr", "2000"]
@@ -37,7 +68,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.worker
+    env_file: [{path: .env, required: false}]  # như api (docker-compose.yml): bộ biến v3 + LLM/AWS từ .env của VM2
     environment:
+      <<: *worker_v3_env
       SICT_CONFIG: /app/config.yaml
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
@@ -45,9 +78,10 @@ services:
       CRAWLER_BACKEND: ${CRAWLER_BACKEND:-auto}
       OBSCURA_BIN: /usr/local/bin/obscura
       OBSCURA_CDP: ws://obscura:9222
-      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql+asyncpg://sict:sict@postgres:5432/sict_crawler}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql+asyncpg://sict:${POSTGRES_PASSWORD:-sict}@postgres:5432/sict_crawler}
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD:-}@redis:6379/0}
       QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       QDRANT_TIMEOUT: ${QDRANT_TIMEOUT:-120}
       YT_COOKIES: ${YT_COOKIES:-/cookies/cookies.txt}
       AWS_PROFILE: ${AWS_PROFILE:-quyen-admin}

@@ -243,10 +243,15 @@ def test_retrieve_widens_list_questions(monkeypatch, fake_search):
 
 # --- model suy luận: hết max_tokens trong phần suy nghĩ ----------------------------------------------------------
 
-def _fake_stream(monkeypatch, lines):
+def _fake_stream(monkeypatch, lines, status=200, body=b""):
     from sict_crawler.service.retrieval import vlm
 
     class R:
+        status_code = status
+
+        def read(self):
+            return body
+
         def __enter__(self):
             return self
 
@@ -279,3 +284,53 @@ def test_stream_answer_skips_reasoning_and_yields_content(monkeypatch, capsys):
         'data: ' + json.dumps({"choices": [{"delta": {"content": "Trả lời [1]."}}]}), "data: [DONE]"])
     assert list(vlm.stream_answer("q", "ctx")) == ["Trả lời [1]."]
     assert "max_new_tokens" not in capsys.readouterr().out
+
+
+def test_stream_answer_logs_http_error(monkeypatch, capsys):
+    """Upstream trả lỗi HTTP (VD 404 model_not_found khi nhà cung cấp gỡ model): không yield gì (caller echo
+    ngữ cảnh) nhưng phải in mã lỗi + thông điệp — trước đây lỗi bị nuốt, /chat lặng lẽ echo (2026-11-04)."""
+    err = b'{"error":{"message":"Model \'gpt-oss-120b-free\' is not supported","code":"model_not_found"}}'
+    vlm = _fake_stream(monkeypatch, [err.decode()], status=404, body=err)
+    assert list(vlm.stream_answer("q", "ctx")) == []
+    out = capsys.readouterr().out
+    assert "404" in out and "model_not_found" in out
+
+
+def test_answer_prompt_covers_documents_and_images_without_ui_claims():
+    from sict_crawler.service.retrieval import vlm
+    p = vlm.answer_prompt("Quy định làm đồ án tốt nghiệp", "[1] (file) Quy định …")
+    assert "Ảnh & Video" not in p                       # câu về giao diện: không nguồn nào chứng minh được
+    assert "không được trả lời là không tìm thấy" in p and "Ảnh/video được gom theo bài" in p and "[graph]" in p
+    assert p.endswith("Câu hỏi: Quy định làm đồ án tốt nghiệp")
+
+
+def test_title_only_chunk_ranks_after_content_of_same_doc():
+    """Mảnh chỉ có tiêu đề ("[Bài báo khoa học | … ] Bài báo khoa học") không có gì cho LLM: xếp sau các mảnh nội dung
+    của cùng bài, để câu liệt kê (1 mảnh / bài) lấy bảng chứ không lấy tiêu đề."""
+    from sict_crawler.service.retrieval import retriever as R
+    head = "[Bài báo khoa học | Công trình đã công bố | 10/12/2021] "
+    hits = [{"document_id": 104, "title": "Bài báo khoa học", "content": head + "Bài báo khoa học", "score": 0.05},
+            {"document_id": 103, "title": "Báo cáo khoa học", "content": "[Báo cáo …] [Bảng: NĂM 2021] | a |", "score": 0.049},
+            {"document_id": 104, "title": "Bài báo khoa học", "content": head + "[Bảng: NĂM 2021] | STT |", "score": 0.045}]
+    out = R.demote_title_only(hits)
+    assert [h["content"][-5:] for h in out] == [hits[1]["content"][-5:], hits[2]["content"][-5:], "khoa học"[-5:]]
+    assert R.diversify(out, 2, 1)[1]["content"].endswith("| STT |")          # bài 104 góp mảnh bảng
+    alone = [{"document_id": 7, "title": "Sơ đồ tổ chức", "content": "[Sơ đồ tổ chức] Sơ đồ tổ chức", "score": 1.0}]
+    assert R.demote_title_only(alone) == alone                             # bài chỉ có mảnh tiêu đề: giữ nguyên
+
+
+def test_list_neighbors_add_adjacent_chunks_of_top_docs(monkeypatch):
+    """Câu liệt kê: bài đứng đầu thường có phần mở đầu khớp câu hỏi, còn danh sách nằm ở đoạn kế tiếp (golden list_v2
+    m21, m27; l07 ngược lại ở đoạn trước) → thêm đoạn liền trước / liền sau của `n_docs` bài đầu, đặt sau các nguồn chính,
+    bỏ đoạn đã có. Bài khác không bị thêm."""
+    from sict_crawler.service.retrieval import retriever as R
+    doc = {1: [{"document_id": 1, "idx": i, "content": f"a{i}", "url": "u1", "kind": "text"} for i in range(4)],
+           2: [{"document_id": 2, "idx": i, "content": f"b{i}", "url": "u2", "kind": "text"} for i in range(3)],
+           3: [{"document_id": 3, "idx": i, "content": f"c{i}", "url": "u3", "kind": "text"} for i in range(3)]}
+    monkeypatch.setattr(R, "_doc_chunks", lambda d: doc[d])
+    hits = [dict(doc[1][1]), dict(doc[2][0]), dict(doc[3][1])]
+    extra = R.list_neighbors(hits, n_docs=2, window=1)
+    assert [(h["document_id"], h["idx"]) for h in extra] == [(1, 0), (1, 2), (2, 1)]
+    assert all(h["via"] == "neighbor" for h in extra)
+    two = R.list_neighbors(hits + [dict(doc[1][2])], n_docs=1, window=1)   # bài 1 có đoạn 1 và 2 → thêm 0 và 3
+    assert [(h["document_id"], h["idx"]) for h in two] == [(1, 0), (1, 3)]

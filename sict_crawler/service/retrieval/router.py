@@ -60,8 +60,7 @@ class Route:
     media: str = "none"
     wants_file: bool = False
     source: str = "rules"   # rules | llm | llm+rules
-    entities: list[str] = field(default_factory=list)  # thực thể graph nêu trong câu hỏi (tên hiển thị)
-    facts: list[str] = field(default_factory=list)     # dữ kiện graph (thực thể liên quan) cho LLM
+    entities: list[str] = field(default_factory=list)  # khái niệm graph (D33) nêu trong câu hỏi (tên hiển thị)
     inputs: list[str] = field(default_factory=list)    # D21: đầu vào thực tế của truy vấn: text | image
     outputs: list[str] = field(default_factory=list)   # D21: đầu ra thực tế: text | image
     list_question: bool = False                         # D27: câu hỏi liệt kê (is_list_question) → truy xuất rộng
@@ -119,18 +118,15 @@ def _media_key(h: dict) -> tuple:
     return ("image", h.get("media_key") or h.get("media_id") or h.get("sha256") or h.get("url"))
 
 
-def passes(h: dict, clip_min: float, caption_min: float, graph_min: float = 0.6,
+def passes(h: dict, clip_min: float, caption_min: float,
            i2i_min: float | None = None, i2t_min: float | None = None) -> bool:
-    """Vượt ngưỡng điểm gốc theo loại. caption_kw (khớp từ khoá caption) coi là có bằng chứng.
-    graph: raw_score = trọng số cạnh ảnh↔thực thể nêu trong câu hỏi (graph D20)."""
+    """Vượt ngưỡng điểm gốc theo loại. caption_kw (khớp từ khoá caption) coi là có bằng chứng."""
     mod = h.get("modality")
     raw = h.get("raw_score")
     if mod == "clip":
         return raw is not None and raw >= clip_min
     if mod == "caption":
         return raw is not None and raw >= caption_min
-    if mod == "graph":
-        return raw is not None and raw >= graph_min
     if mod == "i2i":    # ảnh truy vấn ↔ ảnh trong index (D21 U3/U6)
         return raw is not None and raw >= (clip_min if i2i_min is None else i2i_min)
     if mod == "i2t":    # ảnh truy vấn ↔ caption (D21 U4)
@@ -140,7 +136,7 @@ def passes(h: dict, clip_min: float, caption_min: float, graph_min: float = 0.6,
 
 def gate(route: Route, top_text_hits: list[dict], candidates: list[dict], top_k: int,
          clip_min: float, caption_min: float, optional_max: int = 3,
-         graph_min: float = 0.6, i2i_min: float | None = None, i2t_min: float | None = None) -> list[dict]:
+         i2i_min: float | None = None, i2t_min: float | None = None) -> list[dict]:
     """Chọn media hiển thị. candidates: dict có `modality` (clip|caption|caption_kw), `raw_score`,
     `document_id`/`doc_id`. top_text_hits: các hit chữ đứng đầu (đã xếp hạng)."""
     if route.media == "none":
@@ -149,7 +145,7 @@ def gate(route: Route, top_text_hits: list[dict], candidates: list[dict], top_k:
     rank_of_doc = {d: i for i, d in reversed(list(enumerate(top_docs)))}
     best: dict[tuple, dict] = {}
     for h in candidates:
-        if not passes(h, clip_min, caption_min, graph_min, i2i_min, i2t_min):
+        if not passes(h, clip_min, caption_min, i2i_min, i2t_min):
             continue
         rank = min((rank_of_doc[d] for d in _docs_of(h) if d in rank_of_doc), default=None)
         # ảnh giống ảnh người dùng gửi (i2i) là bằng chứng trực tiếp → đứng đầu, không cần thuộc top bài chữ. Truy vấn

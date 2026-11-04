@@ -153,18 +153,37 @@ def test_br_inside_table_cell_keeps_item_boundary():
     p = parse_html(BASE, html)
     assert "Cao Bá Lộc (CN); Lê Minh Hiếu; Lương Thị Sao Mai" in p.markdown
     assert re.sub(r"\s+;", ";", next(b for b in p.blocks if b["type"] == "table")["text"]).count(";") == 2
-    names = [m.name for m in ix_graph().extract_persons(p.markdown)]
-    assert "Lê Minh Hiếu" in names and "Lương Thị Sao Mai" in names and not any(len(n.split()) > 4 for n in names)
-
-
-def ix_graph():
-    from sict_crawler.service.graph import graph
-    return graph
 
 
 def test_pdf_layout_columns_kept_apart():
     text = "1   Nguyễn Văn An      Trần Thị Bình     CNTT01\n2   Lê Văn Cường       Phạm Thị Dung     CNTT02"
     clean = ix._clean_page(text)
     assert "Nguyễn Văn An | Trần Thị Bình | CNTT01" in clean
-    names = {m.name for m in ix_graph().extract_persons(clean)}
-    assert {"Nguyễn Văn An", "Trần Thị Bình", "Lê Văn Cường", "Phạm Thị Dung"} <= names
+    assert "Lê Văn Cường | Phạm Thị Dung | CNTT02" in clean
+
+
+def test_short_paragraph_before_table_labels_every_piece():
+    """Trang "Bài báo khoa học": mỗi năm là 1 dòng "NĂM 2021" rồi 1 bảng dài. Dòng năm trước đây thành chunk
+    trơ trọi và các mảnh bảng không biết năm → câu hỏi "bài báo năm 2021" không trúng (RAGAS q63)."""
+    rows = "".join(f"<tr><td>{i}</td><td>Bài báo số {i} về học máy và xử lý ảnh</td></tr>" for i in range(60))
+    html = ("<html><head><title>Bài báo khoa học</title></head><body><div class='irs-blog-single-col'>"
+            "<p>Danh mục bài báo khoa học của giảng viên được tổng hợp theo từng năm như sau.</p>"
+            f"<p><strong>NĂM 2021</strong></p><table><tr><th>STT</th><th>Tên bài báo</th></tr>{rows}</table>"
+            f"<p><strong>NĂM 2020</strong></p><table><tr><th>STT</th><th>Tên bài báo</th></tr>{rows}</table>"
+            "</div></body></html>")
+    doc, md, p = _doc(html)
+    ch = get_settings().chunking
+    old = ch.structured
+    ch.structured = True
+    try:
+        chunks = doc_chunks(doc, md, blocks=p.blocks)
+    finally:
+        ch.structured = old
+    tbl = [c for c in chunks if c.kind == "table"]
+    assert len(tbl) > 2                                                   # bảng dài bị chia nhiều mảnh
+    y21 = [c for c in tbl if "[Bảng: NĂM 2021]" in c.text]
+    y20 = [c for c in tbl if "[Bảng: NĂM 2020]" in c.text]
+    assert y21 and y20 and len(y21) + len(y20) == len(tbl)                # mọi mảnh mang nhãn của bảng nó
+    assert not any(c.kind == "text" and c.text.rstrip().endswith("NĂM 2021") for c in chunks)   # hết chunk trơ trọi
+    intro = next(c for c in chunks if "Danh mục bài báo" in c.text)
+    assert "NĂM 2021" not in intro.text                                   # nhãn không dính vào đoạn trước

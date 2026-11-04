@@ -3,7 +3,8 @@
   1 lượt truy xuất (retriever.retrieve: câu gốc + câu LLM viết lại, đa dạng bài, câu liệt kê lấy rộng);
   không ra hit nào → fallback từ vựng (BM25, không cần vector);
   `sufficient` = luật xác định (`evidence`): có nguồn, cosine câu hỏi↔đoạn tốt nhất ≥ retrieval.min_cosine, tỷ lệ từ
-  nội dung của câu hỏi có trong ngữ cảnh ≥ retrieval.min_term_cover. Caller thêm ghi chú "tài liệu hạn chế" khi false.
+  nội dung của câu hỏi có trong ngữ cảnh ≥ retrieval.min_term_cover, và mọi cụm tên riêng của câu hỏi
+  (query_rewriter.name_phrases) có mặt nguyên cụm trong ngữ cảnh. Caller thêm ghi chú "tài liệu hạn chế" khi false.
 
 Trước D27 một LLM chấm ngữ cảnh rồi thử lại tối đa 3 lượt: nó không thấy phần không tìm được (chấm "đủ" khi danh sách
 thiếu), chấm "đủ" cả câu ngoài phạm vi, đổi theo model và tốn 1–3 lượt gọi LLM / câu (eval/list_v1, 2026-10-25).
@@ -14,7 +15,8 @@ from __future__ import annotations
 from sict_crawler.core import sparse
 from sict_crawler.core.config import get_settings
 from sict_crawler.core.sparse import question_terms
-from sict_crawler.service.retrieval import retriever, sources
+from sict_crawler.core.text import fold
+from sict_crawler.service.retrieval import query_rewriter, retriever, sources
 
 
 def evidence(question: str, tsrcs: list, msrcs: list, context: str) -> dict:
@@ -31,8 +33,13 @@ def evidence(question: str, tsrcs: list, msrcs: list, context: str) -> dict:
     terms = question_terms(question)
     have = set(sparse.tokens(context))
     cover = round(sum(t in have for t in terms) / len(terms), 3) if terms else 1.0
+    # cụm tên riêng (2026-11-05): "phạm / văn / tùng" rải ở 3 bài khác nhau vẫn cho cover 1,0 — tên người chỉ là bằng
+    # chứng khi đứng NGUYÊN cụm trong ngữ cảnh (so chuỗi bỏ dấu, cùng name_phrases với nhánh truy xuất)
+    fctx = " ".join(fold(context).split())
+    missing = [p for p in query_rewriter.name_phrases(question) if " ".join(fold(p).split()) not in fctx]
     low = [x for x, bad in (("cosine", cos is not None and cos < cfg.min_cosine),
-                            ("từ khoá", cover < cfg.min_term_cover)) if bad]
+                            ("từ khoá", cover < cfg.min_term_cover),
+                            ("tên riêng " + ", ".join(missing), bool(missing))) if bad]
     return {"sufficient": not low, "cosine": None if cos is None else round(cos, 3), "cover": cover,
             "reason": ("thấp: " + ", ".join(low)) if low else "ok"}
 
@@ -57,7 +64,7 @@ def run(question: str, top_k: int = 5,
         attempts = 2
         log.append("attempt2: lexical fallback (không có hit)")
     budget = get_settings().llm.list_context_chars if getattr(route, "list_question", False) else None
-    ctx = sources.build_context(tsrcs, msrcs, getattr(route, "facts", None), context_chars=budget)
+    ctx = sources.build_context(tsrcs, msrcs, context_chars=budget)
     ev = evidence(question, tsrcs, msrcs, ctx)
     log.append(f"evidence: {ev}")
     return _result(tsrcs, msrcs, ctx, attempts, ev["sufficient"], log, route)

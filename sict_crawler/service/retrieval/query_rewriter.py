@@ -59,9 +59,56 @@ def rewrite(question: str) -> dict:
     from sict_crawler.core.config import get_settings
     from sict_crawler.service.retrieval import vlm
     llm = vlm.rewrite_and_route(question) if get_settings().llm.rewrite_query else None
-    rewritten = (llm or {}).get("rewritten") or _rule_rewrite(question)
+    restored = None
+    if not llm and get_settings().retrieval.restore_accents:
+        from sict_crawler.service.retrieval import accent
+        restored = accent.maybe_restore(question)
+    rewritten = (llm or {}).get("rewritten") or _rule_rewrite(restored or question)
     route_llm = {k: llm[k] for k in ("media", "wants_file")} if llm and llm.get("media") else None
-    return {"rewritten": rewritten, "terms": _terms(rewritten), "route_llm": route_llm}
+    # restored: câu gốc không dấu đã khôi phục dấu → retriever nhúng câu này cho nhánh dense (mô hình nhúng không hiểu
+    # tiếng Việt không dấu); BM25 bỏ dấu cả hai phía nên vẫn tìm bằng câu gốc
+    return {"rewritten": rewritten, "terms": _terms(rewritten), "route_llm": route_llm, "restored": restored}
+
+
+_PUNCT = "\"'“”‘’«»()[]{}<>.,;:!?…/\\|-–—"
+
+
+def _cap_word(t: str) -> bool:
+    """Từ viết hoa chữ đầu, phần còn lại thường, toàn chữ (không số / ký hiệu), ≥ 2 ký tự: "Phạm", "Tùng" — không nhận
+    viết tắt toàn hoa ("CNTT", "SICT"), hoa xen ("HaUI", "ThS"), từ có số ("K19"). Không dùng khoảng Unicode [A-Z]:
+    chữ có dấu nằm ngoài, nên so bằng str.isupper / islower."""
+    return len(t) >= 2 and t.isalpha() and t[0].isupper() and t[1:].islower()
+
+
+def name_phrases(question: str, min_words: int = 2) -> list[str]:
+    """Cụm tên riêng trong câu hỏi (2026-11-05): ≥ `min_words` từ LIÊN TIẾP viết hoa chữ đầu, giữ nguyên dấu
+    ("Phạm Văn Tùng", "Nguyễn Bá Nghiễn"); tiếng Việt viết hoa từng âm tiết của tên nên không cần danh sách họ / LLM.
+    Cụm cắt ở dấu câu, từ thường, số, viết tắt toàn hoa ("TS. Nguyễn Bá Nghiễn" → "Nguyễn Bá Nghiễn"; "Đội
+    HaUI.No_Solution_AI" → không có; "Năm 2026 Trường CNTT" → không có). Từ ĐẦU CÂU viết hoa theo quy ước nên không
+    tính vào cụm ("Thầy Hà Mạnh Đào dạy khoa nào" → "Hà Mạnh Đào"; "Năm Trường…" → không có), trừ khi cả câu chỉ là
+    cụm đó ("Phạm Văn Tùng"). Dùng cho nhánh RRF "cụm tên riêng" (hybrid_search_text phrases=) và agent.evidence."""
+    toks = unicodedata.normalize("NFC", question or "").split()
+    out: list[str] = []
+    run: list[str] = []
+    whole = len(toks) >= min_words and all(_cap_word(t.strip(_PUNCT)) and t == t.strip(_PUNCT) for t in toks)
+
+    def flush():
+        if len(run) >= min_words:
+            out.append(" ".join(run))
+        run.clear()
+
+    for i, raw in enumerate(toks):
+        core = raw.strip(_PUNCT)
+        if raw != raw.lstrip(_PUNCT):      # mở ngoặc / ngoặc kép trước từ → cụm trước kết thúc
+            flush()
+        if _cap_word(core) and (i > 0 or whole):
+            run.append(core)
+        else:
+            flush()
+        if raw != raw.rstrip(_PUNCT):      # dấu câu sau từ → cụm kết thúc
+            flush()
+    flush()
+    return list(dict.fromkeys(out))
 
 
 def _key(r: dict) -> tuple:
@@ -83,7 +130,12 @@ def _rrf(*hit_lists: list[dict], k: int = 60) -> list[dict]:
     for hits in hit_lists:
         for rank, r in enumerate(hits):
             scores[_key(r)] = scores.get(_key(r), 0.0) + 1.0 / (k + rank + 1)
-            best.setdefault(_key(r), r)
+            b = best.setdefault(_key(r), r)
+            # cosine câu hỏi↔điểm (dense_score) lấy từ BẤT KỲ danh sách dense nào có nó: hit vào trước qua BM25 vẫn
+            # mang cosine → Source.cosine / raw_score đầy đủ cho evidence (2026-11-05: đoạn đúng của nhánh tên vào
+            # qua BM25 trước, cosine None, `sufficient` lật False dù ngữ cảnh đúng)
+            if b is not r and b.get("dense_score") is None and r.get("dense_score") is not None:
+                best[_key(r)] = {**b, "dense_score": r["dense_score"]}
     out = []
     for kk, s in sorted(scores.items(), key=lambda x: -x[1]):
         h = dict(best[kk])
@@ -96,7 +148,8 @@ def hybrid_search_text(tvec: list[float] | None, terms: list[str], limit: int = 
                        filter_document_id: int | None = None, query_filter=None,
                        text: str | None = None, graph_filter=None,
                        extra_vecs: list[tuple[str, list[float]]] | None = None,
-                       alt_queries: list[tuple[list[float], str]] | None = None) -> list[dict]:
+                       alt_queries: list[tuple[list[float], str]] | None = None,
+                       scope_filter=None, phrases: list[str] | None = None) -> list[dict]:
     """Dense E5 + keyword legs fused by RRF.
 
     Keyword leg (vector_store.keyword_search): collection v2 → BM25 sparse trên token bỏ dấu của
@@ -107,6 +160,13 @@ def hybrid_search_text(tvec: list[float] | None, terms: list[str], limit: int = 
     truy vấn tìm trong chunk/caption); mỗi hit gắn `via`.
     alt_queries: [(vector, chữ)] — câu hỏi khác cùng ý (D27: câu LLM viết lại khi `tvec`/`text` là câu gốc), mỗi câu
     thêm 1 danh sách dense + 1 danh sách BM25 vào RRF: câu viết lại chỉ bổ sung, không thay câu gốc.
+    scope_filter: filter mục câu hỏi nêu đích danh (filters.scope_qdrant) → thêm 1 danh sách dense + 1 BM25 chỉ trong
+    mục đó: bài đúng mục vào được tập ứng viên dù không lọt top của tìm toàn bộ (không loại kết quả nào).
+    phrases: cụm tên riêng của câu hỏi (name_phrases) → mỗi cụm 1 danh sách dense + 1 BM25 chỉ trong điểm chứa NGUYÊN
+    cụm (vector_store.phrase_filter, 2026-11-05): tên người là thực thể hiếm mà dense (cosine theo "âm hưởng" tên)
+    và BM25 (âm tiết bỏ dấu quá phổ biến) đều không khớp được. Chỉ thêm ứng viên; cụm nhận nhầm hay quá phổ biến →
+    không thêm nhánh. Một danh sách (1/61 RRF) thua đoạn có mặt ở 3 danh sách dense + BM25 + graph (đo person_v1:
+    p25 "khoảnh khắc của sinh viên Nguyễn Hồng Đông" ngoài top 8), nên dùng 2 như scope_filter.
     """
     from sict_crawler.repository import vector_store
 
@@ -149,6 +209,28 @@ def hybrid_search_text(tvec: list[float] | None, terms: list[str], limit: int = 
         legs.append(dense_of(avec))
         legs.append(best_effort(lambda atext=atext: vector_store.keyword_search(
             atext, _terms(atext), limit=limit, query_filter=query_filter)))
+    if scope_filter is not None:
+        sf = vector_store._and(query_filter, scope_filter)
+        if tvec is not None:
+            legs.append(best_effort(lambda: vector_store.search_text(tvec, limit=limit, query_filter=sf)))
+        if text or terms:
+            legs.append(best_effort(lambda: vector_store.keyword_search(text or " ".join(terms), terms, limit=limit,
+                                                                        query_filter=sf)))
+    # cụm tên riêng: như scope_filter, mỗi cụm 1 dense + 1 BM25 chỉ trong điểm chứa nguyên cụm (phrase_filter đếm
+    # trước, ~0,01 s; cụm quá phổ biến / không có → None → không thêm nhánh). Hit gắn via=name, giữ cosine (dense_score)
+    for ph in (phrases or []) if tvec is not None else []:
+        try:
+            pf = vector_store.phrase_filter(ph)
+        except Exception:
+            pf = None
+        if pf is None:
+            continue
+        pf = vector_store._and(query_filter, pf)
+        legs.append(best_effort(lambda pf=pf: [{**h, "dense_score": h["score"], "via": "name"}
+                                               for h in vector_store.search_text(tvec, limit=limit, query_filter=pf)]))
+        if text or terms:
+            legs.append(best_effort(lambda pf=pf: [{**h, "via": "name"} for h in vector_store.keyword_search(
+                text or " ".join(terms), terms, limit=limit, query_filter=pf)]))
     lists = [x for x in vector_store.parallel(legs) if x]
     if len(lists) <= 1:
         return lists[0] if lists else []

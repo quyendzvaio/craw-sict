@@ -93,8 +93,7 @@ def caption_payload(cap: dict, document_id: int, media_url: str, media_key: str 
 
 def media_payload(kind: str, sha: str, s3_key: str, url: str, pages: list[tuple[int, dict]],
                   caption: str = "", urls: list[str] | None = None, timestamp: float | None = None,
-                  video_key: str | None = None, entities: list[str] | None = None,
-                  entities_strong: list[str] | None = None) -> dict:
+                  video_key: str | None = None) -> dict:
     """Point ảnh/frame (sict_image_v2). pages: [(document_id PG, doc dict)] — metadata dạng danh
     sách (lọc cứng khớp khi BẤT KỲ bài chứa nào khớp)."""
     docs = [d for _, d in pages]
@@ -106,8 +105,7 @@ def media_payload(kind: str, sha: str, s3_key: str, url: str, pages: list[tuple[
             "doc_type": _uniq(d.get("doc_type") for d in docs),
             "year": _uniq(d.get("year") for d in docs),
             "published_at": max(pubs) if pubs else None,
-            "timestamp": timestamp, "video_key": video_key,
-            "entities": entities or [], "entities_strong": entities_strong or []}
+            "timestamp": timestamp, "video_key": video_key}   # không `entities`: graph khái niệm không gắn vào ảnh
 
 
 def image_caption(alt: str, ocr: str) -> str:
@@ -541,8 +539,7 @@ async def index_page(session, st, url: str, html: str, depth: int = 0, frontier=
     write_text(items)
     att = await _index_attachments(session, doc, parsed.attachments)
     await session.commit()
-    # graph (D20): cùng đường code với bulk/rebuild, đọc lại từ PG + Qdrant; payload sinh từ PG.
-    from sict_crawler.service.graph import graphsync
-    await graphsync.update_documents(session, [pk, *att])
+    # graph khái niệm (D33) không cập nhật theo từng bài: incremental dựng lại toàn bộ sau lượt ingest
+    # (khái niệm phụ thuộc số bài của cả corpus), xem incremental._graph_stage.
     push_links()
     return "changed" if existing is not None else "new"

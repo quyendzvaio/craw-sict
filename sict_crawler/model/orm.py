@@ -9,13 +9,10 @@ nằm trong payload Qdrant. Point id = uuid5 cố định (doc_rules.stable_id) 
   media_occurrence(document_id, media_id, alt, pos, caption_point_id)  — 1 dòng / 1 lần xuất hiện
   videos(id, video_key unique [YouTube id], url, title, subs, frames, status)
   video_occurrence(document_id, video_id, caption_point_id)
-  entities(id, kind[person|event|org], key, name, aliases, doc_count)   — graph D20 (graph.py)
-  entity_links(entity_id, document_id, media_id?, video_id?, rel[about|mentions|depicts], weight,
-               source, evidence)
-  entity_aliases(kind, alias_key unique, entity_key|NULL=chặn, source[staff|review|manual])
-  entity_review(kind, key, surface, reason, candidate_key, document_id, context, status) — hàng chờ duyệt
-  entity_relations(src_id < dst_id, rel "<kind>-<kind>", weight, doc_count, media_count, doc_ids)
-               — thực thể ↔ thực thể suy từ entity_links (graph.relations_from_links)
+  entities(id, kind[concept], key, name, aliases, doc_count)   — graph khái niệm D33 (graph/concepts.py)
+  entity_links(entity_id, document_id, chunk_id, rel[mentions], weight, source)  — đoạn ↔ khái niệm
+               (media_id / video_id / evidence / roles: cột của graph luật cũ, để trống)
+  chunk_phrases(chunk_id, text_hash, phrases)  — cache cụm danh từ cho graph khái niệm
 Bảng v1 (giữ tới khi xoá collection cũ — rollback): chunks, media_assets.
 
 Callers: db.py, main.py, api.py, indexer.py, loader.py.
@@ -203,56 +200,11 @@ class EntityLink(Base):
     evidence: Mapped[str] = mapped_column(String(300), default="")  # đoạn trích chứa tên (AC-C6)
 
 
-class EntityRelation(Base):
-    """Cạnh thực thể ↔ thực thể (vô hướng, lưu 1 lần với src_id < dst_id), suy từ việc cùng xuất
-    hiện trên 1 ảnh / cùng ở tiêu đề / tiêu đề + thân bài (graph.relations_from_links). Tính lại toàn
-    bộ mỗi lượt incremental (vài giây) nên không cần cập nhật từng phần."""
-    __tablename__ = "entity_relations"
-    __table_args__ = (UniqueConstraint("src_id", "dst_id", name="uq_entity_rel"),)
+class ChunkPhrase(Base):
+    """Cache cụm danh từ (underthesea) của từng đoạn cho graph khái niệm (graph.concepts): tách cụm toàn
+    corpus mất ~10 phút / 1 lõi, nên mỗi lần dựng chỉ tách đoạn mới hoặc nội dung đổi (text_hash khác)."""
+    __tablename__ = "chunk_phrases"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    src_id: Mapped[int] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"), index=True)
-    dst_id: Mapped[int] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"), index=True)
-    rel: Mapped[str] = mapped_column(String(32))          # "person-event", "person-person", ...
-    weight: Mapped[float] = mapped_column(Float, default=0.0)   # noisy-OR các bằng chứng, ≤ 1
-    doc_count: Mapped[int] = mapped_column(Integer, default=0)
-    media_count: Mapped[int] = mapped_column(Integer, default=0)  # số ảnh/video nêu cả hai
-    doc_ids: Mapped[list] = mapped_column(JSONB, default=list)    # ≤ 10 bài làm chứng mạnh nhất
-    roles: Mapped[dict] = mapped_column(JSONB, default=dict)     # {"src": [vai trò], "dst": [...]} trong các bài chung
-
-
-class EntityAlias(Base):
-    """Alias / chặn ĐÃ DUYỆT (nguồn sự thật cho gộp tên): (kind, alias_key) → entity_key đích;
-    entity_key NULL = chặn (không phải thực thể). Lưu theo khoá chữ, không theo id, để dựng lại
-    graph (id đổi) vẫn áp được. Alias do luật tự sinh nằm ở entities.aliases (tính lại mỗi lần)."""
-    __tablename__ = "entity_aliases"
-    __table_args__ = (UniqueConstraint("kind", "alias_key", name="uq_entity_alias"),)
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    kind: Mapped[str] = mapped_column(String(16))
-    alias_key: Mapped[str] = mapped_column(String(300))
-    entity_key: Mapped[str | None] = mapped_column(String(300), default=None)
-    source: Mapped[str] = mapped_column(String(16), default="review")  # review | manual
-    note: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc))
-
-
-class EntityReview(Base):
-    """Hàng chờ duyệt: tên người gần giống người đã có (không tự gộp), thực thể nghi nhiễu, và (giai
-    đoạn C) trích xuất LLM độ tin thấp. Duyệt xong → entity_aliases (graphsync review-import)."""
-    __tablename__ = "entity_review"
-    __table_args__ = (UniqueConstraint("kind", "key", "reason", "candidate_key", name="uq_entity_review"),)
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    kind: Mapped[str] = mapped_column(String(16))
-    key: Mapped[str] = mapped_column(String(300))
-    surface: Mapped[str] = mapped_column(String(300), default="")
-    reason: Mapped[str] = mapped_column(String(32))          # near_duplicate | llm_low_conf | ...
-    candidate_key: Mapped[str] = mapped_column(String(300), default="")
-    document_id: Mapped[int | None] = mapped_column(
-        ForeignKey("documents.id", ondelete="SET NULL"), default=None)
-    context: Mapped[str] = mapped_column(Text, default="")
-    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending | merged | distinct | blocked
-    created_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc))
+    chunk_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    text_hash: Mapped[str] = mapped_column(String(40))
+    phrases: Mapped[list] = mapped_column(JSONB, default=list)

@@ -8,7 +8,7 @@ tách chữ, bảng, ảnh, keyframe video, file đính kèm → PostgreSQL + Qd
 Hỏi được bằng chữ, bằng ảnh, hoặc cả hai; câu trả lời có trích dẫn `[n]` trỏ về bài viết / file
 (kèm số trang) và ảnh, video liên quan khi câu hỏi cần.
 
-> Dự án đang ở giai đoạn production hardening. Mọi quyết định thiết kế (D1–D30), lộ trình và cách
+> Dự án đang ở giai đoạn production hardening. Mọi quyết định thiết kế (D1–D33), lộ trình và cách
 > verify/rollback nằm ở [`plan.md`](plan.md); tiêu chí nghiệm thu ở `tests/acceptance_*.md`.
 > [`CLAUDE.md`](CLAUDE.md) là tài liệu kỹ thuật chi tiết nhất về từng thành phần.
 
@@ -25,8 +25,10 @@ Hỏi được bằng chữ, bằng ảnh, hoặc cả hai; câu trả lời có
 - **Tìm kiếm lai**: dense + BM25 trên chữ đã bỏ dấu (sparse vector Qdrant, IDF), gộp RRF; câu gốc
   luôn được tìm, câu viết lại chỉ bổ sung. Ưu tiên mềm theo mục, năm, "mới nhất" suy từ câu hỏi;
   lọc cứng khi người gọi truyền `filters`.
-- **Graph thực thể bằng luật** (người, sự kiện, CLB): lọc chữ và ảnh/video theo thực thể nêu trong
-  câu hỏi ("ảnh thầy X ở CLB Y"), thêm dữ kiện quan hệ vào ngữ cảnh. Không dùng LLM để trích.
+- **Graph khái niệm** (D33, kiểu LazyGraphRAG): khái niệm = cụm danh từ ≥ 2 từ (underthesea) xuất
+  hiện ở 2 bài đến ~5,6 % số bài; mỗi đoạn mang payload `entities`, câu hỏi khớp danh bạ → thêm một
+  danh sách lọc theo khái niệm vào RRF. Dựng lại sau mỗi lượt ingest có thay đổi; không luật theo
+  loại, không LLM, không GLiNER.
 - **Guardrail không phụ thuộc LLM**: đa dạng tài liệu trong top k, câu liệt kê lấy rộng hơn, bài áp
   đảo được thêm đoạn, cờ `sufficient` tính bằng luật (cosine + độ phủ từ khoá). Đổi model LLM không
   đổi kết quả truy xuất.
@@ -79,12 +81,12 @@ Import tuyệt đối và chỉ trỏ xuống tầng dưới; `api` và `pipelin
 | `sict_crawler/service/index/` | luật index v2, chunker, OCR, video, đường ghi `indexer` |
 | `sict_crawler/service/embedding/` | client embedding (torch / HTTP), dịch vụ ONNX tự host |
 | `sict_crawler/service/retrieval/` | retriever, agent, router media, bộ lọc, trích dẫn, gọi LLM |
-| `sict_crawler/service/graph/` | luật trích thực thể, `graphsync`, catalog CLB / sự kiện |
+| `sict_crawler/service/graph/` | graph khái niệm (cụm danh từ, D33): `concepts`, danh bạ `graph`, `graphsync` |
 | `sict_crawler/pipeline/` | CLI: crawl, incremental, snapshot, compute, loader, reconcile |
 | `sict_crawler/api/` | FastAPI, `/metrics`, giao diện chat tĩnh |
 | `tests/` | pytest, fixture HTML thật, Gherkin, tiêu chí nghiệm thu |
 | `scripts/` | đánh giá, nghiệm thu qua HTTP, cutover, giám sát |
-| `eval/` | bộ câu hỏi vàng, bộ câu liệt kê, bộ vàng graph, kết quả đo |
+| `eval/` | bộ câu hỏi vàng, bộ câu liệt kê, kết quả đo |
 
 ## Chạy local
 
@@ -113,8 +115,8 @@ Index hàng loạt từ đầu:
 ```bash
 python -m sict_crawler.pipeline.snapshot --out _snapshot/2026-10-12        # chạy lại = resume
 python -m sict_crawler.pipeline.compute  --snapshot _snapshot/2026-10-12   # stages docs,text,images,videos
-python -m sict_crawler.pipeline.loader   --artifacts _snapshot/2026-10-12/artifacts/v2-multilingual-e5-small
-python -m sict_crawler.service.graph.graphsync rebuild                      # graph thực thể
+python -m sict_crawler.pipeline.loader   --artifacts _snapshot/2026-10-12/artifacts/v3-jina-clip-v2   # v2: v2-multilingual-e5-small
+python -m sict_crawler.service.graph.graphsync rebuild                      # graph khái niệm (cụm danh từ; loader đã gọi sau khi nạp)
 python -m sict_crawler.pipeline.reconcile --dry-run                         # kiểm PG ↔ Qdrant
 ```
 
@@ -167,7 +169,6 @@ uv run python -m tests.test_agent
 | `eval/golden_v1.jsonl` (70 câu, URL đáp án, chế độ media) | `scripts/eval_retrieval.py` (offline), `scripts/eval_api.py` (HTTP) | recall@5 0,985 · MRR@10 0,898 · chế độ media 0,871 |
 | `eval/list_v1.jsonl` (12 câu liệt kê + 8 câu ngoài phạm vi) | `scripts/eval_api.py --list` | độ phủ mục 0,970 · `sufficient` đúng 0,95 |
 | RAGAS trên golden + list | `scripts/eval_ragas.py collect / score` | faithfulness 0,884 · answer relevancy 0,750 · context precision 0,735 · context recall (list) 0,937 |
-| `eval/graph_gold_v1.jsonl` (150 tài liệu, nhãn còn ở dạng draft) | `scripts/eval_graph.py`, CI gate `tests/test_eval_graph.py` | chờ người duyệt nhãn (`eval/GRAPH_ANNOTATION.md`) |
 | Nghiệm thu U1–U6 qua HTTP | `scripts/accept_api.py --api URL` | 54/54 |
 
 Chạy đánh giá trước khi đổi model, ngưỡng hay luật chunk. Lịch sử số đo ở `eval/RESULTS.md` và
@@ -177,17 +178,31 @@ Chạy đánh giá trước khi đổi model, ngưỡng hay luật chunk. Lịch
 
 Hai VM, Docker Compose (không k8s, D15):
 
-- **VM1** `docker-compose.yml`: postgres, redis, qdrant, api (cổng 8003), nginx cache (8080).
-- **VM2** `docker-compose.worker.yml`: `cron` chạy incremental mỗi 12 giờ, tối đa 5 phút / lượt (D31), OCR, Obscura sidecar;
-  dịch vụ embedding `docker-compose.embed.yml`. Trỏ về VM1 qua `.env` (`.env.worker.example`).
+- **VM1** (2 vCPU / 4 GB) `docker-compose.yml`: postgres, redis, qdrant, api (cổng 8003), nginx cache (8080).
+- **VM2** (EC2 riêng 2 vCPU / 8 GB, D32) `docker-compose.worker.yml`: `cron` chạy incremental mỗi 12 giờ, tối đa
+  5 phút / lượt (D31), Obscura sidecar (`svc-ocr` chỉ chạy tay); dịch vụ embedding `docker-compose.embed.yml`. Trỏ về VM1 qua `.env` (`.env.worker.example`).
+- **Index v3 trên production**: API (VM1) và `cron` (VM2) đọc cùng bộ biến từ `.env` (`EMBED_BACKEND=api`,
+  `EMBED_API_BASE`, `QDRANT_COLLECTION_*=*_v3`, `QDRANT_TEXT_DIM/IMAGE_DIM=1024`, `CHUNK_STRUCTURED=1`);
+  `scripts/cutover_v3.sh` (`pack`, `env-check`, `backup`, `load` bằng image worker, `verify`, `upload-media`,
+  `rollback`) làm cutover từng bước; thứ tự và checklist ở [`docs/deploy_v3.md`](docs/deploy_v3.md).
 - **CI/CD**: `ci.yml` chạy test và build thử image trên mọi PR; `release.yml` đẩy
   `ghcr.io/<owner>/sict-{api,worker,embed}:<sha>` khi merge vào `main`; `cd.yml` (chạy tay, chỉ
   `main`) kéo image theo SHA về VM, không build trên VM.
 - **Giám sát**: Grafana Alloy trên mỗi host đẩy metric + log lên Grafana Cloud; dashboard sinh từ
   code (`scripts/grafana_dashboards.py`).
 
-Postgres, Redis, Qdrant trong compose mở cổng để worker ở VM2 kết nối: chỉ cho phép mạng private
-(security group / firewall) và đổi mật khẩu mặc định `sict` trước khi chạy thật.
+**Khoá store (D12).** Postgres, Redis, Qdrant lấy mật khẩu / API key từ `.env` (`POSTGRES_PASSWORD`,
+`REDIS_PASSWORD`, `QDRANT_API_KEY`) và chỉ mở cổng trên `STORE_BIND` (mặc định `127.0.0.1`). Lần đầu trên VM1:
+
+```bash
+scripts/store_auth.sh init-env          # sinh 3 bí mật ngẫu nhiên + STORE_BIND=0.0.0.0 vào .env (không in ra)
+scripts/store_auth.sh sync-pg           # đặt mật khẩu mới cho DB đã có dữ liệu
+docker compose up -d                    # redis / qdrant bật khoá, API dùng mật khẩu mới
+```
+
+Chép cùng giá trị sang `.env` VM2 (`POSTGRES_DSN`, `REDIS_URL`, `QDRANT_API_KEY`, xem `.env.worker.example`).
+Security Group của VM1 chỉ cho SG của VM2 vào 5432 / 6379 / 6333-6334. CD chạy `store_auth.sh check vm1|vm2`
+và dừng nếu thiếu. Máy dev để trống các biến này: store không khoá, chỉ nghe localhost.
 
 ## Quy ước đóng góp
 
@@ -200,3 +215,11 @@ Postgres, Redis, Qdrant trong compose mở cổng để worker ở VM2 kết n�
 
 Nội dung crawl thuộc về Trường CNTT&TT — Đại học Công nghiệp Hà Nội. Repo chỉ chứa mã nguồn và các
 bộ câu hỏi đánh giá; dữ liệu crawl, snapshot và index không nằm trong repo.
+Kết quả RAGAS chỉ commit điểm (`eval/results/ragas/*.scores*.jsonl`, `*.summary.json`); file
+`*.answers.jsonl` chứa nguyên văn ngữ cảnh lấy từ site nên giữ ở máy chấm, không đưa lên repo.
+
+## Giấy phép
+
+Mã nguồn phát hành theo [Apache License 2.0](LICENSE), Copyright 2026 quyendzvaio. Giấy phép chỉ áp cho
+mã nguồn và tài liệu của repo, **không** áp cho nội dung trang sict.haui.edu.vn (văn bản, ảnh, video,
+file đính kèm) mà hệ thống crawl về — nội dung đó vẫn thuộc Trường CNTT&TT.

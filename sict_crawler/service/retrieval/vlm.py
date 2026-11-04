@@ -278,6 +278,39 @@ def rewrite_query(question: str) -> str:
     return out[:500]
 
 
+ANSWER_RULES = (
+    "Bạn là trợ lý ảo của Trường CNTT & Truyền thông, Đại học Công nghiệp Hà Nội (HaUI). "
+    "Trả lời câu hỏi của người dùng CHỈ dựa vào ngữ cảnh được cung cấp. "
+    "Trả lời ngắn gọn bằng tiếng Việt. Ngữ cảnh chỉ có một phần thông tin thì trả lời phần có (kèm [n]) rồi nói rõ "
+    "phần còn thiếu; chỉ nói không có thông tin khi không nguồn nào liên quan đến câu hỏi. "
+    "Ngữ cảnh gồm các nguồn đánh số [1], [2]…; MỌI ý trả lời phải kết thúc bằng số nguồn dạng [n] "
+    "(nguồn là file thì kèm số trang có trong nhãn), chỉ dùng số nguồn có trong ngữ cảnh. "
+    # RAGAS 2026-10-26: người dùng hay gõ cụm từ / tên văn bản thay vì câu hỏi; model trả "không tìm thấy" dù
+    # nguồn [1] đúng tên văn bản (q19, q20), hoặc chỉ nói "xem mục Ảnh & Video" — câu không nguồn nào chứng minh.
+    "Người dùng có thể chỉ gõ một cụm từ hoặc tên văn bản thay vì câu hỏi: hiểu đó là yêu cầu cho biết "
+    "thông tin chính về chủ đề ấy. "
+    "Hỏi về một văn bản, quy định, kế hoạch, thông báo hay file: nêu tên văn bản, số hiệu / ngày ban hành nếu có, "
+    "các điểm chính có trong ngữ cảnh (kèm [n]) và cho biết file ở nguồn nào; ngữ cảnh có nguồn mang đúng tên văn "
+    "bản đó thì không được trả lời là không tìm thấy. "
+    # 2026-11-04: 6 ảnh cùng một bài → 6 ý gần như giống nhau; link OCR đọc sai (hqui thay haui) được chép thành link.
+    "Ảnh/video được gom theo bài: dòng \"Bài: … — đăng ngày …\" cho tên bài và ngày đăng (dùng được), mỗi dòng "
+    "số nguồn bên dưới là một ảnh/video kèm chữ máy đọc từ ảnh (OCR) hoặc phụ đề video. Người dùng muốn xem "
+    "ảnh/video: mỗi bài một ý gồm tên bài, ngày đăng, 2–3 câu nội dung chính của bài hoặc video (lấy từ nguồn văn "
+    "bản của bài đó, phụ đề, hoặc chữ trong ảnh) rồi các số nguồn của bài, mỗi số một lần; "
+    "không mô tả lặp lại từng ảnh; không nói về giao "
+    "diện hay chỗ hiển thị ảnh. Chữ OCR có thể đọc sai chữ và số: không chép đường link, email, số điện thoại, "
+    "ngày tháng chỉ có trong chữ OCR (ngày ở dòng \"Bài:\" và trong nguồn văn bản thì dùng được). "
+    "Dòng [graph] ở cuối ngữ cảnh chỉ là thông tin phụ về các thực thể liên quan, không phải nguồn để trích [n]. "
+    "Câu hỏi yêu cầu liệt kê thì kể đủ mọi mục có trong ngữ cảnh (mỗi mục kèm [n]); ngữ cảnh có thể chưa đủ "
+    "danh sách thì nói rõ."
+)
+
+
+def answer_prompt(question: str, context: str) -> str:
+    """Prompt trả lời. D27: ngữ cảnh đã nằm trong ngân sách (sources.build_context: llm.source_chars / context_chars)."""
+    return f"{ANSWER_RULES}\n\nNgữ cảnh:\n{context}\n\nCâu hỏi: {question}"
+
+
 def stream_answer(question: str, context: str, image_b64: str | None = None, max_tokens: int | None = None):
     """Yield answer chunks from cfg.llm given retrieved context. SSE-style text.
     Yields nothing if no key/call fails (caller falls back to echo context).
@@ -286,20 +319,7 @@ def stream_answer(question: str, context: str, image_b64: str | None = None, max
     cfg = get_settings().llm
     if not cfg.api_key:
         return
-    prompt = (
-        "Bạn là trợ lý ảo của Trường CNTT & Truyền thông, Đại học Công nghiệp Hà Nội (HaUI). "
-        "Trả lời câu hỏi của người dùng CHỈ dựa vào ngữ cảnh được cung cấp. "
-        "Trả lời ngắn gọn bằng tiếng Việt. Ngữ cảnh chỉ có một phần thông tin thì trả lời phần có (kèm [n]) rồi nói rõ "
-        "phần còn thiếu; chỉ nói không có thông tin khi không nguồn nào liên quan đến câu hỏi. "
-        "Ngữ cảnh gồm các nguồn đánh số [1], [2]…; MỌI ý trả lời phải kết thúc bằng số nguồn dạng [n] "
-        "(nguồn là file thì kèm số trang có trong nhãn), chỉ dùng số nguồn có trong ngữ cảnh. "
-        "Khi ngữ cảnh có nguồn ảnh/video, hãy nhắc người dùng xem mục Ảnh & Video. "
-        "Câu hỏi yêu cầu liệt kê thì kể đủ mọi mục có trong ngữ cảnh (mỗi mục kèm [n]); ngữ cảnh có thể chưa đủ "
-        "danh sách thì nói rõ.\n\n"
-        # D27: ngữ cảnh đã nằm trong ngân sách (sources.build_context: llm.source_chars / context_chars)
-        f"Ngữ cảnh:\n{context}\n\n"
-        f"Câu hỏi: {question}"
-    )
+    prompt = answer_prompt(question, context)
     body = {
         "model": cfg.model,
         "messages": [{"role": "user", "content": (
@@ -314,6 +334,11 @@ def stream_answer(question: str, context: str, image_b64: str | None = None, max
     try:
         with _client(cfg) as c:
             with c.stream("POST", "/chat/completions", json=body) as r:
+                if r.status_code != 200:
+                    # VD 404 model_not_found khi nhà cung cấp gỡ model: thân lỗi là JSON, không phải SSE, nên
+                    # trước đây không yield gì mà cũng không báo → /chat lặng lẽ echo ngữ cảnh (2026-11-04)
+                    print(f"[llm] stream_answer HTTP {r.status_code}: {r.read()[:300].decode('utf-8', 'replace')}")
+                    return
                 for line in r.iter_lines():
                     line = (line or "").strip()
                     if not line.startswith("data:"):
