@@ -159,6 +159,21 @@ def _ui_js(name: str) -> Response:
                     headers={"Cache-Control": "public, max-age=3600"})
 
 
+# Logo HaUI của khung chat (lấy từ chính site sict.haui.edu.vn): chỉ phục vụ đúng các file này, không đọc đường dẫn tuỳ ý
+_UI_ASSETS = {"haui-logo.svg", "haui-logo-dark.svg", "haui-emblem.svg"}
+
+
+@app.get("/ui/{name}")
+async def ui_asset(name: str) -> Response:
+    if name not in _UI_ASSETS:
+        raise HTTPException(404, "not found")
+    # SVG mở thẳng như một trang: CSP chặn script/tài nguyên ngoài, chỉ cho <style> nội tuyến của file
+    return Response((UI_DIR / name).read_bytes(), media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400",
+                             "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+                             "X-Content-Type-Options": "nosniff"})
+
+
 @app.get("/media/s/{key}")
 async def media_by_key(key: str, request: Request) -> Response:
     """Media index v2 theo sha256 (bảng media). Nội dung theo hash → ETag = key, immutable."""

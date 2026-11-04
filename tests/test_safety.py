@@ -108,6 +108,14 @@ def _check_routes():
     js = c.get("/app.js")
     assert js.status_code == 200 and "addEventListener" in js.text
     assert "max-age" in js.headers.get("cache-control", "")
+    # logo HaUI của khung chat: đúng file trong danh sách, không lộ file khác của thư mục / repo
+    for name in ("haui-logo.svg", "haui-logo-dark.svg", "haui-emblem.svg"):
+        lg = c.get("/ui/" + name)
+        assert lg.status_code == 200 and lg.headers["content-type"].startswith("image/svg+xml")
+        assert "<svg" in lg.text and "<script" not in lg.text.lower()
+        assert f"/ui/{name}?v=" in r.text
+    for bad in ("app.js", "index.html", "..%2Fconfig.yaml", "x.svg"):
+        assert c.get("/ui/" + bad).status_code == 404
     assert c.get("/media/999999999").status_code == 404
 
 
