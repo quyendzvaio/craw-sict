@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# VM2 (worker batch): cài docker + swap + build worker + chạy cron incremental.
+# VM2 (worker + embed) — dựng VM MỚI từ đầu: swap + docker + kiểm .env. Image KHÔNG build trên VM (D10): workflow CD
+# (target vm2, deploy_embed=true) kéo sict-worker / sict-embed từ GHCR, ghi WORKER_IMAGE / EMBED_IMAGE vào .env.
 # Yêu cầu:
-#   - code ở ~/craw-sict (git clone hoặc scp, cùng bản với VM1)
-#   - file .env copy từ .env.worker.example, đã điền IP VM1 + S3/AWS
+#   - file compose/config ở ~/craw-sict (docker-compose.worker.yml, docker-compose.embed.yml, config.yaml, scripts/)
+#   - .env copy từ .env.worker.example: IP private VM1 + mật khẩu store (D12) + bộ biến index v3 + EMBED_BIND + AWS
 # Chạy: bash ~/craw-sict/scripts/vm2-init.sh
 set -euo pipefail
 cd ~/craw-sict
@@ -19,14 +20,12 @@ if ! command -v docker >/dev/null; then
   # tiếp tục bằng sudo docker, không cần login lại
 fi
 
-# build nặng (torch CPU ~800MB, 10-20p) — chỉ lần đầu
-sudo docker compose -f docker-compose.worker.yml build svc-ocr
+# .env đủ biến v3 + mật khẩu store (chỉ in tên biến)
+bash scripts/cutover_v3.sh env-check vm2
+# compose render được (chưa up gì)
+sudo docker compose -f docker-compose.worker.yml -f docker-compose.embed.yml config -q
+# volume HF cache của worker: root-owned → user 10000 trong image không ghi được
+sudo docker volume create craw-sict_hfcache >/dev/null
 sudo docker run --rm -v craw-sict_hfcache:/cache/hf alpine chown -R 10000:10000 /cache/hf || true
 
-# chạy thử 1 mẻ nhỏ trước khi bật cron 12h (phát hiện lỗi sớm, đỡ tốn tiền chạy vô ích)
-sudo docker compose -f docker-compose.worker.yml up -d obscura
-sudo docker compose -f docker-compose.worker.yml run --rm svc-ocr \
-  python -m sict_crawler.pipeline.main --incremental --check-edits 5 --crawl-limit 5 --annotate-ocr-n 20
-echo "== mẻ thử xong, kiểm tra log trên rồi bật cron =="
-# docker compose -f docker-compose.worker.yml up -d cron
-bash scripts/monitor_2vm.sh worker
+echo "== xong chuẩn bị VM2; tiếp: GitHub Actions → CD (target vm2, deploy_embed=true), rồi scripts/cutover_v3.sh load =="

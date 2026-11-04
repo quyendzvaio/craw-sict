@@ -19,10 +19,10 @@ if [ "$ROLE" = "infra" ]; then
     redis-cli --raw GET "incremental:last_ok" 2>&1 | head -c 500; echo
   docker exec -e REDISCLI_AUTH "$(docker ps -q --filter name=redis | head -1)" \
     redis-cli --raw GET "incremental:last_error" 2>&1 | head -c 500; echo
-  echo "--- postgres counts ---"
+  echo "--- postgres counts (v2/v3: bảng media, ocr_status) ---"
   docker exec "$(docker ps -q --filter name=postgres | head -1)" \
     psql -U sict -d sict_crawler -c \
-    "SELECT (SELECT count(*) FROM documents) docs, (SELECT count(*) FROM media_assets) media, (SELECT count(*) FROM media_assets WHERE caption='') no_cap;" 2>&1 | head -8
+    "SELECT (SELECT count(*) FROM documents) docs, (SELECT count(*) FROM media) media, (SELECT count(*) FROM media WHERE ocr_status<>'done') ocr_pending, (SELECT count(*) FROM entities) concepts;" 2>&1 | head -8
   echo "--- qdrant collections ---"
   curl -s -H @<(printf 'api-key: %s' "$QKEY") localhost:6333/collections 2>&1 | head -c 500; echo
   echo "--- api health ---"
