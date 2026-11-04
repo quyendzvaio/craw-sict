@@ -17,8 +17,14 @@ _MARK = re.compile(r"\[(\d{1,3})\]")
 _WIDE_MARK = re.compile(r"[【［](\d{1,3})[】］]")
 
 
+# gpt-oss còn chấm câu bằng dấu toàn khổ ("… [4]。"), tiếng Việt không dùng: đổi về dấu ASCII
+_WIDE_PUNCT = str.maketrans("。，：；！？（）", ".,:;!?()")
+_WIDE_PUNCT_GLUED = re.compile(r"([。，：；！？])(?=\w)")   # "a。Bb" → "a. Bb"
+
+
 def _normalize(answer: str) -> str:
-    return _WIDE_MARK.sub(r"[\1]", answer or "")
+    answer = _WIDE_PUNCT_GLUED.sub(r"\1 ", _WIDE_MARK.sub(r"[\1]", answer or ""))
+    return answer.translate(_WIDE_PUNCT)
 FOOTER_SOURCES = 3      # số nguồn ghép vào dòng "Nguồn:" khi LLM không trích dẫn
 
 
