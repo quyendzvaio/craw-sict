@@ -62,7 +62,7 @@ def test_parse_route_json():
     assert parse_route_json('{"media": "none"}') is None  # thiếu rewritten
 
 
-def _img(mid, doc, score, modality="clip", kind="image", url=None):
+def _img(mid, doc, score, modality="clip", kind="image", url=None):   # doc: id bài hoặc danh sách (point ảnh v2)
     return {"media_id": mid, "document_id": doc, "raw_score": score, "modality": modality,
             "kind": kind, "url": url or f"img{mid}", "score": score or 0.0}
 
@@ -89,7 +89,7 @@ def test_gate_none_optional_required():
     assert [h["media_id"] for h in opt] == [1, 2, 4]          # chỉ ảnh của bài đứng đầu, ≤3, đủ ngưỡng
     req = R.gate(R.Route("required"), text, cands, **kw)
     ids = [h["media_id"] for h in req]
-    assert 6 not in ids and 5 in ids and ids[:3] == [1, 2, 4]  # bài đứng đầu trước, ảnh lạc đề bị loại
+    assert 6 not in ids and ids == [1, 2, 4, 3, 5]            # bài đứng đầu trước, ảnh không gắn sau, dưới ngưỡng bị loại
     weak = [_img(7, 10, 0.12), _img(8, 11, 0.15)]
     assert R.gate(R.Route("required"), text, weak, **kw) == []  # không đạt → rỗng, không ảnh sai
 
@@ -105,6 +105,75 @@ def test_gate_video_one_slot_and_caption_threshold():
     out = R.gate(R.Route("required"), text, frames + caps, top_k=8, clip_min=0.24, caption_min=0.82)
     assert sum(h.get("kind") == "video_frame" for h in out) == 1     # 1 video = 1 vị trí
     assert [h["media_id"] for h in out if h.get("kind") == "media_caption"] == [51]
+
+
+def test_gate_caption_kw_needs_coupling():
+    """Ngoài phạm vi "cho xem ảnh tháp Eiffel" (media_v1 x002): 8 caption_kw ngẫu nhiên từng qua gate vì caption_kw
+    không có ngưỡng. Giờ caption_kw chỉ là bằng chứng khi ảnh thuộc bài chữ đứng đầu."""
+    text = [{"document_id": 10, "url": "https://x/a"}]
+    kw = [{"modality": "caption_kw", "raw_score": None, "media_key": f"k{i}", "kind": "media_caption",
+           "media_kind": "image", "document_id": 50 + i} for i in range(8)]
+    kw.append({"modality": "caption_kw", "raw_score": None, "media_key": "mine", "kind": "media_caption",
+               "media_kind": "image", "document_id": 10})
+    out = R.gate(R.Route("required"), text, kw, 8, clip_min=0.25, caption_min=0.5)
+    assert [h["media_key"] for h in out] == ["mine"]
+
+
+def test_gate_doc_candidates_first_with_parent_url():
+    """A: ảnh của bài chữ hạng 1 (modality doc) đứng trước ảnh CLIP cao điểm hơn của bài khác; ảnh dùng chung nhiều bài
+    lấy url của bài chữ đã kéo nó lên làm bài cha."""
+    text = [{"document_id": 10, "url": "https://x/a"}, {"document_id": 11, "url": "https://x/b"}]
+    c = [_img(1, 99, 0.40), _img(2, [33, 11], 0.27, modality="doc"), _img(3, [10], 0.30, modality="doc"),
+         _img(4, [10], 0.20, modality="doc")]
+    out = R.gate(R.Route("required"), text, c, 8, clip_min=0.25, caption_min=0.5)
+    assert [h["media_id"] for h in out] == [3, 2, 1]          # bài 10, rồi bài 11, rồi ảnh không gắn; 0,20 < ngưỡng
+    assert out[0]["page_url"] == "https://x/a" and out[1]["page_url"] == "https://x/b" and "page_url" not in out[2]
+
+
+def test_gate_media_cap_by_intent():
+    text = [{"document_id": 10, "url": "https://x/a"}]
+    c = [_img(i, 10, 0.30 + i / 100, modality="doc") for i in range(5)] + [_img(9, 99, 0.5)]
+    kw = dict(top_k=8, clip_min=0.25, caption_min=0.5, optional_max=3)
+    assert R.gate(R.Route("none"), text, c, **kw) == []                          # none_max mặc định 0
+    two = R.gate(R.Route("none"), text, c, none_max=2, **kw)
+    assert [h["media_id"] for h in two] == [4, 3]                                # chỉ ảnh gắn, cosine cao nhất trước
+    assert len(R.gate(R.Route("optional"), text, c, **kw)) == 3 and 9 not in [
+        h["media_id"] for h in R.gate(R.Route("optional"), text, c, **kw)]
+    assert len(R.gate(R.Route("required"), text, c, **kw)) == 6
+    assert R.media_cap(R.Route("required"), 8, 3, 2) == 8 and R.media_cap(R.Route("none"), 8, 3) == 0
+
+
+def test_gate_video_request_prefers_video():
+    """D: câu đòi video (v002 "xem video giới thiệu CTĐT CNTT" từng ra 8/8 ảnh): video đứng trước mọi ảnh, ảnh không
+    gắn bài chữ bị loại."""
+    route = R.classify_rules("xem video giới thiệu chương trình đào tạo Công nghệ thông tin")
+    assert route.media == "required" and route.wants_video
+    assert not R.classify_rules("Cho xem ảnh lễ khai giảng").wants_video
+    text = [{"document_id": 10, "url": "https://x/a"}]
+    c = [_img(1, 10, 0.40, modality="doc"), _img(2, 99, 0.45),
+         {"modality": "caption", "raw_score": 0.6, "kind": "media_caption", "media_kind": "video", "video_key": "yt1",
+          "url": "https://youtube.com/embed/yt1", "document_id": 77},
+         {"modality": "clip", "raw_score": 0.30, "kind": "video_frame", "video_key": "yt1", "document_id": [77]}]
+    out = R.gate(route, text, c, 8, clip_min=0.25, caption_min=0.5)
+    assert [R.is_video(h) for h in out] == [True, False]           # 1 video (1 vị trí) rồi ảnh gắn; ảnh 99 bị loại
+    assert out[1]["media_id"] == 1
+    # bài chữ đứng đầu có video → video đó là câu trả lời, video không gắn bị bỏ
+    own = {"modality": "doc", "raw_score": 0.26, "kind": "video_frame", "video_key": "yt2", "document_id": [10]}
+    out = R.gate(route, text, c + [own], 8, clip_min=0.25, caption_min=0.5)
+    assert [h.get("video_key") or h.get("media_id") for h in out] == ["yt2", 1]
+
+
+def test_supported_media_when_evidence_is_weak():
+    """C: sufficient False → chỉ media thuộc nguồn chữ đứng đầu (đúng loại được hỏi) + ảnh giống ảnh người dùng gửi."""
+    from types import SimpleNamespace as S
+    text = [S(url="https://x/a", parent_url=None), S(url="https://x/f.pdf", parent_url="https://x/b"),
+            S(url="https://x/c", parent_url=None)]
+    media = [S(kind="image", parent_url="https://x/a", via="doc"), S(kind="image", parent_url="https://x/z", via="clip"),
+             S(kind="video", parent_url="https://x/b", via="caption"), S(kind="image", parent_url="https://x/q", via="i2i"),
+             S(kind="image", parent_url="https://x/c", via="doc")]
+    keep = R.supported_media(media, text, 2)
+    assert [m.parent_url for m in keep] == ["https://x/a", "https://x/b", "https://x/q"]
+    assert [m.kind for m in R.supported_media(media, text, 2, wants_video=True)] == ["video", "image"]  # video + i2i
 
 
 def test_retrieve_none_route_skips_media_leg(monkeypatch=None):
