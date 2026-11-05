@@ -330,10 +330,27 @@ def _seq_stream(monkeypatch, attempts, retries=2):
 
         def stream(self, *a, **k):
             cur = attempts[len(calls)]
-            calls.append(cur)
+            calls.append(("stream", cur))
             if isinstance(cur, Exception):
                 raise cur
             return R(cur)
+
+        def post(self, *a, json=None, **k):          # lượt gọi lại không stream
+            import json as _j
+            cur = attempts[len(calls)]
+            calls.append(("post", cur))
+            if isinstance(cur, Exception):
+                raise cur
+
+            class P:
+                status_code = cur[0] if isinstance(cur, tuple) else 200
+                text = cur[1].decode() if isinstance(cur, tuple) else ""
+
+                def json(self):
+                    content = "".join(_j.loads(x[6:])["choices"][0]["delta"].get("content", "")
+                                      for x in cur if isinstance(x, str) and x.startswith("data: {"))
+                    return {"choices": [{"message": {"content": content}}]}
+            return P()
     monkeypatch.setattr(get_settings().llm, "api_key", "k")
     monkeypatch.setattr(get_settings().llm, "stream_retries", retries)
     monkeypatch.setattr(vlm, "_client", lambda *a, **k: C())
@@ -351,6 +368,8 @@ def test_stream_answer_retries_when_gateway_drops_before_first_token(monkeypatch
     vlm, calls = _seq_stream(monkeypatch, [drop, [_content("Trả lời [1]."), "data: [DONE]"]])
     assert list(vlm.stream_answer("q", "ctx")) == ["Trả lời [1]."]
     assert len(calls) == 2 and "gọi lại lần 1/2" in capsys.readouterr().out
+    # lượt đầu stream; lượt gọi lại không stream (đường stream của gateway mới là chỗ hỏng)
+    assert [k for k, _ in calls] == ["stream", "post"]
 
 
 def test_stream_answer_retries_5xx_and_gives_up_after_limit(monkeypatch):

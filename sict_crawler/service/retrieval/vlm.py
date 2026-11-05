@@ -335,18 +335,43 @@ def stream_answer(question: str, context: str, image_b64: str | None = None, max
     # trên ~46 câu ở máy dev, người dùng nhận ngữ cảnh echo thay vì câu trả lời. Chỉ gọi lại khi lỗi mạng / 5xx / 429:
     # 4xx (model_not_found…) hay hết token cho phần suy nghĩ thì gọi lại cũng vậy. Đã gửi chữ rồi thì không gọi lại
     # (UI đã hiện phần đầu câu trả lời).
+    # Lượt gọi lại KHÔNG stream: trên production cùng câu đó stream bị cắt 3/3 lượt (~190 s rồi echo), còn gọi không
+    # stream trả lời trong ~17 s với ~500 token (đo 2026-11-05, ngữ cảnh ~20k ký tự) — lỗi nằm ở đường stream của
+    # gateway chứ không ở độ dài suy nghĩ. Câu trả lời đến một lần thay vì từng mẩu.
     attempts = 1 + max(0, int(getattr(cfg, "stream_retries", 0)))
     for attempt in range(1, attempts + 1):
         st = {"wrote": 0, "thought": 0, "retry": False}
-        yield from _stream_once(cfg, body, st)
+        if attempt == 1:
+            yield from _stream_once(cfg, body, st)
+        else:
+            yield from _complete_once(cfg, {**body, "stream": False}, st)
         if st["wrote"] or not st["retry"]:
             break
         if attempt < attempts:
-            print(f"[llm] stream_answer: gọi lại lần {attempt}/{attempts - 1}")
+            print(f"[llm] stream_answer: gọi lại lần {attempt}/{attempts - 1} (không stream)")
     if st["thought"] and not st["wrote"]:
         # model suy luận dùng hết max_tokens cho phần suy nghĩ → caller echo ngữ cảnh
         print(f"[llm] stream_answer: chỉ có {st['thought']} ký tự suy luận, không có câu trả lời — tăng llm.max_new_tokens "
               f"(hiện {body['max_tokens']})")
+
+
+def _complete_once(cfg, body: dict, st: dict):
+    """Một lượt /chat/completions không stream: yield cả `content` một lần (nếu có); cùng quy ước st như _stream_once."""
+    try:
+        with _client(cfg) as c:
+            r = c.post("/chat/completions", json=body, timeout=max(float(getattr(cfg, "timeout", 60)), 180.0))
+        if r.status_code != 200:
+            print(f"[llm] stream_answer HTTP {r.status_code}: {r.text[:300]}")
+            st["retry"] = r.status_code >= 500 or r.status_code == 429
+            return
+        msg = ((r.json().get("choices") or [{}])[0].get("message") or {})
+        st["thought"] += len(msg.get("reasoning_content") or msg.get("reasoning") or "")
+        if msg.get("content"):
+            st["wrote"] += 1
+            yield msg["content"]
+    except Exception as e:
+        print(f"[llm] stream_answer fail (không stream): {e}")
+        st["retry"] = True
 
 
 def _stream_once(cfg, body: dict, st: dict):
