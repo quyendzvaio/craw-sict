@@ -28,6 +28,12 @@ SSH=(ssh -i "$KEY" -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyCheckin
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 EXTRA=(); [ "$DOCKER_LOGS" = 1 ] || EXTRA+=(--no-docker-logs)
+if [ "$VM" = vm2 ]; then
+  # embed nghe EMBED_BIND (IP private VM2, docker-compose.embed.yml), không nghe localhost → đọc từ .env trên VM2;
+  # trước 2026-11-05 Alloy scrape localhost:8090 → up{job="sict/embed"} = 0 trên production
+  bind="$("${SSH[@]}" "grep -E '^EMBED_BIND=' ~/craw-sict/.env 2>/dev/null | tail -1 | cut -d= -f2-" || true)"
+  EXTRA+=(--embed-addr "${bind:-127.0.0.1}:8090")
+fi
 python3 "$ROOT/scripts/render_alloy.py" --env-file "$ENV_FILE" --role "$VM" --instance "sict-$VM" "${EXTRA[@]}" --out "$TMP/config.alloy"
 "${SSH[@]}" 'mkdir -p /tmp/sict-alloy && cat > /tmp/sict-alloy/config.alloy' < "$TMP/config.alloy"
 "${SSH[@]}" 'cat > /tmp/sict-alloy/alloy_apply.sh' < "$ROOT/scripts/alloy_apply.sh"
@@ -40,6 +46,7 @@ FLAGS=""; [ "$DOCKER_LOGS" = 1 ] && FLAGS="--docker-logs"
 [ "$VM" = vm1 ] && FLAGS="$FLAGS --stack-env /home/$USER_SSH/craw-sict/.env"
 # bí mật qua stdin của ssh → stdin của alloy_apply.sh (printf là builtin: token không vào danh sách tiến trình)
 { printf 'GCLOUD_RW_API_KEY=%s\n' "$(grep -E '^GCLOUD_RW_API_KEY=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d "\"'")"
-  [ "$VM" = vm1 ] && printf 'POSTGRES_EXPORTER_DSN=%s\n' "${POSTGRES_EXPORTER_DSN:-postgresql://sict:sict@localhost:5432/sict_crawler?sslmode=disable}"
+  # if (không dùng `[ … ] && printf`): với vm2 vế điều kiện trả 1 → pipefail làm cả lệnh lỗi dù Alloy đã lên (2026-11-05)
+  if [ "$VM" = vm1 ]; then printf 'POSTGRES_EXPORTER_DSN=%s\n' "${POSTGRES_EXPORTER_DSN:-postgresql://sict:sict@localhost:5432/sict_crawler?sslmode=disable}"; fi
 } | "${SSH[@]}" "sudo bash /tmp/sict-alloy/alloy_apply.sh --config /tmp/sict-alloy/config.alloy $FLAGS; rc=\$?; rm -rf /tmp/sict-alloy; exit \$rc" \
   | sed -E 's/glc_[A-Za-z0-9_=+\/-]+/<REDACTED>/g'
