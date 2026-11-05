@@ -22,5 +22,5 @@ def test_stdin_group_has_no_and_list_that_fails_on_vm2():
 def test_vm2_scrapes_embed_on_embed_bind():
     # embed nghe EMBED_BIND (IP private), không nghe localhost → up{job="sict/embed"} = 0 nếu scrape localhost:8090
     assert "EMBED_BIND" in SRC and "--embed-addr" in SRC
-    block = SRC[SRC.index('if [ "$VM" = vm2 ]; then'):SRC.index("python3 ")]
+    block = SRC[SRC.index('if [ "$VM" = vm2 ]; then'):SRC.index('python3 "$ROOT/scripts/render_alloy.py"')]
     assert "--embed-addr" in block and ":8090" in block
