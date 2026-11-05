@@ -182,6 +182,9 @@ class LlmConfig:
     model: str = "sict"
     max_new_tokens: int = 2048  # gồm cả token suy luận của model suy luận (config.yaml)
     timeout: int = 60       # giây / lượt gọi; model suy luận (VD deepseek qua gateway) cần lâu hơn
+    # gọi lại lượt trả lời khi stream hỏng trước chữ đầu tiên (mạng / 5xx / 429; vlm.stream_answer). 2026-11-05:
+    # qwen3.8-27b-sale qua kiraai bị gateway cắt ~1/4 lượt khi nghĩ lâu. Env LLM_STREAM_RETRIES.
+    stream_retries: int = 2
     # D21: gửi cả ảnh người dùng vào lượt trả lời (cần model hỗ trợ ảnh). Tắt = chỉ retrieval, LLM thấy chữ tìm được.
     answer_with_image: bool = False
     # Lượt LLM viết lại câu hỏi + đoán media (vlm.rewrite_and_route). Tắt mặc định (2026-10-25): tốn 2–11 s / câu mà không
@@ -212,6 +215,8 @@ class LlmConfig:
             self.max_new_tokens = int(os.environ["LLM_MAX_NEW_TOKENS"])
         if os.environ.get("LLM_TIMEOUT"):
             self.timeout = int(os.environ["LLM_TIMEOUT"])
+        if os.environ.get("LLM_STREAM_RETRIES"):
+            self.stream_retries = int(os.environ["LLM_STREAM_RETRIES"])
         if os.environ.get("LLM_ANSWER_WITH_IMAGE"):
             self.answer_with_image = _env_bool(os.environ["LLM_ANSWER_WITH_IMAGE"])
         if os.environ.get("LLM_REWRITE_QUERY"):
