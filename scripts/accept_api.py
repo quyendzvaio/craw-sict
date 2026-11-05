@@ -137,9 +137,12 @@ def main() -> int:
         good = [m for m in media if doc_of(m) in exp or norm(m["url"]) in exp]
         record("U2 text→ảnh", bool(good), sec, f"{len(media)} media, {len(good)} thuộc bài đúng, "
                f"mode={res['media_mode']}", g["id"])
-        if not good or good[0].get("kind") == "video_frame":
+        # U3–U6 lấy ẢNH của bài làm ảnh truy vấn. Video không phải ảnh của bài: v2/v3 trả 1 nguồn kind=video / video
+        # (/media/s trả 1 khung hình, khung intro gần như đen nên giống khung video khác). Bỏ qua video.
+        imgs = [m for m in good if m.get("kind") not in ("video", "video_frame")]
+        if not imgs:
             continue
-        m = good[0]
+        m = imgs[0]
         status, ctype, raw = get(a.api, f"/media/s/{m['media_key']}")
         record("U2 GET media", status == 200 and ctype.startswith("image/") and len(raw) > 500, 0,
                f"{status} {ctype} {len(raw)} byte", g["id"])
