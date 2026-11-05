@@ -330,7 +330,28 @@ def stream_answer(question: str, context: str, image_b64: str | None = None, max
         "temperature": 0.2,
         "stream": True,
     }
-    wrote = thought = 0
+    # Gọi lại khi lượt stream hỏng TRƯỚC chữ đầu tiên (2026-11-05): model suy luận ngầm (qwen3.8-27b-sale qua kiraai)
+    # không gửi byte nào trong lúc nghĩ, gateway cắt kết nối im lặng sau ~60 s ("peer closed connection…") — 18 lượt
+    # trên ~46 câu ở máy dev, người dùng nhận ngữ cảnh echo thay vì câu trả lời. Chỉ gọi lại khi lỗi mạng / 5xx / 429:
+    # 4xx (model_not_found…) hay hết token cho phần suy nghĩ thì gọi lại cũng vậy. Đã gửi chữ rồi thì không gọi lại
+    # (UI đã hiện phần đầu câu trả lời).
+    attempts = 1 + max(0, int(getattr(cfg, "stream_retries", 0)))
+    for attempt in range(1, attempts + 1):
+        st = {"wrote": 0, "thought": 0, "retry": False}
+        yield from _stream_once(cfg, body, st)
+        if st["wrote"] or not st["retry"]:
+            break
+        if attempt < attempts:
+            print(f"[llm] stream_answer: gọi lại lần {attempt}/{attempts - 1}")
+    if st["thought"] and not st["wrote"]:
+        # model suy luận dùng hết max_tokens cho phần suy nghĩ → caller echo ngữ cảnh
+        print(f"[llm] stream_answer: chỉ có {st['thought']} ký tự suy luận, không có câu trả lời — tăng llm.max_new_tokens "
+              f"(hiện {body['max_tokens']})")
+
+
+def _stream_once(cfg, body: dict, st: dict):
+    """Một lượt stream /chat/completions: yield từng mẩu `content`; ghi vào st số mẩu đã gửi (wrote), số ký tự suy luận
+    (thought) và retry=True khi lỗi tạm thời (mạng, 5xx, 429) — stream_answer quyết định có gọi lại không."""
     try:
         with _client(cfg) as c:
             with c.stream("POST", "/chat/completions", json=body) as r:
@@ -338,6 +359,7 @@ def stream_answer(question: str, context: str, image_b64: str | None = None, max
                     # VD 404 model_not_found khi nhà cung cấp gỡ model: thân lỗi là JSON, không phải SSE, nên
                     # trước đây không yield gì mà cũng không báo → /chat lặng lẽ echo ngữ cảnh (2026-11-04)
                     print(f"[llm] stream_answer HTTP {r.status_code}: {r.read()[:300].decode('utf-8', 'replace')}")
+                    st["retry"] = r.status_code >= 500 or r.status_code == 429
                     return
                 for line in r.iter_lines():
                     line = (line or "").strip()
@@ -352,14 +374,10 @@ def stream_answer(question: str, context: str, image_b64: str | None = None, max
                         continue
                     for ch in chunk.get("choices", []):
                         delta = ch.get("delta") or {}
-                        thought += len(delta.get("reasoning_content") or delta.get("reasoning") or "")
+                        st["thought"] += len(delta.get("reasoning_content") or delta.get("reasoning") or "")
                         if delta.get("content"):
-                            wrote += 1
+                            st["wrote"] += 1
                             yield delta["content"]
-        if thought and not wrote:
-            # model suy luận dùng hết max_tokens cho phần suy nghĩ → caller echo ngữ cảnh
-            print(f"[llm] stream_answer: chỉ có {thought} ký tự suy luận, không có câu trả lời — tăng llm.max_new_tokens "
-                  f"(hiện {body['max_tokens']})")
     except Exception as e:
         print(f"[llm] stream_answer fail: {e}")
-        return
+        st["retry"] = True

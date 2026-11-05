@@ -296,6 +296,76 @@ def test_stream_answer_logs_http_error(monkeypatch, capsys):
     assert "404" in out and "model_not_found" in out
 
 
+def _seq_stream(monkeypatch, attempts, retries=2):
+    """Mỗi phần tử của attempts là một lượt gọi: Exception (gateway cắt kết nối), (status, body) hoặc list dòng SSE."""
+    from sict_crawler.service.retrieval import vlm
+    calls = []
+
+    class R:
+        def __init__(self, a):
+            self.a = a
+            self.status_code = a[0] if isinstance(a, tuple) else 200
+
+        def read(self):
+            return self.a[1]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *e):
+            return False
+
+        def iter_lines(self):
+            for x in self.a:
+                if isinstance(x, Exception):
+                    raise x
+                yield x
+
+    class C:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *e):
+            return False
+
+        def stream(self, *a, **k):
+            cur = attempts[len(calls)]
+            calls.append(cur)
+            if isinstance(cur, Exception):
+                raise cur
+            return R(cur)
+    monkeypatch.setattr(get_settings().llm, "api_key", "k")
+    monkeypatch.setattr(get_settings().llm, "stream_retries", retries)
+    monkeypatch.setattr(vlm, "_client", lambda *a, **k: C())
+    return vlm, calls
+
+
+def _content(text):
+    import json
+    return 'data: ' + json.dumps({"choices": [{"delta": {"content": text}}]})
+
+
+def test_stream_answer_retries_when_gateway_drops_before_first_token(monkeypatch, capsys):
+    """2026-11-05: qwen3.8-27b-sale nghĩ ngầm > 60 s, gateway kiraai cắt kết nối → trước đây /chat echo ngữ cảnh."""
+    drop = RuntimeError("peer closed connection without sending complete message body (incomplete chunked read)")
+    vlm, calls = _seq_stream(monkeypatch, [drop, [_content("Trả lời [1]."), "data: [DONE]"]])
+    assert list(vlm.stream_answer("q", "ctx")) == ["Trả lời [1]."]
+    assert len(calls) == 2 and "gọi lại lần 1/2" in capsys.readouterr().out
+
+
+def test_stream_answer_retries_5xx_and_gives_up_after_limit(monkeypatch):
+    vlm, calls = _seq_stream(monkeypatch, [(502, b"bad gateway")] * 5, retries=2)
+    assert list(vlm.stream_answer("q", "ctx")) == [] and len(calls) == 3      # 1 lượt + 2 lần gọi lại → caller echo
+
+
+def test_stream_answer_no_retry_on_4xx_or_after_content(monkeypatch):
+    vlm, calls = _seq_stream(monkeypatch, [(404, b'{"error":"model_not_found"}'), [_content("x")]])
+    assert list(vlm.stream_answer("q", "ctx")) == [] and len(calls) == 1      # model sai: gọi lại vô ích
+    cut = RuntimeError("peer closed connection")
+    vlm, calls = _seq_stream(monkeypatch, [[_content("Phần đầu"), cut], [_content("lặp lại")]])
+    assert list(vlm.stream_answer("q", "ctx")) == ["Phần đầu"] and len(calls) == 1   # UI đã hiện chữ: không gửi lại
+
+
 def test_answer_prompt_covers_documents_and_images_without_ui_claims():
     from sict_crawler.service.retrieval import vlm
     p = vlm.answer_prompt("Quy định làm đồ án tốt nghiệp", "[1] (file) Quy định …")
