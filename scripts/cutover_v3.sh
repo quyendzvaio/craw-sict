@@ -135,9 +135,18 @@ mf() {   # mf <biểu thức python trên m = manifest> → in giá trị (dùng
     "$OUT/manifest.json" "$1"
 }
 
+index_fingerprint_local() {   # fingerprint code/config hiện tại; rỗng nếu môi trường không import được (VM thiếu pyyaml)
+  local fp
+  fp=$(python3 -c 'from sict_crawler.core.fingerprint import index_fingerprint; print(index_fingerprint())' 2>/dev/null || true)
+  if [ -z "$fp" ] && command -v uv >/dev/null 2>&1; then
+    fp=$(uv run python -c 'from sict_crawler.core.fingerprint import index_fingerprint; print(index_fingerprint())' 2>/dev/null || true)
+  fi
+  printf '%s' "$fp"
+}
+
 # So trạng thái đích (PG qua `pg`, Qdrant qua QDRANT_URL) với manifest; lệch → exit 1
 verify_state() {
-  local c actual
+  local c actual want_fp got_fp
   say "so số dòng Postgres với manifest"
   actual=$(pg_counts pg)
   python3 - "$OUT/manifest.json" "$actual" <<'PY'
@@ -162,6 +171,14 @@ if bad:
     sys.exit(1)
 PY
   done
+  # Trace, không phải điều kiện dữ liệu: fingerprint lệch (code/config khác lúc export) chỉ cảnh báo.
+  want_fp=$(mf 'm.get("index_fingerprint") or ""')
+  got_fp=$(index_fingerprint_local)
+  if [ -n "$want_fp" ] && [ -n "$got_fp" ] && [ "$want_fp" != "$got_fp" ]; then
+    echo "CẢNH BÁO: fingerprint lúc export ($want_fp) ≠ code/config hiện tại ($got_fp) — chỉ là trace, không phải lỗi dữ liệu" >&2
+  elif [ -n "$want_fp" ]; then
+    echo "fingerprint index: $want_fp (khớp code/config hiện tại)"
+  fi
   echo "khớp manifest"
 }
 
@@ -244,8 +261,9 @@ r = json.loads(sys.argv[1])["result"]; print(r["name"], r.get("size") or 0, r.ge
     src_pg psql -X -At -U "$PG_USER" -d "$PG_DB" -c "select version()" </dev/null > "$OUT/.parts/pg_version.txt"
     qcurl "$SRC_QDRANT" / > "$OUT/.parts/qdrant_version.json"
     git rev-parse HEAD > "$OUT/.parts/git.txt" 2>/dev/null || echo "-" > "$OUT/.parts/git.txt"
+    fp=$(index_fingerprint_local)
 
-    COLS="$V3_COLLECTIONS" DB="$PG_DB" STORE="${SICT_LOCAL_STORE:-./_local_store}" python3 - "$OUT" <<'PY'
+    INDEX_FP="$fp" COLS="$V3_COLLECTIONS" DB="$PG_DB" STORE="${SICT_LOCAL_STORE:-./_local_store}" python3 - "$OUT" <<'PY'
 import datetime, hashlib, json, os, sys
 from pathlib import Path
 out = Path(sys.argv[1]); parts = out / ".parts"
@@ -280,6 +298,7 @@ m = {
     "postgres": {"version": ver, "major": int(ver.split()[1].split(".")[0]), "db": os.environ["DB"],
                  **fileinfo(f"{os.environ['DB']}.dump"), "tables": tables},
     "qdrant": {"version": json.loads((parts / "qdrant_version.json").read_text()).get("version"), "collections": cols},
+    "index_fingerprint": os.environ.get("INDEX_FP") or None,
     "media": {"keys_in_pg": len(keys), "missing_in_local_store": len(missing), "missing_sample": missing[:10],
               "local_store_files": len(local), "local_store_bytes": sum(p.stat().st_size for p in local)},
 }

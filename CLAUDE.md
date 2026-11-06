@@ -12,6 +12,8 @@ Everything is handed over to the customer's production **before 01:00 on 2026-11
 
 Release flow (owner decision 2026-11-05): every branch merges into `develop` only; `develop → main` is the last step, right before go-live, and CD runs only then (after the merge into `main`). Production data is replaced by the newest index v3 (backup first, nothing kept). Grafana Cloud / Alloy is turned on only at go-live. Steps and checks: `docs/deploy_v3.md`.
 
+**Staging / broker decision (2026-11-06).** An architecture comparison reviewed per-document staging (candidate → validate → CAS activate), a broker/outbox (RabbitMQ) and OpenSearch. None is built: there is one cron worker, the blank window is a few seconds over 2,303 documents, and the news domain has no effective-dated versions; candidate + validate + activate costs more than it saves (the source document also calls staging a proposed architecture). Revisit only for zero-gap updates or multiple workers. The code that would change: `indexer.index_page` (split clear/rewrite into two phases) and `pipeline/reconcile.py`.
+
 ## Fixing quality problems (owner rules, 2026-11-02)
 
 These apply to retrieval, ranking, prompt and indexing fixes found while investigating a failing question or eval case.

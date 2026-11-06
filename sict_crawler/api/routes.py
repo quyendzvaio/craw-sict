@@ -78,7 +78,8 @@ async def query(q: QueryIn):
             "citations": citations.index(res["text"] + res["media"]),     # D24: nguồn đánh số như trong context
             "text": [s.model_dump(exclude=RESPONSE_EXCLUDE) for s in res["text"]],
             "media": [s.model_dump(exclude=RESPONSE_EXCLUDE) for s in res["media"]],
-            "attempts": res["attempts"], "sufficient": res["sufficient"]}
+            "attempts": res["attempts"], "sufficient": res["sufficient"],
+            "index_version": res.get("index_version")}
 
 
 @app.post("/chat")
@@ -94,7 +95,7 @@ async def chat(q: QueryIn):
                    "câu trả lời có thể chưa đầy đủ.)\n\n" + context)
 
     async def gen():
-        yield f"data: {json.dumps({'status': {'attempts': res['attempts'], 'sufficient': res['sufficient'], 'media_mode': res.get('media_mode'), 'wants_file': res.get('wants_file'), 'media_note': res.get('media_note'), 'list_question': res.get('list_question'), 'entities': res.get('entities'), 'inputs': res.get('inputs'), 'outputs': res.get('outputs')}})}\n\n"
+        yield f"data: {json.dumps({'status': {'attempts': res['attempts'], 'sufficient': res['sufficient'], 'media_mode': res.get('media_mode'), 'wants_file': res.get('wants_file'), 'media_note': res.get('media_note'), 'list_question': res.get('list_question'), 'entities': res.get('entities'), 'inputs': res.get('inputs'), 'outputs': res.get('outputs'), 'index_version': res.get('index_version')}})}\n\n"
         yield f"data: {json.dumps({'text': [s.model_dump(exclude=RESPONSE_EXCLUDE) for s in tsrcs], 'media': [s.model_dump(exclude=RESPONSE_EXCLUDE) for s in msrcs]})}\n\n"
         import asyncio
         import queue

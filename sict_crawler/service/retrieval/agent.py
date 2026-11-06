@@ -71,6 +71,8 @@ def run(question: str, top_k: int = 5,
 
 
 def _result(tsrcs, msrcs, ctx, attempts, sufficient, log, route) -> dict:
+    from sict_crawler.core import fingerprint
+
     mode = route.media if route else None
     note = ("Không tìm thấy ảnh/video phù hợp với câu hỏi."
             if mode == "required" and not msrcs else None)  # AC-R9: rỗng + ghi chú, không ảnh sai
@@ -81,7 +83,8 @@ def _result(tsrcs, msrcs, ctx, attempts, sufficient, log, route) -> dict:
             "outputs": list(getattr(route, "outputs", []) or []),
             "entities": list(getattr(route, "entities", []) or []),
             "list_question": bool(getattr(route, "list_question", False)),
-            "graph_facts": list(getattr(route, "facts", []) or [])}
+            "graph_facts": list(getattr(route, "facts", []) or []),
+            "index_version": fingerprint.index_version()}
 
 
 def _lexical_fallback(question: str, limit: int, filters: dict | None = None, route=None):
