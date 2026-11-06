@@ -42,6 +42,18 @@ FRONTIER = Gauge("sict_frontier", "Frontier: queue = chờ tải, retry = chờ 
                  ["state"], registry=REGISTRY)
 PIPELINE_UP = Gauge("sict_pipeline_metrics_up", "1 = đọc được Redis + Postgres ở lần scrape gần nhất",
                     registry=REGISTRY)
+INDEX_FP = Gauge("sict_index_fingerprint_info", "Index đang phục vụ: fingerprint quy tắc / model / collection",
+                 ["fingerprint", "text_collection"], registry=REGISTRY)
+
+
+def set_index_fingerprint() -> None:
+    """Info-metric 1 series: fingerprint + collection nằm ở label, không nhân series theo giá trị."""
+    from sict_crawler.core.config import get_settings
+    from sict_crawler.core.fingerprint import index_fingerprint
+    INDEX_FP.labels(index_fingerprint(), get_settings().qdrant.collection_text).set(1)
+
+
+set_index_fingerprint()
 
 _RUN_FIELDS = ("discovered", "checked", "changed", "deleted", "errors", "drained")
 _cache = {"at": 0.0}
@@ -73,6 +85,7 @@ def heartbeat_fields(raw: bytes | str | None) -> dict[str, float]:
 
 async def refresh_pipeline(ttl: float = 30.0) -> None:
     """Đọc Redis (heartbeat, frontier) + Postgres (số bài); lỗi → sict_pipeline_metrics_up 0, không làm hỏng /metrics."""
+    set_index_fingerprint()
     if time.monotonic() - _cache["at"] < ttl:
         return
     _cache["at"] = time.monotonic()
