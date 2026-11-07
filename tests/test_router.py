@@ -39,6 +39,8 @@ def test_image_input_not_media_request():
     assert r2.media == "required"  # đòi XEM dù có ảnh kèm → vẫn required
     r3 = R.classify_rules("Đây là ảnh của trường nào?", has_image=True)
     assert r3.media == "optional" and "image" in r3.inputs  # "ảnh của" = ảnh đầu vào
+    r4 = R.classify_rules("xem thêm ảnh của ngày hội này", has_image=True)
+    assert r4.media == "required"  # "xem thêm ảnh" vẫn là đòi xem
 
 
 def test_rules_on_golden_set():

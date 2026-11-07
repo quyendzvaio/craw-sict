@@ -33,7 +33,7 @@ _RANK = {m: i for i, m in enumerate(MEDIA_MODES)}
 # Câu đòi video: chính hai từ "video|clip" của _REQUIRED (không thêm từ khoá) → gate xếp video trước (wants_video).
 _VIDEO = r"\bvideo\b|\bclip\b"
 _REQUIRED_EXPLICIT = re.compile(
-    r"\bhinh anh\b|\banh chup\b|\bxem anh\b|\bcho xem\b|\bbo anh\b|\balbum\b|\bthu vien anh\b"
+    r"\bhinh anh\b|\banh chup\b|\bxem (?:them )?anh\b|\bcho xem\b|\bbo anh\b|\balbum\b|\bthu vien anh\b"
     r"|" + _VIDEO + r"|\btrong nhu the nao\b|\btrong ra sao\b")
 # "ảnh của …" nhập nhằng: vừa là đòi xem, vừa là ảnh người dùng gửi ("Đây là ảnh của trường nào?").
 # Tách khỏi _REQUIRED_EXPLICIT để classify_rules bỏ nhánh này khi có ảnh đầu vào (_INPUT_CONTEXT).
