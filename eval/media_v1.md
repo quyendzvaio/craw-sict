@@ -55,4 +55,4 @@ Một câu "fail" khi trượt ít nhất một tiêu chí áp dụng cho nó (`
 - `m021` có "quyết định" trong câu hỏi ảnh nên `wants_file` của luật sẽ bật; bộ để `wants_file=false` theo ý người hỏi.
 - Ảnh của một bài có thể dùng chung với bài khác (point ảnh v2 có `document_id` là danh sách); `/query` trả
   `parent_url` của bài được chọn, nên `media_on_target` so theo bài đó.
-- Cache Redis (`q:v10:*`) khiến câu lặp trả nhanh; so sánh hai nhánh thì xoá cache giữa hai lượt (xem CLAUDE.md).
+- Cache Redis (`q:v12:*`) khiến câu lặp trả nhanh; so sánh hai nhánh thì xoá cache giữa hai lượt (xem CLAUDE.md).

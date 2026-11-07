@@ -230,6 +230,10 @@ class RouterConfig:
     caption_min: float = 0.82    # cosine E5 câu hỏi↔caption (E5 nén điểm: lạc đề ~0.72–0.78)
     optional_max: int = 3        # media tối đa ở mức optional
     optional_top_docs: int = 3   # optional: chỉ media thuộc N bài chữ đứng đầu
+    # ý định `none` (không từ khoá ảnh/sự kiện): tối đa N ảnh, chỉ ảnh của bài chữ đứng đầu. 0 = không ảnh (2026-11-05:
+    # không tín hiệu truy xuất nào tách "khoảnh khắc của sinh viên X" khỏi "X là ai" — cùng bài, cùng cosine; xem
+    # eval/RESULTS.md, nhánh feat/media-evidence-gate). Chủ dự án quyết bật.
+    none_max: int = 0
     # D21/D22 — không gian jina chung chữ+ảnh, ngưỡng tách theo cặp (truy vấn → đích). TẠM tới khi hiệu chỉnh
     # bằng eval/golden_images_v1 (scripts/eval_multimodal.py). Chỉ dùng khi embedding.backend=api.
     t2i_min: float = 0.25        # chữ → ảnh

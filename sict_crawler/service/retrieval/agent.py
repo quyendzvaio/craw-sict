@@ -5,6 +5,7 @@
   `sufficient` = luật xác định (`evidence`): có nguồn, cosine câu hỏi↔đoạn tốt nhất ≥ retrieval.min_cosine, tỷ lệ từ
   nội dung của câu hỏi có trong ngữ cảnh ≥ retrieval.min_term_cover, và mọi cụm tên riêng của câu hỏi
   (query_rewriter.name_phrases) có mặt nguyên cụm trong ngữ cảnh. Caller thêm ghi chú "tài liệu hạn chế" khi false.
+  `sufficient` False → media chỉ còn ảnh/video gắn với bài chữ đứng đầu (router.supported_media).
 
 Trước D27 một LLM chấm ngữ cảnh rồi thử lại tối đa 3 lượt: nó không thấy phần không tìm được (chấm "đủ" khi danh sách
 thiếu), chấm "đủ" cả câu ngoài phạm vi, đổi theo model và tốn 1–3 lượt gọi LLM / câu (eval/list_v1, 2026-10-25).
@@ -67,6 +68,16 @@ def run(question: str, top_k: int = 5,
     ctx = sources.build_context(tsrcs, msrcs, context_chars=budget)
     ev = evidence(question, tsrcs, msrcs, ctx)
     log.append(f"evidence: {ev}")
+    if not ev["sufficient"] and msrcs:
+        # C (2026-11-05): chữ không đủ bằng chứng → chỉ giữ media gắn với bài chữ đứng đầu, đúng loại được hỏi
+        kept = _router.supported_media(msrcs, tsrcs, get_settings().router.optional_top_docs,
+                                       bool(getattr(route, "wants_video", False)))
+        if len(kept) < len(msrcs):
+            log.append(f"media: bỏ {len(msrcs) - len(kept)} ảnh/video không gắn bài chữ (thiếu bằng chứng)")
+            msrcs = kept
+            ctx = sources.build_context(tsrcs, msrcs, context_chars=budget)
+            if route is not None and not msrcs:
+                route.outputs = [x for x in (getattr(route, "outputs", None) or []) if x != "image"]
     return _result(tsrcs, msrcs, ctx, attempts, ev["sufficient"], log, route)
 
 

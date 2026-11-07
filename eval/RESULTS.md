@@ -373,3 +373,84 @@ RAGAS trên 21 câu đổi nguồn: 20 câu person_v1 và golden_v2 g084. Câu t
   - p24: 0,50.
   - p16: 0,83.
 - Các câu âm tính n02–n04 vẫn từ chối đúng.
+
+## 2026-11-05 — media theo bằng chứng: ảnh của bài chữ đứng đầu, video, `sufficient` (nhánh feat/media-evidence-gate)
+
+Vấn đề (đã chẩn đoán trên code + API dev): ứng viên media chỉ đến từ CLIP / caption toàn collection, không lấy ảnh của
+chính các bài nhánh chữ tìm ra; `caption_kw` qua gate không cần ngưỡng; câu đòi video bị ảnh thường lấp hết chỗ; câu
+`sufficient` False vẫn nhận ảnh ngẫu nhiên; `accept_api` lấy thumbnail video làm ảnh truy vấn (U6 q15).
+
+Sửa (chủ dự án duyệt A + C + D + E; tổng quát, không thêm danh sách từ khoá, không thêm ngưỡng):
+- **A.** `retriever._doc_media`: 1 lượt Qdrant sau nhánh chữ, ảnh / khung hình của các bài thuộc `text_hits[:3]`
+  (`document_id` MatchAny), xếp theo cosine câu hỏi↔ảnh, modality `doc`, cùng ngưỡng `t2i_min`. `gate`: ảnh gắn đứng
+  trước theo hạng bài rồi cosine, `page_url` = bài chữ đã kéo ảnh lên; `caption_kw` chỉ nhận khi gắn.
+- **Ý định quyết định số lượng** (`router.media_cap`): `required` top_k, `optional` 3, `none` `router.none_max`
+  (mặc định **0**, xem dưới). `media_mode` vẫn là ý định của router nên `media_mode_acc` giữ nguyên nghĩa.
+- **C.** `sufficient` False → `router.supported_media`: chỉ giữ media thuộc 3 nguồn chữ đầu, đúng loại được hỏi, và ảnh
+  `i2i` của ảnh người dùng gửi.
+- **D.** `Route.wants_video` (chính "video|clip" của `_REQUIRED`): thêm 1 lượt CLIP chỉ trong `video_frame` + 1 lượt
+  dense chỉ trong caption video; video trước ảnh, ảnh không gắn bị loại; bài chữ đứng đầu có video → bỏ media không gắn.
+- **E.** `accept_api`: U3–U6 chỉ dùng media `kind=image` (index v3 trả video là `kind=video`).
+- Cache `q:v11` → `q:v12`.
+
+Đo qua `/query`, 2 API cùng index v3, cache Redis tắt, develop (`289e847`) vs nhánh:
+
+| số đo | develop | nhánh |
+|---|---|---|
+| media_v1 media_mode_acc / wants_file_acc | 98/101 / 96/101 | 98/101 / 96/101 |
+| media_v1 url_hit / text_mrr@10 | 95/97 / 0,846 | **96/97** / 0,846 |
+| media_v1 required_has_media | 50/51 | 47/51 |
+| media_v1 media_on_target | 57/65 (0,877) | 58/67 (0,866) |
+| media_v1 media_precision (micro) | 0,674 | **0,798** |
+| media_v1 none_clean | 31/33 | **33/33** |
+| media_v1 video_hit | 10/15 | **12/15** |
+| media_v1 file_hit / abstain_ok / false_abstain | 15/15 / 4/4 / 4/97 | 15/15 / 4/4 / 4/97 |
+| media_v1 precision theo case: image / optional / video | 0,778 / 0,974 / 0,333 | 0,818 / 0,927 / 0,644 |
+| golden_v1 R@5 / MRR@10 / media_mode / required on target | 1,0 / 0,947 / 0,871 / 7/7 | như develop |
+| golden_v2 R@5 / MRR@10 / media_mode / required on target | 0,91 / 0,746 / 0,909 / 7/8 | như develop |
+| person_v1 R@5 / MRR@10 / media_mode | 0,975 / 0,921 / 0,795 | như develop |
+| list_v2 coverage / full / sufficient_acc | 0,940 / 38/42 / 0,94 | như develop |
+| accept_api (script nhánh) | 48/49 | 48/49 |
+
+Nguồn chữ không đổi ở câu nào của 5 bộ (chỉ media đổi). `accept_api` trượt `M /metrics` ở cả hai vì API thử trỏ Redis
+vào cổng đóng (`sict_pipeline_metrics_up 0`). Script develop chạy trên API develop: 48/50, U6 q15 FAIL (thumbnail video
+làm ảnh truy vấn); script nhánh bỏ q15 khỏi U3–U6 vì media đúng bài của q15 chỉ có video.
+
+Câu tốt lên: m001 0/8 → 8/8 ảnh đúng bài; m013 4/8 → 8/8; m018 6/8 → 8/8; v002 / v003 / v015 có video đúng bài (v002
+qua lượt khung hình video, bài 71355 ngoài top chữ); v005 / v007 / v009 / v010 / v011 / v012 bớt ảnh lạc đề (v010 1/8 →
+5/8); x002 tháp Eiffel, x004 nấu phở 8 → 0 media.
+
+Câu tụt (mọi câu, kèm lý do):
+- **m017** "thiệp sáng tạo 20/11 năm 2021": 3/8 → 0/8 đúng bài. Bài đúng (67435) hạng 3 nhánh chữ, bài hạng 1 (61717,
+  cùng chủ đề năm khác) có đủ 8 ảnh vượt ngưỡng nên lấp hết chỗ. Lỗi xếp hạng chữ, ảnh chỉ đi theo.
+- **o003 / o016** "Lễ khai mạc ICPC Asia Hanoi 2024 diễn ra ngày nào?": 0 → 1 ảnh của bài hạng 2 (71198, không phải bài
+  khai mạc 71199 ở hạng 3). Trước đây không có ảnh nào vì CLIP toàn collection không ra ảnh của top bài.
+- **v008** (tiếng Anh, `sufficient` False, cosine 0,436): 8 media (1 đúng bài) → 0. Luật C: chữ yếu thì media không gắn
+  bị bỏ; bài đúng không nằm trong top chữ.
+- **v004 / v013** `required_has_media` True → False: 8 media đều lạc đề → 0 (`sufficient` False), có `media_note`.
+- Precision `optional` 0,974 → 0,927 do o003 / o016.
+
+Còn trượt (không đổi so với develop): m023 "Phạm Văn Cương" bài đúng hạng 1 nhưng ảnh của bài có cosine tối đa 0,244 <
+`t2i_min` 0,25 nên 8 ảnh CLIP không gắn lấp chỗ; m027 bài đúng hạng 2 sau bài hạng 1 nhiều ảnh (như m017); m033 tiếng Anh
+(`none`, `sufficient` False).
+
+**`none_max` để 0.** Đo trên 4 bộ (303 câu), câu route `none`: ảnh của bài chữ đứng đầu không tách được câu muốn xem
+ảnh mà không có từ khoá ("khoảnh khắc của sinh viên Phạm Văn Tùng", "Show me photos…") khỏi câu fact: p15 và p17
+"Phạm Văn Tùng là ai" cùng top bài, cosine ảnh 0,29–0,33 vs 0,21–0,23; ảnh của câu fact cũng 0,1–0,42 (n008 "mã CTĐT"
+0,375). Mô phỏng các luật (ảnh bài hạng ≤ 1 ≥ 0,25 / ≥ 0,30 / ≥ 0,33; nằm trong top 3–10 CLIP toàn collection; ≥ cosine
+ảnh tốt nhất − 0,02 / 0,04; caption của bài trong top chữ): luật tốt nhất bắt 3/11 câu dương và 14/169 câu fact, luật bắt
+đủ 11/11 dính 95/169 câu fact. Vị trí ảnh cạnh đoạn trả lời không dùng được: ~92 % ảnh không có `block_idx` trên Qdrant.
+Chạy thật `none_max: 2` (API thứ ba, cùng nhánh): 13/14 câu dương có ảnh (8 đúng bài: p15 Tùng, p25, p38, q14, q37,
+q59, g062, o014), nhưng 151/228 câu fact cũng có 1–2 ảnh; media_v1 none_clean 33/33 → 15/33; list_v2 coverage 0,940 →
+0,932 (37/42; ảnh chia ngân sách ngữ cảnh). Bật hay không là quyết định của chủ dự án; câu loại này cần tín hiệu ý định
+(LLM router `llm.rewrite_query` đã có), không phải bằng chứng truy xuất.
+
+Biến thể đã thử, không giữ: chia lượt ảnh gắn theo từng hit chữ (mỗi hit một ảnh): m017 / m027 lên, nhưng bài hạng 1
+thường đúng nên precision image 0,818 → 0,720, optional 0,927 → 0,634.
+
+Độ trễ `/query` (không LLM, xen kẽ 2 API, 2 vòng × 101 câu media_v1, cache nhúng nóng): develop p50 / p90 0,118 / 0,198 s,
+nhánh 0,132 / 0,195 s (+1 lượt Qdrant lọc theo bài sau nhánh chữ; câu video +2 lượt song song).
+
+Câu trả lời `/chat` sẽ đổi (ngữ cảnh LLM đổi vì media đổi; chưa chạy RAGAS): media_v1 38/101 (m001, m003, m004, m006,
+m007, m008, m013, m015–m018, m028, m030, m034, m035, v002–v013, v015, o003, o005, o007, o010, o012, o013, o015, o016,
+x002, x004), golden_v1 q15, q43, q48–q51, q70; golden_v2 g057, g059, g063, g064; person_v1 p06; list_v2 m27.
