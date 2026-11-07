@@ -30,6 +30,64 @@ def test_rules_examples():
     assert R.classify_rules("Tải quy chế đào tạo tín chỉ").wants_file
 
 
+def test_wants_file_expanded_phrases():
+    """Task 2: 9 câu t4 + t1-18 Phase 0 trượt vì thiếu mẫu từ — mở rộng _FILE (giữ trần
+    quy định/quyết định vì golden cần; miss còn lại t4-05 + t5-09 chấp nhận, xem ledger)."""
+    for q in ["Tải kế hoạch học kỳ hè 2026 ở đâu?",
+              "kế hoạch học kỳ 2 năm học 2024-2025",
+              "Danh sách doanh nghiệp tham gia Ngày hội việc làm 2024",
+              "tai danh sach mon hoc hoc phan thay the",
+              "Thông báo tuyển sinh đào tạo trình độ thạc sĩ năm 2022 chi tiết",
+              "đơn xin thực tập tại doanh nghiệp tải ở đâu",
+              "phiếu đăng ký sinh viên nghiên cứu khoa học",
+              "đơn đăng ký xin học bổng Digiworld",
+              "hướng dẫn sử dụng module thông tin thực tập",
+              "Mẫu sơ yếu lý lịch học bổng Brother 2024",
+              "so do hoi truong le tot nghiep 2024",
+              "Quyết định 721/QĐ-ĐHCN về đánh giá kết quả học tập",
+              "quyết định trưởng chương trình đào tạo trình độ đại học"]:
+        assert R.classify_rules(q).wants_file, q
+
+
+def test_wants_file_no_false_positive():
+    # câu hỏi nội dung/tồn tại không đòi file; collision "tại"→"tải" trong câu chatty (t5-05).
+    # LƯU Ý: "quy định/quy chế" trần VẪN match (golden q17–q20 cần trần để qua) — t5-09/g052/q69
+    # là miss chấp nhận (mở rộng ngữ cảnh làm golden gãy), nên KHÔNG đưa trần vào neg list.
+    for q in ["Trường Đại học Công nghiệp Hà Nội chuyển thành Đại học Công nghiệp Hà Nội",
+              "Trung tâm Nghiên cứu và Ứng dụng Trí tuệ nhân tạo thành lập",
+              "đề cương môn học tại khoa CNTT tải ở đâu vậy ad",
+              "Trụ sở trường tại đâu?"]:
+        assert not R.classify_rules(q).wants_file, q
+    # các mẫu cũ giữ nguyên
+    for q in ["tải về biểu mẫu đánh giá", "quy chế tuyển sinh", "thời khoá biểu lớp CNTT1",
+              "download quy dinh chuan dau ra ngoai ngu",
+              "tai quy che dao tao dai hoc tin chi o dau",
+              "quyết định trưởng chương trình đào tạo trình độ đại học",
+              "Quyết định 721/QĐ-ĐHCN về đánh giá kết quả học tập"]:
+        assert R.classify_rules(q).wants_file, q
+
+
+def test_image_input_not_media_request():
+    r = R.classify_rules("Sự kiện trong ảnh này trao giải gì?", has_image=True)
+    assert r.media == "optional"
+    assert "image" in r.inputs
+    assert R.classify_rules("ảnh lễ tốt nghiệp").media == "required"  # hành vi cũ
+    r2 = R.classify_rules("cho xem thêm ảnh lễ tốt nghiệp", has_image=True)
+    assert r2.media == "required"  # đòi XEM dù có ảnh kèm → vẫn required
+    r3 = R.classify_rules("Đây là ảnh của trường nào?", has_image=True)
+    assert r3.media == "optional" and "image" in r3.inputs  # "ảnh của" = ảnh đầu vào
+    r4 = R.classify_rules("xem thêm ảnh của ngày hội này", has_image=True)
+    assert r4.media == "required"  # "xem thêm ảnh" vẫn là đòi xem
+
+
+def test_image_input_with_explicit_request_for_more_images():
+    for q in ("Tìm ảnh của lễ tốt nghiệp này", "Gửi thêm ảnh của sự kiện trong ảnh này",
+              "Cho tôi ảnh của ngày hội này", "Tìm thêm ảnh khác của sự kiện trong ảnh này"):
+        assert R.classify_rules(q, has_image=True).media == "required", q
+    for q in ("Tìm ảnh này được chụp tại đâu?", "Ảnh này thuộc sự kiện nào?"):
+        assert R.classify_rules(q, has_image=True).media == "optional", q
+
+
 def test_rules_on_golden_set():
     """Luật dự phòng phải bắt chắc 2 đầu: câu `required` và câu muốn file. Câu `optional` khó
     bằng luật (LLM lo) nên chỉ đo, không ép."""

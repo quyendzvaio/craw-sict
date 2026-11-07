@@ -31,7 +31,7 @@ def index_tag() -> str:
 
 def query_cache_key(question: str, top_k: int, filters_key: str = "", index: str | None = None) -> str:
     index = index_tag() if index is None else index
-    return "q:v12:" + hashlib.sha256(   # v12: media theo bằng chứng (ảnh của bài chữ đứng đầu, video, sufficient); v11: nhánh cụm tên riêng; v10: graph khái niệm D33 (bỏ [graph], ảnh theo người); v9: đoạn đủ dài, đoạn liền kề câu liệt kê, khôi phục dấu; v8: phạm vi mục + năm nhãn bảng + tiêu đề; v7: bảng mang nhãn; v6: D30
+    return "q:v13:" + hashlib.sha256(   # v13: route ảnh đầu vào và yêu cầu tệp; v12: media theo bằng chứng (ảnh của bài chữ đứng đầu, video, sufficient); v11: nhánh cụm tên riêng; v10: graph khái niệm D33 (bỏ [graph], ảnh theo người); v9: đoạn đủ dài, đoạn liền kề câu liệt kê, khôi phục dấu; v8: phạm vi mục + năm nhãn bảng + tiêu đề; v7: bảng mang nhãn; v6: D30
         f"{question}\x00{top_k}\x00{filters_key}\x00{index}".encode()).hexdigest()
 
 
@@ -306,7 +306,7 @@ def retrieve(question: str, top_k: int = 5,
     ifut = _STAGE_POOL.submit(_query_image_vec, query_image_b64) if unified and query_image_b64 else None
     if has_text:
         r = query_rewriter.rewrite(question)
-        route = router.decide(question, r.get("route_llm"))
+        route = router.decide(question, r.get("route_llm"), has_image=bool(query_image_b64))
         route.list_question = router.is_list_question(question)
     else:   # chỉ ảnh (D21 U3+U4)
         r = {"rewritten": "", "terms": [], "route_llm": None}

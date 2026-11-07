@@ -32,10 +32,14 @@ _RANK = {m: i for i, m in enumerate(MEDIA_MODES)}
 # nên chỉ nhận cụm có ngữ cảnh.
 # Câu đòi video: chính hai từ "video|clip" của _REQUIRED (không thêm từ khoá) → gate xếp video trước (wants_video).
 _VIDEO = r"\bvideo\b|\bclip\b"
-_REQUIRED = re.compile(
-    r"\bhinh anh\b|\banh chup\b|\bxem anh\b|\bcho xem\b|\bbo anh\b|\balbum\b|\bthu vien anh\b"
-    r"|" + _VIDEO + r"|\btrong nhu the nao\b|\btrong ra sao\b"
-    r"|(?:^|[^a-z])(?<!tieng )anh (?:cac|cua|ve|le|su kien|hoi|cuoc thi|ngay|buoi|nhung)\b")
+_REQUIRED_EXPLICIT = re.compile(
+    r"\bhinh anh\b|\banh chup\b|\bxem (?:them )?anh\b|\bcho xem\b|\bbo anh\b|\balbum\b|\bthu vien anh\b"
+    r"|" + _VIDEO + r"|\btrong nhu the nao\b|\btrong ra sao\b")
+# "ảnh của …" nhập nhằng: vừa là đòi xem, vừa là ảnh người dùng gửi ("Đây là ảnh của trường nào?").
+# Tách khỏi _REQUIRED_EXPLICIT để classify_rules bỏ nhánh này khi có ảnh đầu vào (_INPUT_CONTEXT).
+_REQUIRED_REF = re.compile(
+    r"(?:^|[^a-z])(?<!tieng )anh (?:cac|cua|ve|le|su kien|hoi|cuoc thi|ngay|buoi|nhung)\b")
+_REQUIRED = re.compile(_REQUIRED_EXPLICIT.pattern + "|" + _REQUIRED_REF.pattern)
 # sự kiện → ảnh có thể giúp ích nhưng không bắt buộc. "le" đứng riêng trùng họ "Lê" khi bỏ dấu
 # → chỉ nhận "lễ <loại lễ>".
 _EVENT = re.compile(
@@ -43,11 +47,18 @@ _EVENT = re.compile(
     r"|\bdien ra\b|\bawards?\b|\bgiai thuong\b|\bhoi thao\b|\bhoi nghi\b|\bcuoc thi\b|\bngay hoi\b|\bsu kien\b|\bky niem\b"
     r"|\bkhai giang\b|\btong ket\b|\btrao giai\b|\bvinh danh\b|\bhoi cho\b|\bworkshop\b"
     r"|\bseminar\b|\bfestival\b|\btham gia\b|\bchung ket\b|\btham quan\b")
-# muốn tài liệu/file đính kèm. "tai" đứng riêng = "tại" → chỉ nhận "tai ve/tai xuong/tai file".
+# muốn tài liệu/file đính kèm. "tai" đứng riêng = "tại" → chỉ nhận "tai ve/tai xuong/tai file"
+# (câu "tải ở đâu" chatty kèm "tại" thật vẫn bỏ qua — t5-05). "quyet dinh|quy dinh" trần giữ
+# nguyên vì golden q09–q20 cần nó ("theo quyết định số mấy" là FP chấp nhận, q69/g052/t5-09 là
+# miss chấp nhận — mở rộng trần theo ngữ cảnh làm golden gãy, xem ledger Task 2).
 _FILE = re.compile(
     r"\btai ve\b|\btai xuong\b|\btai file\b|\bdownload\b|\bfile\b|\bbieu mau\b|\bmau don\b"
     r"|\bquy che\b|\bquy dinh\b|\btien do dao tao\b|\blich thuc hanh\b|\bthoi khoa bieu\b"
-    r"|\bke hoach dao tao\b|\blop hoc phan\b|\bquyet dinh\b")
+    r"|\bke hoach dao tao\b|\blop hoc phan\b|\bquyet dinh\b"
+    r"|\bke hoach\b|\bdanh sach\b.{0,30}\b(?:doanh nghiep|mon hoc|hoc phan)\b"
+    r"|\bthong bao\b.{0,30}\b(?:tuyen sinh|dao tao)\b"
+    r"|\bdon xin\b|\bdon dang ky\b|\bphieu dang ky\b|\bhuong dan su dung\b"
+    r"|\bmau so yeu ly lich\b|\bso do hoi truong\b")
 # D27: câu hỏi liệt kê — đáp án rải trên nhiều bài, không đoạn nào chứa đủ ("có những ngành nào", "danh sách PGS")
 # → retrieve lấy rộng hơn, mỗi bài 1 đoạn. Nhận nhầm chỉ làm truy xuất rộng hơn, không hỏng câu trả lời.
 _LIST = re.compile(
@@ -78,31 +89,43 @@ class Route:
 # "ảnh" CÓ DẤU đứng riêng = hình ảnh ("Ảnh PGS.TS …", "ảnh cô …", "ảnh hoạt động CLB …"); bản bỏ
 # dấu trùng "anh" (anh chị, tiếng Anh) nên chỉ xét chữ gốc. Trừ "ảnh hưởng".
 _ANH_ACCENT = re.compile(r"(?<![^\W\d_])ảnh(?![^\W\d_])(?!\s+hưởng)")
+# Cụm quy chiếu ẢNH ĐẦU VÀO của người dùng (I2): "sự kiện trong ảnh này là gì" hỏi về ảnh mình
+# gửi, không phải đòi xem thêm ảnh → chữ "ảnh" không tự nâng media lên required.
+_INPUT_CONTEXT = re.compile(r"ảnh này|ảnh trên|trong ảnh|của ảnh|ảnh của|ảnh đính kèm|photo|picture")
 
 
-def classify_rules(question: str) -> Route:
+def classify_rules(question: str, has_image: bool = False) -> Route:
     q = fold(question)
-    if _REQUIRED.search(q) or _ANH_ACCENT.search(unicodedata.normalize("NFC", question.lower())):
+    qn = unicodedata.normalize("NFC", question.lower())
+    input_ctx = bool(has_image and _INPUT_CONTEXT.search(qn))
+    bare_anh = bool(_ANH_ACCENT.search(qn)) and not input_ctx
+    required = bool(_REQUIRED_EXPLICIT.search(q)) or (not input_ctx and bool(_REQUIRED_REF.search(q)))
+    explicit_request = bool(has_image and re.search(
+        r"\b(?:tim|gui|cho|xem|hien thi)(?:\s+(?:them|toi|minh|cho|chung|cac|nhung|mot|so))*"
+        r"\s+anh\b(?!\s+(?:nay|tren|dinh kem)\b)", q))
+    if required or bare_anh or explicit_request:
         media = "required"
-    elif _EVENT.search(q):
-        media = "optional"
+    elif input_ctx or _EVENT.search(q):
+        media = "optional"  # ảnh gửi kèm là đầu vào: không đòi ảnh nhưng vẫn có nhánh media
     else:
         media = "none"
     return Route(media=media, wants_file=bool(_FILE.search(q)), source="rules",
+                 inputs=["image"] if has_image else [],
                  wants_video=bool(re.search(_VIDEO, q)))
 
 
-def decide(question: str, llm: dict | None = None) -> Route:
+def decide(question: str, llm: dict | None = None, has_image: bool = False) -> Route:
     """Gộp ý định từ LLM (nếu hợp lệ) với luật. Luật `required` (từ khoá hình/video rõ ràng) và
     luật `wants_file` luôn được giữ — LLM chỉ có thể nâng mức, không hạ được tín hiệu rõ ràng."""
-    rules = classify_rules(question)
+    rules = classify_rules(question, has_image=has_image)
     media = (llm or {}).get("media")
     if media not in MEDIA_MODES:
         return rules
     if rules.media == "required":
         media = "required"
     wants = bool((llm or {}).get("wants_file")) or rules.wants_file
-    return Route(media=media, wants_file=wants, source="llm+rules", wants_video=rules.wants_video)
+    return Route(media=media, wants_file=wants, source="llm+rules",
+                 inputs=rules.inputs, wants_video=rules.wants_video)
 
 
 def _docs_of(h: dict) -> list[str]:
