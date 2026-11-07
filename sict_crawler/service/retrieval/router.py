@@ -32,10 +32,14 @@ _RANK = {m: i for i, m in enumerate(MEDIA_MODES)}
 # nên chỉ nhận cụm có ngữ cảnh.
 # Câu đòi video: chính hai từ "video|clip" của _REQUIRED (không thêm từ khoá) → gate xếp video trước (wants_video).
 _VIDEO = r"\bvideo\b|\bclip\b"
-_REQUIRED = re.compile(
+_REQUIRED_EXPLICIT = re.compile(
     r"\bhinh anh\b|\banh chup\b|\bxem anh\b|\bcho xem\b|\bbo anh\b|\balbum\b|\bthu vien anh\b"
-    r"|" + _VIDEO + r"|\btrong nhu the nao\b|\btrong ra sao\b"
-    r"|(?:^|[^a-z])(?<!tieng )anh (?:cac|cua|ve|le|su kien|hoi|cuoc thi|ngay|buoi|nhung)\b")
+    r"|" + _VIDEO + r"|\btrong nhu the nao\b|\btrong ra sao\b")
+# "ảnh của …" nhập nhằng: vừa là đòi xem, vừa là ảnh người dùng gửi ("Đây là ảnh của trường nào?").
+# Tách khỏi _REQUIRED_EXPLICIT để classify_rules bỏ nhánh này khi có ảnh đầu vào (_INPUT_CONTEXT).
+_REQUIRED_REF = re.compile(
+    r"(?:^|[^a-z])(?<!tieng )anh (?:cac|cua|ve|le|su kien|hoi|cuoc thi|ngay|buoi|nhung)\b")
+_REQUIRED = re.compile(_REQUIRED_EXPLICIT.pattern + "|" + _REQUIRED_REF.pattern)
 # sự kiện → ảnh có thể giúp ích nhưng không bắt buộc. "le" đứng riêng trùng họ "Lê" khi bỏ dấu
 # → chỉ nhận "lễ <loại lễ>".
 _EVENT = re.compile(
@@ -80,17 +84,19 @@ class Route:
 _ANH_ACCENT = re.compile(r"(?<![^\W\d_])ảnh(?![^\W\d_])(?!\s+hưởng)")
 # Cụm quy chiếu ẢNH ĐẦU VÀO của người dùng (I2): "sự kiện trong ảnh này là gì" hỏi về ảnh mình
 # gửi, không phải đòi xem thêm ảnh → chữ "ảnh" không tự nâng media lên required.
-_INPUT_CONTEXT = re.compile(r"ảnh này|ảnh trên|trong ảnh|của ảnh|ảnh đính kèm|photo|picture")
+_INPUT_CONTEXT = re.compile(r"ảnh này|ảnh trên|trong ảnh|của ảnh|ảnh của|ảnh đính kèm|photo|picture")
 
 
 def classify_rules(question: str, has_image: bool = False) -> Route:
     q = fold(question)
     qn = unicodedata.normalize("NFC", question.lower())
-    bare_anh = bool(_ANH_ACCENT.search(qn)) and not (has_image and _INPUT_CONTEXT.search(qn))
-    if _REQUIRED.search(q) or bare_anh:
+    input_ctx = bool(has_image and _INPUT_CONTEXT.search(qn))
+    bare_anh = bool(_ANH_ACCENT.search(qn)) and not input_ctx
+    required = bool(_REQUIRED_EXPLICIT.search(q)) or (not input_ctx and bool(_REQUIRED_REF.search(q)))
+    if required or bare_anh:
         media = "required"
-    elif _EVENT.search(q):
-        media = "optional"
+    elif input_ctx or _EVENT.search(q):
+        media = "optional"  # ảnh gửi kèm là đầu vào: không đòi ảnh nhưng vẫn có nhánh media
     else:
         media = "none"
     return Route(media=media, wants_file=bool(_FILE.search(q)), source="rules",
