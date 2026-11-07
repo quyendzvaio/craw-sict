@@ -68,23 +68,35 @@ def run(question: str, top_k: int = 5,
     ctx = sources.build_context(tsrcs, msrcs, context_chars=budget)
     ev = evidence(question, tsrcs, msrcs, ctx)
     log.append(f"evidence: {ev}")
-    if not ev["sufficient"] and msrcs:
-        # C (2026-11-05): chữ không đủ bằng chứng → chỉ giữ media gắn với bài chữ đứng đầu, đúng loại được hỏi
-        kept = _router.supported_media(msrcs, tsrcs, get_settings().router.optional_top_docs,
-                                       bool(getattr(route, "wants_video", False)))
-        if len(kept) < len(msrcs):
-            log.append(f"media: bỏ {len(msrcs) - len(kept)} ảnh/video không gắn bài chữ (thiếu bằng chứng)")
-            msrcs = kept
-            ctx = sources.build_context(tsrcs, msrcs, context_chars=budget)
-            if route is not None and not msrcs:
-                route.outputs = [x for x in (getattr(route, "outputs", None) or []) if x != "image"]
-    return _result(tsrcs, msrcs, ctx, attempts, ev["sufficient"], log, route)
+    before = len(msrcs)
+    tsrcs, msrcs, note, route = validate(question, tsrcs, msrcs, ctx, ev, route)
+    if len(msrcs) < before:
+        log.append(f"media: bỏ {before - len(msrcs)} ảnh/video không gắn bài chữ (thiếu bằng chứng)")
+        ctx = sources.build_context(tsrcs, msrcs, context_chars=budget)
+    return _result(tsrcs, msrcs, ctx, attempts, ev["sufficient"], log, route, note)
 
 
-def _result(tsrcs, msrcs, ctx, attempts, sufficient, log, route) -> dict:
+def validate(question: str, tsrcs: list, msrcs: list, ctx: str, ev: dict, route) -> tuple[list, list, str | None, object]:
+    """Gom hậu kiểm sau truy xuất vào 1 điểm (Phase 1) — luật C + note AC-R9.
+
+    Trả (tsrcs, msrcs, media_note, route). `sufficient` False → chỉ giữ media gắn với bài chữ đứng
+    đầu (router.supported_media); media rỗng + câu đòi media → note + bỏ `image` khỏi outputs.
+    Phase 3+ ghép thêm validator (file thật, citation) tại đây, không rải trong `run`."""
+    from sict_crawler.service.retrieval import router as _router
+
+    note = None
+    if not ev.get("sufficient") and msrcs:
+        msrcs = _router.supported_media(msrcs, tsrcs, get_settings().router.optional_top_docs,
+                                        bool(getattr(route, "wants_video", False)))
+        if route is not None and not msrcs:
+            route.outputs = [x for x in (getattr(route, "outputs", None) or []) if x != "image"]
+    if route is not None and route.media == "required" and not msrcs:
+        note = "Không tìm thấy ảnh/video phù hợp với câu hỏi."  # AC-R9: rỗng + ghi chú, không ảnh sai
+    return tsrcs, msrcs, note, route
+
+
+def _result(tsrcs, msrcs, ctx, attempts, sufficient, log, route, note: str | None = None) -> dict:
     mode = route.media if route else None
-    note = ("Không tìm thấy ảnh/video phù hợp với câu hỏi."
-            if mode == "required" and not msrcs else None)  # AC-R9: rỗng + ghi chú, không ảnh sai
     return {"text": tsrcs, "media": msrcs, "context": ctx, "attempts": attempts,
             "sufficient": sufficient, "log": log, "media_mode": mode,
             "wants_file": route.wants_file if route else None, "media_note": note,
