@@ -80,6 +80,14 @@ def test_image_input_not_media_request():
     assert r4.media == "required"  # "xem thêm ảnh" vẫn là đòi xem
 
 
+def test_image_input_with_explicit_request_for_more_images():
+    for q in ("Tìm ảnh của lễ tốt nghiệp này", "Gửi thêm ảnh của sự kiện trong ảnh này",
+              "Cho tôi ảnh của ngày hội này", "Tìm thêm ảnh khác của sự kiện trong ảnh này"):
+        assert R.classify_rules(q, has_image=True).media == "required", q
+    for q in ("Tìm ảnh này được chụp tại đâu?", "Ảnh này thuộc sự kiện nào?"):
+        assert R.classify_rules(q, has_image=True).media == "optional", q
+
+
 def test_rules_on_golden_set():
     """Luật dự phòng phải bắt chắc 2 đầu: câu `required` và câu muốn file. Câu `optional` khó
     bằng luật (LLM lo) nên chỉ đo, không ép."""

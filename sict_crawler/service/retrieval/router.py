@@ -100,7 +100,10 @@ def classify_rules(question: str, has_image: bool = False) -> Route:
     input_ctx = bool(has_image and _INPUT_CONTEXT.search(qn))
     bare_anh = bool(_ANH_ACCENT.search(qn)) and not input_ctx
     required = bool(_REQUIRED_EXPLICIT.search(q)) or (not input_ctx and bool(_REQUIRED_REF.search(q)))
-    if required or bare_anh:
+    explicit_request = bool(has_image and re.search(
+        r"\b(?:tim|gui|cho|xem|hien thi)(?:\s+(?:them|toi|minh|cho|chung|cac|nhung|mot|so))*"
+        r"\s+anh\b(?!\s+(?:nay|tren|dinh kem)\b)", q))
+    if required or bare_anh or explicit_request:
         media = "required"
     elif input_ctx or _EVENT.search(q):
         media = "optional"  # ảnh gửi kèm là đầu vào: không đòi ảnh nhưng vẫn có nhánh media
