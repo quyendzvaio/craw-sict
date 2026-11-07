@@ -47,11 +47,18 @@ _EVENT = re.compile(
     r"|\bdien ra\b|\bawards?\b|\bgiai thuong\b|\bhoi thao\b|\bhoi nghi\b|\bcuoc thi\b|\bngay hoi\b|\bsu kien\b|\bky niem\b"
     r"|\bkhai giang\b|\btong ket\b|\btrao giai\b|\bvinh danh\b|\bhoi cho\b|\bworkshop\b"
     r"|\bseminar\b|\bfestival\b|\btham gia\b|\bchung ket\b|\btham quan\b")
-# muốn tài liệu/file đính kèm. "tai" đứng riêng = "tại" → chỉ nhận "tai ve/tai xuong/tai file".
+# muốn tài liệu/file đính kèm. "tai" đứng riêng = "tại" → chỉ nhận "tai ve/tai xuong/tai file"
+# (câu "tải ở đâu" chatty kèm "tại" thật vẫn bỏ qua — t5-05). "quyet dinh|quy dinh" trần giữ
+# nguyên vì golden q09–q20 cần nó ("theo quyết định số mấy" là FP chấp nhận, q69/g052/t5-09 là
+# miss chấp nhận — mở rộng trần theo ngữ cảnh làm golden gãy, xem ledger Task 2).
 _FILE = re.compile(
     r"\btai ve\b|\btai xuong\b|\btai file\b|\bdownload\b|\bfile\b|\bbieu mau\b|\bmau don\b"
     r"|\bquy che\b|\bquy dinh\b|\btien do dao tao\b|\blich thuc hanh\b|\bthoi khoa bieu\b"
-    r"|\bke hoach dao tao\b|\blop hoc phan\b|\bquyet dinh\b")
+    r"|\bke hoach dao tao\b|\blop hoc phan\b|\bquyet dinh\b"
+    r"|\bke hoach\b|\bdanh sach\b.{0,30}\b(?:doanh nghiep|mon hoc|hoc phan)\b"
+    r"|\bthong bao\b.{0,30}\b(?:tuyen sinh|dao tao)\b"
+    r"|\bdon xin\b|\bdon dang ky\b|\bphieu dang ky\b|\bhuong dan su dung\b"
+    r"|\bmau so yeu ly lich\b|\bso do hoi truong\b")
 # D27: câu hỏi liệt kê — đáp án rải trên nhiều bài, không đoạn nào chứa đủ ("có những ngành nào", "danh sách PGS")
 # → retrieve lấy rộng hơn, mỗi bài 1 đoạn. Nhận nhầm chỉ làm truy xuất rộng hơn, không hỏng câu trả lời.
 _LIST = re.compile(
