@@ -78,31 +78,38 @@ class Route:
 # "ảnh" CÓ DẤU đứng riêng = hình ảnh ("Ảnh PGS.TS …", "ảnh cô …", "ảnh hoạt động CLB …"); bản bỏ
 # dấu trùng "anh" (anh chị, tiếng Anh) nên chỉ xét chữ gốc. Trừ "ảnh hưởng".
 _ANH_ACCENT = re.compile(r"(?<![^\W\d_])ảnh(?![^\W\d_])(?!\s+hưởng)")
+# Cụm quy chiếu ẢNH ĐẦU VÀO của người dùng (I2): "sự kiện trong ảnh này là gì" hỏi về ảnh mình
+# gửi, không phải đòi xem thêm ảnh → chữ "ảnh" không tự nâng media lên required.
+_INPUT_CONTEXT = re.compile(r"ảnh này|ảnh trên|trong ảnh|của ảnh|ảnh đính kèm|photo|picture")
 
 
-def classify_rules(question: str) -> Route:
+def classify_rules(question: str, has_image: bool = False) -> Route:
     q = fold(question)
-    if _REQUIRED.search(q) or _ANH_ACCENT.search(unicodedata.normalize("NFC", question.lower())):
+    qn = unicodedata.normalize("NFC", question.lower())
+    bare_anh = bool(_ANH_ACCENT.search(qn)) and not (has_image and _INPUT_CONTEXT.search(qn))
+    if _REQUIRED.search(q) or bare_anh:
         media = "required"
     elif _EVENT.search(q):
         media = "optional"
     else:
         media = "none"
     return Route(media=media, wants_file=bool(_FILE.search(q)), source="rules",
+                 inputs=["image"] if has_image else [],
                  wants_video=bool(re.search(_VIDEO, q)))
 
 
-def decide(question: str, llm: dict | None = None) -> Route:
+def decide(question: str, llm: dict | None = None, has_image: bool = False) -> Route:
     """Gộp ý định từ LLM (nếu hợp lệ) với luật. Luật `required` (từ khoá hình/video rõ ràng) và
     luật `wants_file` luôn được giữ — LLM chỉ có thể nâng mức, không hạ được tín hiệu rõ ràng."""
-    rules = classify_rules(question)
+    rules = classify_rules(question, has_image=has_image)
     media = (llm or {}).get("media")
     if media not in MEDIA_MODES:
         return rules
     if rules.media == "required":
         media = "required"
     wants = bool((llm or {}).get("wants_file")) or rules.wants_file
-    return Route(media=media, wants_file=wants, source="llm+rules", wants_video=rules.wants_video)
+    return Route(media=media, wants_file=wants, source="llm+rules",
+                 inputs=rules.inputs, wants_video=rules.wants_video)
 
 
 def _docs_of(h: dict) -> list[str]:

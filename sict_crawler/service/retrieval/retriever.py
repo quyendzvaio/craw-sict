@@ -306,7 +306,7 @@ def retrieve(question: str, top_k: int = 5,
     ifut = _STAGE_POOL.submit(_query_image_vec, query_image_b64) if unified and query_image_b64 else None
     if has_text:
         r = query_rewriter.rewrite(question)
-        route = router.decide(question, r.get("route_llm"))
+        route = router.decide(question, r.get("route_llm"), has_image=bool(query_image_b64))
         route.list_question = router.is_list_question(question)
     else:   # chỉ ảnh (D21 U3+U4)
         r = {"rewritten": "", "terms": [], "route_llm": None}

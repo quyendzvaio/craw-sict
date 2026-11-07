@@ -30,6 +30,15 @@ def test_rules_examples():
     assert R.classify_rules("Tải quy chế đào tạo tín chỉ").wants_file
 
 
+def test_image_input_not_media_request():
+    r = R.classify_rules("Sự kiện trong ảnh này trao giải gì?", has_image=True)
+    assert r.media == "optional"
+    assert "image" in r.inputs
+    assert R.classify_rules("ảnh lễ tốt nghiệp").media == "required"  # hành vi cũ
+    r2 = R.classify_rules("cho xem thêm ảnh lễ tốt nghiệp", has_image=True)
+    assert r2.media == "required"  # đòi XEM dù có ảnh kèm → vẫn required
+
+
 def test_rules_on_golden_set():
     """Luật dự phòng phải bắt chắc 2 đầu: câu `required` và câu muốn file. Câu `optional` khó
     bằng luật (LLM lo) nên chỉ đo, không ép."""
