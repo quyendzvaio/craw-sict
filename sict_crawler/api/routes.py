@@ -78,15 +78,19 @@ async def query(q: QueryIn):
             "citations": citations.index(res["text"] + res["media"]),     # D24: nguồn đánh số như trong context
             "text": [s.model_dump(exclude=RESPONSE_EXCLUDE) for s in res["text"]],
             "media": [s.model_dump(exclude=RESPONSE_EXCLUDE) for s in res["media"]],
-            "attempts": res["attempts"], "sufficient": res["sufficient"]}
+            "attempts": res["attempts"], "sufficient": res["sufficient"],
+            **({"oos": True} if res.get("oos") else {})}
 
 
 @app.post("/chat")
 async def chat(q: QueryIn):
     """SSE streaming qua agent loop: status (attempts) → sources event →
     streamed LLM answer (context echo fallback if no LLM key)."""
+    from sict_crawler.core.config import get_settings
     from sict_crawler.service.retrieval import agent as _agent
     from sict_crawler.service.retrieval import vlm
+    if get_settings().llm.router_mode == "hybrid":
+        return StreamingResponse(_hybrid_chat_stream(q), media_type="text/event-stream")
     res = await run_in_threadpool(_agent.run, q.question, q.top_k, q.image, q.filters)   # xem /query
     tsrcs, msrcs, context = res["text"], res["media"], res["context"]
     if not res["sufficient"]:
@@ -96,6 +100,11 @@ async def chat(q: QueryIn):
     async def gen():
         yield f"data: {json.dumps({'status': {'attempts': res['attempts'], 'sufficient': res['sufficient'], 'media_mode': res.get('media_mode'), 'wants_file': res.get('wants_file'), 'media_note': res.get('media_note'), 'list_question': res.get('list_question'), 'entities': res.get('entities'), 'inputs': res.get('inputs'), 'outputs': res.get('outputs')}})}\n\n"
         yield f"data: {json.dumps({'text': [s.model_dump(exclude=RESPONSE_EXCLUDE) for s in tsrcs], 'media': [s.model_dump(exclude=RESPONSE_EXCLUDE) for s in msrcs]})}\n\n"
+        if res.get("oos"):
+            yield f"data: {json.dumps({'delta': 'Câu hỏi nằm ngoài phạm vi thông tin của SICT.'})}\n\n"
+            yield f"data: {json.dumps({'citations': []})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
         import asyncio
         import queue
         import threading
@@ -135,6 +144,49 @@ async def chat(q: QueryIn):
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+async def _hybrid_chat_stream(q: QueryIn):
+    """Chuyển graph.stream đồng bộ sang SSE mà không chặn event loop."""
+    import asyncio
+    import queue
+    import threading
+
+    events: queue.Queue = queue.Queue()
+    sentinel = object()
+    def worker():
+        got_status = got_sources = got_done = False
+        try:
+            # Import/compile LangGraph nằm trong worker, không chặn event loop ở request đầu.
+            from sict_crawler.service.retrieval import graph
+            for event in graph.stream_chat(q.question, q.top_k, q.image, q.filters):
+                got_status = got_status or 'status' in event
+                got_sources = got_sources or 'text' in event
+                got_done = got_done or bool(event.get('done'))
+                events.put(event)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('Luồng graph chat thất bại')
+            if not got_done:
+                if not got_status:
+                    events.put({'status': {'attempts': 0, 'sufficient': False}})
+                if not got_sources:
+                    events.put({'text': [], 'media': []})
+                events.put({'delta': 'Không thể hoàn tất câu trả lời.'})
+                events.put({'citations': []})
+                events.put({'done': True})
+        finally:
+            events.put(sentinel)
+    threading.Thread(target=worker, daemon=True).start()
+    loop = asyncio.get_running_loop()
+    while True:
+        event = await loop.run_in_executor(None, events.get)
+        if event is sentinel:
+            break
+        if event.get('done'):
+            yield 'data: [DONE]\n\n'
+        else:
+            yield f'data: {json.dumps(event)}\n\n'
 
 
 @app.get("/", response_class=HTMLResponse)

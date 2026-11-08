@@ -4820,6 +4820,8 @@ dependencies = [
 [package.dev-dependencies]
 api = [
     { name = "fastapi" },
+    { name = "langchain-core" },
+    { name = "langgraph" },
     { name = "prometheus-client" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -4874,6 +4876,8 @@ requires-dist = [
 [package.metadata.requires-dev]
 api = [
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "langchain-core", specifier = ">=1.7,<2" },
+    { name = "langgraph", specifier = ">=1.2,<2" },
     { name = "prometheus-client", specifier = ">=0.20" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]

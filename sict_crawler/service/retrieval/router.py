@@ -81,6 +81,7 @@ class Route:
     outputs: list[str] = field(default_factory=list)   # D21: đầu ra thực tế: text | image
     list_question: bool = False                         # D27: câu hỏi liệt kê (is_list_question) → truy xuất rộng
     wants_video: bool = False                           # câu nêu "video"/"clip" → gate xếp video trước
+    oos: bool = False                                   # ngoài phạm vi, chỉ hybrid đề xuất
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -112,6 +113,25 @@ def classify_rules(question: str, has_image: bool = False) -> Route:
     return Route(media=media, wants_file=bool(_FILE.search(q)), source="rules",
                  inputs=["image"] if has_image else [],
                  wants_video=bool(re.search(_VIDEO, q)))
+
+
+
+def policy_merge(rules: Route, llm: dict | None) -> Route:
+    """LLM chỉ đề xuất: xác thực đầu vào và giữ tín hiệu luật rõ ràng."""
+    from dataclasses import replace
+    from pydantic import ValidationError
+    from sict_crawler.service.retrieval.route_schema import RouteDecision
+    try:
+        decision = RouteDecision.model_validate(llm)
+    except (ValidationError, TypeError, ValueError):
+        return rules
+    if decision.confidence < 0.6:
+        return rules
+    media = 'required' if rules.media == 'required' else decision.media
+    if decision.oos:
+        media = 'none'
+    return replace(rules, media=media, wants_file=rules.wants_file or decision.wants_file,
+                   oos=decision.oos, source='llm+rules')
 
 
 def decide(question: str, llm: dict | None = None, has_image: bool = False) -> Route:
