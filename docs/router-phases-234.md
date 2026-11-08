@@ -229,7 +229,7 @@ văn bản. Giữ yêu cầu lấy/tải rõ ràng và truy vấn tên tài li�
 nâng câu hỏi thông tin thành file khi không có luật tài liệu hoặc động từ truy cập.
 Phân biệt dấu trong tải/tại; lỗi/schema sai/confidence thấp vẫn fallback luật.
 
-`rr:v3` và `intent-v3` cô lập route/graph cache khỏi quyết định cũ; cache query luật
+`rr:v3` và `intent-v4` cô lập route/graph cache khỏi quyết định cũ; cache query luật
 không đổi vì hybrid đã bỏ qua nó. Mode rules mặc định, model qwen3.5-flash-sale,
 threshold bằng chứng, index và cờ retry không đổi. Thay đổi này không đồng nghĩa
 file đã tồn tại trong index hoặc đã tìm được file đúng; file hit phải đo riêng.
@@ -262,3 +262,21 @@ sufficient/OOS dùng chung mẫu trả lời và điểm; cặp đổi context s
 Nguồn lấy từ response API thật, sinh bằng gpt-oss-120b-sale qua cùng stream_answer
 và citations.enforce, chấm deepseek-v4-flash-sale. Đây không phải hai lượt /chat
 độc lập, không đo nhiễu sinh câu trả lời; câu answerable=false không chấm RAGAS.
+
+Chốt RAGAS controlled: đủ103 mẫu trả lời và103 dòng điểm/không áp dụng; 14 mẫu
+answerable=false không chấm. Lần đầu2048 token bị504/length, retry đúng lỗi với
+8192 token, vẫn giữ deepseek-v4-flash-sale, quota15/phút; không đổi budget API.
+Cuối cùng mỗi nhánh có72/80 câu có điểm, giao71/80 cặp đủ điểm. Faithfulness
+trên đúng71 cặp:0,901477→0,901477, không có cặp giảm/tăng đã quan sát. Bảy trong
+chín cặp đổi context có đủ hai điểm đều1,0/1,0; g052 thiếu baseline, g057 thiếu
+candidate. Không so trung bình trên hai tập thiếu khác nhau và không tuyên bố
+gate RAGAS đầy đủ đạt. Còn8 lỗi504 (shared:g020/g034/g047/g053/g065/g072,
+baseline:g052, candidate:g057) và1 lỗi length (shared:g073). Không coi lỗi judge
+là0, không bỏ khỏi mẫu để lấy gate. Dữ liệu ngoài repo:
+`/DATA/tmp/sict_intent_ragas_summary.json` và các file cùng tiền tố.
+
+Live /chat hybrid cuối (g058):424 ký tự,16 nguồn,8 citation hợp lệ qua SSE;29,118s.
+GET / và đủ88 /query đã chạy trên code mới. CI test và build API/worker/embed đều
+pass. Merge code vào develop theo quyền owner với mode rules mặc định; đây là
+sửa tính năng opt-in, không nghiệm thu/bật hybrid production. Latency, g062,
+file hit4/9 và coverage RAGAS còn mở. Main/CD/VM/S3 không thực hiện.
