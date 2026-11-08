@@ -248,6 +248,8 @@ def route_intent(question: str, has_image: bool) -> dict | None:
         "oos=true khi câu hỏi ngoài phạm vi SICT; confidence từ 0 đến 1. "
         "Ảnh gửi kèm là đầu vào, trừ khi yêu cầu xem thêm ảnh.\n"
         "Phạm vi bao gồm cả thông tin liên quan tới trường HaUI, kể cả khi câu hỏi không nhắc rõ SICT; thiếu dữ liệu không đồng nghĩa ngoài phạm vi.\n"
+        "Tuyển dụng, thực tập, hợp tác doanh nghiệp và cơ hội nghề nghiệp cho sinh viên thuộc phạm vi, "
+        "kể cả câu chỉ nêu tên doanh nghiệp. Học phí/điểm chuẩn của một trường khác không liên quan HaUI là ngoài phạm vi.\n"
         f"Có ảnh gửi kèm: {has_image}. Câu hỏi: {question}"
     )
     try:

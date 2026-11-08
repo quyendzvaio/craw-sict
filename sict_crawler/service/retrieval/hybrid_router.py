@@ -12,7 +12,7 @@ from sict_crawler.service.retrieval import query_rewriter, router, vlm
 from sict_crawler.service.retrieval.route_schema import RouteDecision
 
 ROUTE_TTL = 24 * 60 * 60
-ROUTE_POLICY_VERSION = 'intent-v3'
+ROUTE_POLICY_VERSION = 'intent-v4'
 log = logging.getLogger('sict.router.middleware')
 
 
