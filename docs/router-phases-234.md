@@ -238,3 +238,27 @@ Review độc lập phát hiện thiếu động từ tải giữa câu và nh�
 factual; đã tái hiện 6 ca RED rồi sửa GREEN. Thêm regression cho LLM tự nâng lịch
 thành file (RED→GREEN). Full suite bản cuối: 452 passed, 5 skipped, 5 warnings sẵn
 có; ba script test CI, uv lock --check, diff --check đạt. Đang đo gate API bản cuối.
+
+Lượt API cuối trên commit `e0cf976`: đủ88 response/event, 81 LLM hợp lệ +7 rules,
+không timeout/fallback. Prompt bổ sung phạm vi tuyển dụng/thực tập/hợp tác doanh
+nghiệp sau lượt trung gian từng từ chối nhầm g012; bản cuối không còn hồi quy này.
+Media đúng87/88 (sửa7/8 lỗi luật, giữ80/80 câu luật đúng); file đúng88/88 (sửa3/3,
+giữ85/85); OOS đúng85/85 có nhãn (sửa5/5, giữ80/80), ba câu thiếu nhãn OOS không
+được tính. Gate sửa≥80% và bảo toàn≥99% đạt cho quyết định cuối trên bộ này;
+**không** suy ra media tổng thể≥99%:87/88=98,86%. g062 ảnh không dấu vẫn none.
+Raw model riêng trên81 câu: file giữ77/78 câu luật đúng, chưa đạt99%; một proposal
+nâng file sai bị chặn. Không coi các câu không gọi model là model đúng.
+
+Đối chứng rules develop cùng index/top_k8, cache tắt: URL top5 đều70/78; MRR
+0,7297009→0,7382479, g005 từ hạng3→1, không có câu tụt hạng. File hit vẫn4/9,
+không giải quyết thiếu attachment bằng thay nhãn ý định. Media đúng nguồn theo
+expected_urls45/47 so với60/68 (ít ảnh không được yêu cầu hơn); sufficient đúng
+79/88→82/88. Latency API cold p50 0,631→9,3215s; p90 1,29→15,003s: **chưa đạt**
+latency gate, model giữ nguyên, production vẫn rules. Hai lượt trung gian không
+thay cho kết quả cuối; dữ liệu/đối chiếu ở /DATA/tmp/sict_intent_*. Chỉ chạy golden_v2.
+
+RAGAS faithfulness đang chạy phép đối chứng có kiểm soát: cùng câu hỏi/context/
+sufficient/OOS dùng chung mẫu trả lời và điểm; cặp đổi context sinh/chấm riêng.
+Nguồn lấy từ response API thật, sinh bằng gpt-oss-120b-sale qua cùng stream_answer
+và citations.enforce, chấm deepseek-v4-flash-sale. Đây không phải hai lượt /chat
+độc lập, không đo nhiễu sinh câu trả lời; câu answerable=false không chấm RAGAS.
