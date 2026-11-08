@@ -12,7 +12,7 @@ from sict_crawler.service.retrieval import query_rewriter, router, vlm
 from sict_crawler.service.retrieval.route_schema import RouteDecision
 
 ROUTE_TTL = 24 * 60 * 60
-ROUTE_POLICY_VERSION = 'scope-v2'
+ROUTE_POLICY_VERSION = 'intent-v4'
 log = logging.getLogger('sict.router.middleware')
 
 
@@ -31,7 +31,8 @@ def _record(question, has_image, rules, proposal, final, origin, started):
 def route(question: str, has_image: bool) -> router.Route:
     started = time.monotonic()
     rules = router.classify_rules(question, has_image=has_image)
-    if not question.strip() or rules.media != 'none' or router.is_list_question(question):
+    # optional theo chủ đề và câu liệt kê đều có thể là câu hỏi thuần thông tin.
+    if not question.strip() or rules.media == 'required':
         return _record(question, has_image, rules, None, rules, 'rules', started)
     cfg = get_settings()
     normalized = question
@@ -42,9 +43,9 @@ def route(question: str, has_image: bool) -> router.Route:
     # Giữ dấu trong khóa vì router và LLM phân biệt "anh" với "ảnh".
     model = cfg.llm.router_model or cfg.llm.model
     identity = (cfg.llm.api_base, model, normalized, has_image, ROUTE_POLICY_VERSION,
-                cfg.llm.max_new_tokens, cfg.llm.router_timeout)
+                cfg.llm.router_max_new_tokens or cfg.llm.max_new_tokens, cfg.llm.router_timeout)
     digest = hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode()).hexdigest()
-    key = 'rr:v2:' + digest
+    key = 'rr:v3:' + digest
     try:
         raw = cache.get(key)
         data = json.loads(raw) if raw else None
@@ -60,6 +61,6 @@ def route(question: str, has_image: bool) -> router.Route:
                 cache.put(key, json.dumps(decision).encode(), ROUTE_TTL)
             except (TypeError, ValueError):
                 decision = None
-    final = router.policy_merge(rules, decision)
+    final = router.policy_merge(rules, decision, question=question)
     return _record(question, has_image, rules, decision, final,
                    origin if decision is not None else 'fallback', started)

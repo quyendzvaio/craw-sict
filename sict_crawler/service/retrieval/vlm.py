@@ -191,13 +191,13 @@ def infer_person(image: bytes, page_title: str, page_text: str) -> str:
     return out[:200]
 
 
-def _text_call(model: str, prompt: str, timeout: float | None = None) -> str:
+def _text_call(model: str, prompt: str, timeout: float | None = None, *, max_tokens: int | None = None) -> str:
     """Text-only chat completion against cfg.llm endpoint. '' on any failure."""
     cfg = get_settings().llm
     body = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": cfg.max_new_tokens,
+        "max_tokens": cfg.max_new_tokens if max_tokens is None else max_tokens,
         "temperature": 0.0,
         # ghi rõ: proxy kiểu 9router coi thiếu "stream" là stream=true
         "stream": False,
@@ -237,15 +237,24 @@ def route_intent(question: str, has_image: bool) -> dict | None:
         return None
     prompt = (
         "Bạn định tuyến câu hỏi cho SICT. Trả duy nhất JSON với media, wants_file, oos, confidence. "
-        "media=required khi muốn xem ảnh/video; optional khi có thể minh họa hoặc nói về ảnh gửi kèm; "
-        "none khi chỉ hỏi thông tin. wants_file=true khi cần văn bản hoặc biểu mẫu; "
+        "Phân loại theo đầu ra người dùng yêu cầu, không theo chủ đề hoặc loại nguồn có thể chứa đáp án. "
+        "media=required khi muốn xem ảnh/video; optional khi muốn mô tả tổng quan hoạt động có ích khi minh họa "
+        "hoặc nói về ảnh gửi kèm. media=none khi hỏi dữ kiện cụ thể (ai, số lượng, ngày, địa điểm, kết quả) "
+        "hoặc liệt kê thông tin, kể cả câu có nhắc sự kiện, hội thảo, lễ hay cuộc thi. "
+        "wants_file=true khi xin tải/xem/lấy văn bản, biểu mẫu, hoặc tra cứu một tài liệu bằng tên "
+        "(tên quy chế, quyết định, kế hoạch, tiến độ, thời khóa biểu, danh sách học phần). "
+        "wants_file=false khi chỉ hỏi dữ kiện trong/về văn bản (số hiệu, người ký, căn cứ quyết định nào) "
+        "hoặc hỏi có những quy chế/quy định nào mà không xin các file. "
         "oos=true khi câu hỏi ngoài phạm vi SICT; confidence từ 0 đến 1. "
         "Ảnh gửi kèm là đầu vào, trừ khi yêu cầu xem thêm ảnh.\n"
         "Phạm vi bao gồm cả thông tin liên quan tới trường HaUI, kể cả khi câu hỏi không nhắc rõ SICT; thiếu dữ liệu không đồng nghĩa ngoài phạm vi.\n"
+        "Tuyển dụng, thực tập, hợp tác doanh nghiệp và cơ hội nghề nghiệp cho sinh viên thuộc phạm vi, "
+        "kể cả câu chỉ nêu tên doanh nghiệp. Học phí/điểm chuẩn của một trường khác không liên quan HaUI là ngoài phạm vi.\n"
         f"Có ảnh gửi kèm: {has_image}. Câu hỏi: {question}"
     )
     try:
-        raw = _text_call(cfg.router_model or cfg.model, prompt, timeout=cfg.router_timeout)
+        raw = _text_call(cfg.router_model or cfg.model, prompt, timeout=cfg.router_timeout,
+                         max_tokens=cfg.router_max_new_tokens or cfg.max_new_tokens)
         decision = RouteDecision.from_llm(raw)
         return decision.model_dump() if decision else None
     except Exception:

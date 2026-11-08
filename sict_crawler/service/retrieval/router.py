@@ -116,7 +116,31 @@ def classify_rules(question: str, has_image: bool = False) -> Route:
 
 
 
-def policy_merge(rules: Route, llm: dict | None) -> Route:
+_FACT_QUESTION = re.compile(r"\b(?:ai|gi|nao|bao nhieu|may|vi sao|tai sao|o dau|the nao|ra sao)\b")
+_FILE_REQUEST = re.compile(
+    r"\b(?:download|lay|xem|xin|gui|cung cap)\b|\btim\b(?!\s+hieu\b)"
+    r"|\bcho (?:toi|minh|em|chung toi)\b")
+
+
+def _file_access_request(question: str) -> bool:
+    original = unicodedata.normalize('NFC', question.lower())
+    download = re.search(r"\b(?:tải|tai)\b(?!\s+sao\b)", original)
+    return bool(_FILE_REQUEST.search(fold(question)) or download)
+
+
+def _protect_file_intent(question: str | None) -> bool:
+    """Tên văn bản/tải rõ ràng được giữ; hỏi thông tin về văn bản có thể sửa.
+
+    Không có câu gốc (caller cũ) thì giữ policy bảo thủ. Không dùng tên chủ đề,
+    ID câu eval hay sự tồn tại của attachment để suy ra ý định người dùng.
+    """
+    if question is None:
+        return True
+    q = fold(question)
+    return not _FACT_QUESTION.search(q) or _file_access_request(question)
+
+
+def policy_merge(rules: Route, llm: dict | None, *, question: str | None = None) -> Route:
     """LLM chỉ đề xuất: xác thực đầu vào và giữ tín hiệu luật rõ ràng."""
     from dataclasses import replace
     from pydantic import ValidationError
@@ -128,9 +152,15 @@ def policy_merge(rules: Route, llm: dict | None) -> Route:
     if decision.confidence < 0.6:
         return rules
     media = 'required' if rules.media == 'required' else decision.media
+    if 'image' in rules.inputs and media == 'none':
+        media = 'optional'  # ảnh đầu vào vẫn cần nhánh đối chiếu ảnh
     if decision.oos:
         media = 'none'
-    return replace(rules, media=media, wants_file=rules.wants_file or decision.wants_file,
+    protected_file = rules.wants_file and _protect_file_intent(question)
+    # Model không tự biến câu hỏi lịch/thông tin thành xin file khi thiếu tín hiệu.
+    proposed_file = decision.wants_file and (question is None or rules.wants_file
+                                            or _file_access_request(question))
+    return replace(rules, media=media, wants_file=protected_file or proposed_file,
                    oos=decision.oos, source='llm+rules')
 
 

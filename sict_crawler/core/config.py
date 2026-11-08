@@ -193,6 +193,7 @@ class LlmConfig:
     rewrite_query: bool = False
     router_model: str = ""
     router_timeout: int = 3
+    router_max_new_tokens: int = 0  # 0 = kế thừa budget trả lời; cho phép đo router riêng
     router_shadow: bool = False
     router_mode: str = "rules"  # rules | shadow | hybrid; hybrid chỉ dùng sau gate
     router_reroute: bool = False
@@ -236,6 +237,10 @@ class LlmConfig:
             self.router_model = os.environ["LLM_ROUTER_MODEL"]
         if os.environ.get("LLM_ROUTER_TIMEOUT"):
             self.router_timeout = int(os.environ["LLM_ROUTER_TIMEOUT"])
+        if os.environ.get("LLM_ROUTER_MAX_NEW_TOKENS"):
+            self.router_max_new_tokens = int(os.environ["LLM_ROUTER_MAX_NEW_TOKENS"])
+        if self.router_max_new_tokens < 0:
+            raise ValueError("LLM_ROUTER_MAX_NEW_TOKENS phải ≥ 0")
         if os.environ.get("LLM_ROUTER_SHADOW"):
             self.router_shadow = _env_bool(os.environ["LLM_ROUTER_SHADOW"])
 

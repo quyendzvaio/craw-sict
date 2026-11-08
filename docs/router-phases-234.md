@@ -14,8 +14,8 @@ production khi chưa hoàn thành các gate trong `codex/PLAN.md`; S3/VM vẫn �
   `LLM_ROUTER_TIMEOUT` mặc định 3 giây, là hạn tổng của request, kể cả khi server
   gửi từng phần liên tục. Lỗi, timeout hoặc schema sai → dùng luật.
 - `LLM_ROUTER_MODE=hybrid` là đường thử nghiệm, dùng StateGraph và cache quyết định
-  LLM 24 giờ theo provider, model, câu đã chuẩn hóa và cờ ảnh; kết quả graph có cache 10 phút riêng theo cấu hình và index. Chỉ gọi LLM cho câu không có
-  tín hiệu media rõ và không thuộc loại liệt kê. Truy xuất hybrid không đọc/ghi cache
+  LLM 24 giờ theo provider, model, câu đã chuẩn hóa và cờ ảnh; kết quả graph có cache 10 phút riêng theo cấu hình và index. Gọi LLM cho câu không có
+  yêu cầu media `required`, bao gồm optional theo chủ đề và câu liệt kê. Truy xuất hybrid không đọc/ghi cache
   kết quả luật; lỗi graph → dự phòng bằng luật. Không gọi shadow thứ hai khi hybrid.
 - `LLM_ROUTER_REROUTE=1` chỉ có tác dụng với hybrid và là thử nghiệm Phase 4: nếu
   cần file nhưng không có file đủ bằng chứng, thử thêm một lượt chỉ tìm attachment,
@@ -158,3 +158,125 @@ API cục bộ, không phải benchmark tải production. Kết quả chi tiết
 `sict_middleware_rules_baseline.jsonl`. Test RED→GREEN cho hướng dẫn prompt và
 audit middleware, full pytest 425 passed/5 skipped, 3 script CI và lock check đạt.
 Các container thử đã dọn; chưa commit hoặc bật production.
+
+## Tiếp tục sau PR #51 — hiệu chỉnh gate và kiểm tra Phase 4
+
+Nhánh làm việc mới từ develop `ea2b704`: `feat/router-gate-calibration`. Nhánh
+`feat/router-phases-234` đã xóa local/remote theo yêu cầu owner; main không đổi.
+PLAN trong `/codex` đã được owner cho phép điều chỉnh: chỉ golden_v2, gate bảo
+  toàn đo final middleware, raw LLM báo riêng, lỗi không được gọi hoặc bị chính
+sách bảo vệ phải công khai. Không coi gate model thô cũ là đã pass.
+
+Bổ sung báo cáo có thể chạy lại bằng script trong repo:
+
+```bash
+uv run python scripts/eval_router_shadow.py --middleware-log /path/api.log \
+  --set eval/golden_v2.jsonl --out /path/report.json
+```
+
+`summary` là final; `raw_summary` chỉ gồm các câu đã gọi/dùng cache LLM;
+`blocked_llm_fixes` nêu LLM sửa đúng nhưng policy giữ sai, `unconsulted_rule_misses`
+nêu lỗi luật thuộc nhóm không gọi LLM. Trên log đủ 88 câu: file g005/g071 bị policy
+chặn, file g052 không gọi; media g007/g017/g018/g032/g033/g036/g057 không gọi.
+Điều này giải thích vì sao không thể đạt sửa 80% TOÀN BỘ lỗi khi vẫn giữ nguyên
+chính sách và nhóm ambiguous hiện tại. Lỗi không được phép sửa tiếp tục là backlog.
+
+Pilot 12 câu golden_v2, mỗi câu 2 chế độ, đảo thứ tự, cùng model/8192 token và
+rate limit: mặc định p50 6,753 s / median 2914 completion token; thêm
+`enable_thinking=false` p50 6,9235 s / 3111 token. Cả 24 phản hồi hợp lệ, không có
+bằng chứng giảm latency; không thêm tùy chọn này vào serving. Đây là mẫu chẩn đoán,
+không phải benchmark toàn bộ bộ vàng. Tài liệu upstream có mô tả tham số này:
+https://www.alibabacloud.com/help/en/model-studio/deep-thinking
+không suy ra endpoint proxy đang dùng bắt buộc phải tiếp nhận nó.
+
+A/B Phase 4 trên đủ 88 câu mỗi lượt, route cache được seed bằng 64 quyết định đã
+đo trước đó, cùng model/cấu hình/caller filters; không phát sinh router LLM mới.
+Graph cache riêng theo reroute flag, mỗi câu được gọi một lần sau khi xóa cache
+kết quả thử nghiệm riêng. Bật retry có 3 lượt thử lại (g048/g050/g071), không tìm
+thêm file phù hợp; cả ba giữ nguồn ban đầu và báo thiếu tài liệu. URL top5 70/78,
+MRR 0,7297, file hit 4/9 và sufficient đúng 82/88 ở cả hai lượt. p50 0,569 →
+0,5985 s (+5,18%). Có retry ở 3/88 câu không đồng nghĩa sửa được lỗi route ở 3/88:
+chưa có câu nào cải thiện, nên Phase 4 **no-go** theo điều kiện ≥3% sửa được bằng
+validator; giữ cờ retry tắt. Dữ liệu ngoài repo `/DATA/tmp/sict_reroute_analysis.json`.
+
+Thêm `LLM_ROUTER_MAX_NEW_TOKENS` để tách budget router khỏi model trả lời; 0 (default)
+kế thừa `llm.max_new_tokens`, không đổi request mặc định. Đo router 8192 token
+không còn cần tăng budget model trả lời 2048 token. Cache dùng budget router hiệu
+lực; phép đo cache warm không thay cho mục tiêu latency cache lạnh.
+
+Acceptance thật sau khi tách budget (API hybrid, retry tắt, gpt-oss-120b-sale
+trả lời): 59/60. Cả 5 lượt chat/SSE và citations đạt, metrics đạt; U1 g004 thiếu
+URL đích. Lượt rules đối chứng cùng index cũng thiếu URL này, không có hồi quy
+middleware đã quan sát. Đây là kiểm tra hợp đồng/luồng, chưa thay thế RAGAS về
+faithfulness. Full pytest 429 passed/5 skipped; ba script CI, lock và diff check đạt.
+Code mới trên `feat/router-gate-calibration` chưa commit/push. Đã dọn toàn bộ
+container/cache thử nghiệm; API live giữ nguyên. Cold latency và RAGAS hybrid là
+các mục còn mở; không coi các phase đã nghiệm thu production.
+
+## Sửa ranh giới ý định media/file theo chỉ thị owner
+
+Nhánh `fix/router-media-file-intent` từ develop `ea2b704`. Nguyên nhân ở middleware
+trước rewrite: `optional` do tên sự kiện và mọi câu liệt kê bị loại khỏi nhóm gọi
+LLM; còn phép OR `wants_file` giữ cả tín hiệu tên văn bản nhập nhằng. Vì thế 7/8
+lỗi media không được xét và 3 false positive file không thể sửa (hai đề xuất đúng
+bị chặn, một câu bị loại từ đầu).
+
+Sửa theo lớp lỗi, không theo ID hay tên sự kiện: hybrid gọi LLM cho optional/list,
+chỉ fast-path yêu cầu media required. Prompt phân biệt dữ kiện/số lượng/ngày/địa
+điểm/danh sách với yêu cầu minh họa và với tra cứu tài liệu theo tên. Policy giữ
+required và ảnh đầu vào; cho phép đề xuất hợp lệ sửa file ở câu hỏi thông tin về
+văn bản. Giữ yêu cầu lấy/tải rõ ràng và truy vấn tên tài liệu; không cho model tự
+nâng câu hỏi thông tin thành file khi không có luật tài liệu hoặc động từ truy cập.
+Phân biệt dấu trong tải/tại; lỗi/schema sai/confidence thấp vẫn fallback luật.
+
+`rr:v3` và `intent-v4` cô lập route/graph cache khỏi quyết định cũ; cache query luật
+không đổi vì hybrid đã bỏ qua nó. Mode rules mặc định, model qwen3.5-flash-sale,
+threshold bằng chứng, index và cờ retry không đổi. Thay đổi này không đồng nghĩa
+file đã tồn tại trong index hoặc đã tìm được file đúng; file hit phải đo riêng.
+
+Review độc lập phát hiện thiếu động từ tải giữa câu và nhầm tại/file trong câu
+factual; đã tái hiện 6 ca RED rồi sửa GREEN. Thêm regression cho LLM tự nâng lịch
+thành file (RED→GREEN). Full suite bản cuối: 452 passed, 5 skipped, 5 warnings sẵn
+có; ba script test CI, uv lock --check, diff --check đạt. Đang đo gate API bản cuối.
+
+Lượt API cuối trên commit `e0cf976`: đủ88 response/event, 81 LLM hợp lệ +7 rules,
+không timeout/fallback. Prompt bổ sung phạm vi tuyển dụng/thực tập/hợp tác doanh
+nghiệp sau lượt trung gian từng từ chối nhầm g012; bản cuối không còn hồi quy này.
+Media đúng87/88 (sửa7/8 lỗi luật, giữ80/80 câu luật đúng); file đúng88/88 (sửa3/3,
+giữ85/85); OOS đúng85/85 có nhãn (sửa5/5, giữ80/80), ba câu thiếu nhãn OOS không
+được tính. Gate sửa≥80% và bảo toàn≥99% đạt cho quyết định cuối trên bộ này;
+**không** suy ra media tổng thể≥99%:87/88=98,86%. g062 ảnh không dấu vẫn none.
+Raw model riêng trên81 câu: file giữ77/78 câu luật đúng, chưa đạt99%; một proposal
+nâng file sai bị chặn. Không coi các câu không gọi model là model đúng.
+
+Đối chứng rules develop cùng index/top_k8, cache tắt: URL top5 đều70/78; MRR
+0,7297009→0,7382479, g005 từ hạng3→1, không có câu tụt hạng. File hit vẫn4/9,
+không giải quyết thiếu attachment bằng thay nhãn ý định. Media đúng nguồn theo
+expected_urls45/47 so với60/68 (ít ảnh không được yêu cầu hơn); sufficient đúng
+79/88→82/88. Latency API cold p50 0,631→9,3215s; p90 1,29→15,003s: **chưa đạt**
+latency gate, model giữ nguyên, production vẫn rules. Hai lượt trung gian không
+thay cho kết quả cuối; dữ liệu/đối chiếu ở /DATA/tmp/sict_intent_*. Chỉ chạy golden_v2.
+
+RAGAS faithfulness đang chạy phép đối chứng có kiểm soát: cùng câu hỏi/context/
+sufficient/OOS dùng chung mẫu trả lời và điểm; cặp đổi context sinh/chấm riêng.
+Nguồn lấy từ response API thật, sinh bằng gpt-oss-120b-sale qua cùng stream_answer
+và citations.enforce, chấm deepseek-v4-flash-sale. Đây không phải hai lượt /chat
+độc lập, không đo nhiễu sinh câu trả lời; câu answerable=false không chấm RAGAS.
+
+Chốt RAGAS controlled: đủ103 mẫu trả lời và103 dòng điểm/không áp dụng; 14 mẫu
+answerable=false không chấm. Lần đầu2048 token bị504/length, retry đúng lỗi với
+8192 token, vẫn giữ deepseek-v4-flash-sale, quota15/phút; không đổi budget API.
+Cuối cùng mỗi nhánh có72/80 câu có điểm, giao71/80 cặp đủ điểm. Faithfulness
+trên đúng71 cặp:0,901477→0,901477, không có cặp giảm/tăng đã quan sát. Bảy trong
+chín cặp đổi context có đủ hai điểm đều1,0/1,0; g052 thiếu baseline, g057 thiếu
+candidate. Không so trung bình trên hai tập thiếu khác nhau và không tuyên bố
+gate RAGAS đầy đủ đạt. Còn8 lỗi504 (shared:g020/g034/g047/g053/g065/g072,
+baseline:g052, candidate:g057) và1 lỗi length (shared:g073). Không coi lỗi judge
+là0, không bỏ khỏi mẫu để lấy gate. Dữ liệu ngoài repo:
+`/DATA/tmp/sict_intent_ragas_summary.json` và các file cùng tiền tố.
+
+Live /chat hybrid cuối (g058):424 ký tự,16 nguồn,8 citation hợp lệ qua SSE;29,118s.
+GET / và đủ88 /query đã chạy trên code mới. CI test và build API/worker/embed đều
+pass. Merge code vào develop theo quyền owner với mode rules mặc định; đây là
+sửa tính năng opt-in, không nghiệm thu/bật hybrid production. Latency, g062,
+file hit4/9 và coverage RAGAS còn mở. Main/CD/VM/S3 không thực hiện.
