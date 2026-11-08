@@ -55,7 +55,7 @@ def main() -> None:
     ap.add_argument("--base", required=True, help="VD http://localhost:8090/v1")
     ap.add_argument("--artifacts", default=ART)
     ap.add_argument("--snapshot", default=None, help="mặc định lấy từ manifest.json")
-    ap.add_argument("--golden", default="eval/golden_v1.jsonl")
+    ap.add_argument("--golden", default="eval/golden_v2.jsonl")
     ap.add_argument("--cache", default="/DATA/craw-sict-data/embed_cache/jina-clip-v2.sqlite")
     ap.add_argument("--n-text", type=int, default=60)
     ap.add_argument("--n-image", type=int, default=40)

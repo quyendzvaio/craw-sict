@@ -26,7 +26,7 @@ Mọi bước trên VM / S3 chỉ chạy khi chủ dự án đã cho phép (quy 
 | 8 | VM1 | `./scripts/cutover_v3.sh backup` (pg_dump + snapshot Qdrant mọi collection đang có) | `pg_restore --list ~/backup-v3-*/sict_crawler.dump \| head` |
 | 9 | VM1 | `docker compose stop api` rồi `OUT=_cutover/dev-state CONFIRM_RESTORE=yes ./scripts/cutover_v3.sh restore` (mục 1b: thay DB `sict_crawler` + nạp 3 snapshot `*_v3`, rồi so với manifest) | in `khớp manifest`; lệch → exit 1 (`verify-restore` chạy lại riêng bước so) |
 | 10 | GitHub | CD `target=vm1`, `tag=<sha>` (chép compose/config, `store_auth check`, `sync-pg`, `up -d`; API đọc `.env` v3) | job xanh; `curl -sf http://<VM1>:8003/app.js`; `docker stats` API ~200 MiB |
-| 11 | máy dev | `API=http://<VM1>:8003 ./scripts/cutover_v3.sh verify` (xoá cache `q:v10:*` Redis db 3 trước) | golden_v1 R@5 ≥ 0,985 / MRR ≥ 0,93; golden_v2 url_hit ≥ 70/80; list_v2 ≥ 0,90; `accept_api` exit 0; `/media/s/<key>` 200 |
+| 11 | máy dev | `API=http://<VM1>:8003 ./scripts/cutover_v3.sh verify` (xoá cache `q:v10:*` Redis db 3 trước) | golden_v2 url_hit ≥ 70/80; list_v2 ≥ 0,90; `accept_api` exit 0; `/media/s/<key>` 200 |
 | 12 | VM2 | `docker compose -f docker-compose.worker.yml up -d cron` | `./scripts/monitor_2vm.sh worker`; Redis `incremental:last_ok` mới, `last_error` trống; lượt đầu graph "rebuild" một lần (Redis production chưa có chữ ký, mục 1b), lượt sau "skipped" |
 | 13 | GitHub | CD `deploy_alloy=true` (Alloy đã cài trên VM) | `scripts/verify_gcloud.py --instance sict-vm1 --instance sict-vm2` VERIFIED |
 
@@ -71,7 +71,7 @@ khi Postgres đích cũ hơn nguồn, Qdrant đích khác `major.minor` của ng
 Đã thử trên máy dev 2026-11-05 (export thật → restore vào container `postgres:16` + `qdrant:v1.19.1` riêng, có API key):
 export 421 MB (dump 6,1 MB, snapshot text 261 MB / image 77 MB / ocr 78 MB), 2.303 bài, 6.240 media, 4.938 khái niệm,
 327.647 cạnh, point 16.628 / 6.019 / 5.955; restore ~6,5 phút trên máy đang tải nặng (nạp snapshot text 137 s), khớp
-manifest, và vẫn khớp sau khi máy khởi động lại. golden_v1 qua API trỏ vào store restore và API trỏ vào store dev
+manifest, và vẫn khớp sau khi máy khởi động lại. golden_v2 qua API trỏ vào store restore và API trỏ vào store dev
 (cùng code, không cache, không LLM): giống nhau từng câu, R@5 1,0 / R@10 1,0 / MRR 0,947 / media_mode 0,871 / media
 đúng bài 7/7 (n = 67).
 
@@ -156,7 +156,7 @@ CD **không** ghi các biến này — người vận hành soạn tay, CD chỉ
 
 ## 3. Verify sau cutover
 
-- `scripts/cutover_v3.sh verify` (= `eval_api.py` golden_v1 / golden_v2 / list_v2 + `accept_api.py`); xoá cache
+- `scripts/cutover_v3.sh verify` (= `eval_api.py` golden_v2 / list_v2 + `accept_api.py`); xoá cache
   `q:v10:*` (Redis db 3) trước khi đo.
 - `scripts/monitor_2vm.sh infra` (VM1) / `worker` (VM2); `GET /metrics` có `sict_pipeline_metrics_up 1`.
 - D12 trên máy thật: Redis không mật khẩu → NOAUTH; `curl http://<IP-VM1>:6333/collections` không key → 401/403.

@@ -166,7 +166,7 @@ uv run python -m tests.test_agent
 
 | Bộ | Script | Kết quả gần nhất (index v3) |
 |---|---|---|
-| `eval/golden_v1.jsonl` (70 câu, URL đáp án, chế độ media) | `scripts/eval_retrieval.py` (offline), `scripts/eval_api.py` (HTTP) | recall@5 0,985 · MRR@10 0,898 · chế độ media 0,871 |
+| `eval/golden_v2.jsonl` (88 câu, URL đáp án, chế độ media) | `scripts/eval_retrieval.py` (offline), `scripts/eval_api.py` (HTTP) | Xem `eval/RESULTS.md`; số đo v1 không so sánh trực tiếp với v2 |
 | `eval/list_v1.jsonl` (12 câu liệt kê + 8 câu ngoài phạm vi) | `scripts/eval_api.py --list` | độ phủ mục 0,970 · `sufficient` đúng 0,95 |
 | RAGAS trên golden + list | `scripts/eval_ragas.py collect / score` | faithfulness 0,884 · answer relevancy 0,750 · context precision 0,735 · context recall (list) 0,937 |
 | Nghiệm thu U1–U6 qua HTTP | `scripts/accept_api.py --api URL` | 54/54 |

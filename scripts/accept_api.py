@@ -10,7 +10,7 @@ Chỉ cần API đang chạy (stdlib; Pillow nếu có thì ảnh truy vấn đ�
   S8 trích dẫn      /chat (SSE) có sự kiện citations; [n] trong câu trả lời đều hợp lệ; trả lời có nội dung thì ≥ 1 trích dẫn
   M  /metrics       có sict_http_requests_total, sict_pipeline_metrics_up 1
 
-Usage: python3 scripts/accept_api.py --api http://localhost:8003 [--golden eval/golden_v1.jsonl] [--out f.json]
+Usage: python3 scripts/accept_api.py --api http://localhost:8003 [--golden eval/golden_v2.jsonl] [--out f.json]
 Thoát 1 nếu có ca FAIL.
 """
 from __future__ import annotations
@@ -103,7 +103,7 @@ def chat(api: str, question: str, timeout: int) -> tuple[float, str, list[dict],
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--api", default="http://localhost:8003")
-    ap.add_argument("--golden", default="eval/golden_v1.jsonl")
+    ap.add_argument("--golden", default="eval/golden_v2.jsonl")
     ap.add_argument("--n-text", type=int, default=6, help="số câu U1 (eval_api.py chạy đủ 70 câu)")
     ap.add_argument("--n-chat", type=int, default=4)
     ap.add_argument("--timeout", type=int, default=300)
