@@ -43,7 +43,8 @@ def _cache_lookup(state: RetrievalState) -> dict:
         'image': hashlib.sha256((state.get('image') or '').encode()).hexdigest(),
         'index': retriever.index_tag(), 'model': cfg.router_model or cfg.model, 'provider': cfg.api_base,
         'reroute': cfg.router_reroute, 'router_timeout': cfg.router_timeout,
-        'route_policy': hybrid_router.ROUTE_POLICY_VERSION, 'router_max_tokens': cfg.max_new_tokens,
+        'route_policy': hybrid_router.ROUTE_POLICY_VERSION,
+        'router_max_tokens': cfg.router_max_new_tokens or cfg.max_new_tokens,
         'embedding': {k: getattr(settings.embedding, k) for k in
                       ('backend', 'model', 'text_model', 'image_model', 'dim', 'query_prefix', 'query_image_size')},
         'source_chars': cfg.source_chars, 'context_chars': cfg.context_chars,

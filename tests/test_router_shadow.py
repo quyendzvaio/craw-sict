@@ -174,3 +174,28 @@ def test_route_prompt_explains_school_scope_and_missing_evidence():
         prompt = call.call_args.args[1]
         assert 'Phạm vi bao gồm cả thông tin liên quan tới trường HaUI' in prompt
         assert 'thiếu dữ liệu không đồng nghĩa ngoài phạm vi' in prompt
+
+
+def test_router_budget_can_differ_from_answer_budget(monkeypatch):
+    monkeypatch.setenv('LLM_ROUTER_MAX_NEW_TOKENS', '8192')
+    cfg = LlmConfig(api_key='test', router_model='flash', max_new_tokens=2048)
+    assert cfg.router_max_new_tokens == 8192
+    with patch.object(vlm, 'get_settings') as settings, patch.object(vlm, '_text_call') as call:
+        settings.return_value.llm = cfg
+        call.return_value = '{"media":"none","wants_file":false,"oos":false,"confidence":0.9}'
+        vlm.route_intent('Câu hỏi', False)
+        assert call.call_args.kwargs['max_tokens'] == 8192
+        assert cfg.max_new_tokens == 2048
+
+
+def test_text_call_override_does_not_change_default_answer_budget():
+    cfg = LlmConfig(api_key='test', max_new_tokens=2048)
+    with patch.object(vlm, 'get_settings') as settings, patch.object(vlm, '_client') as client:
+        settings.return_value.llm = cfg
+        response = client.return_value.__enter__.return_value.post.return_value
+        response.status_code = 200
+        response.text = '{"choices":[{"message":{"content":"ok"}}]}'
+        assert vlm._text_call('model', 'prompt', max_tokens=8192) == 'ok'
+        assert client.return_value.__enter__.return_value.post.call_args.kwargs['json']['max_tokens'] == 8192
+        assert vlm._text_call('model', 'prompt') == 'ok'
+        assert client.return_value.__enter__.return_value.post.call_args.kwargs['json']['max_tokens'] == 2048

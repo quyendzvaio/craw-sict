@@ -11,6 +11,67 @@ def isolate_cache(monkeypatch):
 from sict_crawler.service.retrieval import router
 
 
+@pytest.mark.parametrize('question', [
+    'Hội nghị khoa học diễn ra ngày nào?',
+    'Năm nay có những hội thảo nào?',
+    'Trung tâm được thành lập theo quyết định nào?',
+    'Có những quy định đào tạo nào?',
+    'Tại sao quyết định thành lập trường được ban hành?',
+    'File quyết định thành lập trường do ai ký?',
+])
+def test_hybrid_can_correct_topic_hints_for_factual_questions(monkeypatch, question):
+    from sict_crawler.service.retrieval import hybrid_router
+    monkeypatch.setattr(hybrid_router.vlm, 'route_intent', lambda *a: {
+        'media': 'none', 'wants_file': False, 'oos': False, 'confidence': .9})
+    result = hybrid_router.route(question, False)
+    assert result.media == 'none' and not result.wants_file
+    assert result.source == 'llm+rules'
+
+
+@pytest.mark.parametrize('question', [
+    'Tải quy định đào tạo ở đâu?', 'tai quy che dao tao o dau',
+    'Quyết định phân công giảng dạy', 'Kế hoạch học kỳ mới',
+    'Cho tôi file quyết định và cho biết ai ký?',
+    'Mẫu đơn đăng ký lấy ở đâu?', 'Kế hoạch đào tạo xem ở đâu?',
+    'Tôi có thể tải quy chế đào tạo ở đâu?',
+    'Tìm thời khóa biểu học kỳ này ở đâu?',
+    'Quy chế đào tạo tải ở trang nào?',
+    'toi co the tai quy che dao tao o dau',
+])
+def test_hybrid_preserves_document_lookup_despite_negative_proposal(monkeypatch, question):
+    from sict_crawler.service.retrieval import hybrid_router
+    monkeypatch.setattr(hybrid_router.vlm, 'route_intent', lambda *a: {
+        'media': 'none', 'wants_file': False, 'oos': False, 'confidence': .9})
+    assert hybrid_router.route(question, False).wants_file
+
+
+def test_hybrid_keeps_image_input_optional_when_model_says_none(monkeypatch):
+    from sict_crawler.service.retrieval import hybrid_router
+    monkeypatch.setattr(hybrid_router.vlm, 'route_intent', lambda *a: {
+        'media': 'none', 'wants_file': False, 'oos': False, 'confidence': .9})
+    result = hybrid_router.route('Sự kiện trong ảnh này ở đâu?', True)
+    assert result.media == 'optional' and 'image' in result.inputs
+
+
+@pytest.mark.parametrize('question, expected', [
+    ('Lịch học', False), ('Gửi tôi tài liệu môn học ở đâu?', True),
+])
+def test_llm_file_promotion_needs_request_or_document_rule(monkeypatch, question, expected):
+    from sict_crawler.service.retrieval import hybrid_router
+    monkeypatch.setattr(hybrid_router.vlm, 'route_intent', lambda *a: {
+        'media': 'none', 'wants_file': True, 'oos': False, 'confidence': .9})
+    assert hybrid_router.route(question, False).wants_file is expected
+
+
+@pytest.mark.parametrize('proposal', [None, {}, {
+    'media': 'none', 'wants_file': False, 'oos': False, 'confidence': .3}])
+def test_ambiguous_topic_falls_back_without_valid_proposal(monkeypatch, proposal):
+    from sict_crawler.service.retrieval import hybrid_router
+    monkeypatch.setattr(hybrid_router.vlm, 'route_intent', lambda *a: proposal)
+    question = 'Có những quy định đào tạo nào?'
+    assert hybrid_router.route(question, False) == router.classify_rules(question)
+
+
 def test_policy_merge_preserves_explicit_rules_and_rejects_weak_or_invalid():
     rules = router.Route(media='required', wants_file=True, inputs=['image'])
     merged = router.policy_merge(rules, {'media': 'none', 'wants_file': False, 'oos': False, 'confidence': 0.9})
