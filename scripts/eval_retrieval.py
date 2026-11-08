@@ -12,7 +12,7 @@ top-5 khớp.
 
 Usage (cần embedder → chạy trong image worker/api, hoặc venv có group ml):
   python scripts/eval_retrieval.py --artifacts _snapshot/2026-10-12/artifacts/v2-multilingual-e5-small \\
-      --golden eval/golden_v1.jsonl --out eval/results
+      --golden eval/golden_v2.jsonl --out eval/results
 """
 from __future__ import annotations
 
@@ -115,7 +115,7 @@ def expect_any_ok(docs: list[str], meta_by_doc: dict[str, dict], cond: dict) -> 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--artifacts", required=True)
-    ap.add_argument("--golden", default="eval/golden_v1.jsonl")
+    ap.add_argument("--golden", default="eval/golden_v2.jsonl")
     ap.add_argument("--out", default=None, help="thư mục ghi <model>.json (chi tiết từng câu)")
     args = ap.parse_args()
 
@@ -159,7 +159,7 @@ def main() -> None:
             docs = rank_docs(order, chunks, allowed)
             rank = next((k + 1 for k, d in enumerate(docs) if d in expected), None)
             ok_any = expect_any_ok(docs, meta_by_doc, g["expect_any"]) if g.get("expect_any") else None
-            per_mode[mode].append({"id": g["id"], "intent": g["intent"], "rank": rank,
+            per_mode[mode].append({"id": g["id"], "intent": g.get("intent") or g.get("case") or "unknown", "rank": rank,
                                    "expect_any_ok": ok_any, "top": docs[:5],
                                    "expected_indexed": bool(expected & known_docs) if expected else None})
 

@@ -43,7 +43,7 @@ def load_env(path: str) -> dict:
 
 
 def question_sets(args) -> list[tuple[str, str]]:
-    """--sets "g2=eval/golden_v2.jsonl,…"; không có → golden_v1 + list_v1 như trước."""
+    """--sets "g2=eval/golden_v2.jsonl,…"; không có → golden_v2 + list_v1 như trước."""
     if args.sets:
         return [tuple(x.split("=", 1)) for x in args.sets.split(",") if x.strip()]
     return [(k, p) for k, p in (("golden", args.golden), ("list", args.list)) if p]
@@ -360,7 +360,7 @@ def main() -> None:
     ap.add_argument("step", choices=["collect", "score", "summary"])
     ap.add_argument("--out", required=True, help="tiền tố file kết quả (VD eval/results/ragas/2026-10-26)")
     ap.add_argument("--api", default="http://localhost:8003")
-    ap.add_argument("--golden", default="eval/golden_v1.jsonl")
+    ap.add_argument("--golden", default="eval/golden_v2.jsonl")
     ap.add_argument("--list", default="eval/list_v1.jsonl")
     ap.add_argument("--sets", default="", help='thay --golden/--list: "g2=eval/golden_v2.jsonl,golden=…"')
     ap.add_argument("--limit", type=int, default=0)

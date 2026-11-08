@@ -275,7 +275,7 @@ def diversify(hits: list[dict], top_k: int, per_doc: int, dominant=None, dominan
 
 
 def retrieve(question: str, top_k: int = 5,
-             query_image_b64: str | None = None, filters: dict | None = None):
+             query_image_b64: str | None = None, filters: dict | None = None, *, route_override=None):
     """→ (text_sources, media_sources, route). Text: rewrite → dense + keyword RRF → rerank → ưu tiên
     mềm metadata. Media theo router D17: ý định `none` bỏ hẳn nhánh media; còn lại chặn theo bằng chứng
     (router.gate, điểm gốc theo loại, gắn với bài chữ đứng đầu).
@@ -294,7 +294,7 @@ def retrieve(question: str, top_k: int = 5,
     f = F.merge(F.from_request(filters), F.infer(question))
     qf = F.to_qdrant(f)
     ck = query_cache_key(question, top_k, f.cache_key() + _image_tag(query_image_b64))
-    hit = cache.get(ck)
+    hit = cache.get(ck) if route_override is None else None
     if hit:
         try:
             d = json.loads(hit)
@@ -305,18 +305,18 @@ def retrieve(question: str, top_k: int = 5,
     # ảnh truy vấn (CPU, ~4 s ở 336 px) nhúng trong lúc phần chữ chạy (luật viết tắt, graph, nhúng câu hỏi)
     ifut = _STAGE_POOL.submit(_query_image_vec, query_image_b64) if unified and query_image_b64 else None
     if has_text:
-        r = query_rewriter.rewrite(question)
-        route = router.decide(question, r.get("route_llm"), has_image=bool(query_image_b64))
+        r = query_rewriter.rewrite(question, allow_llm=False) if route_override is not None else query_rewriter.rewrite(question)
+        route = route_override or router.decide(question, r.get("route_llm"), has_image=bool(query_image_b64))
         route.list_question = router.is_list_question(question)
     else:   # chỉ ảnh (D21 U3+U4)
         r = {"rewritten": "", "terms": [], "route_llm": None}
-        route = router.Route(media="required", source="image")
+        route = route_override or router.Route(media="required", source="image")
     # graph khái niệm (D33): khái niệm nêu trong câu hỏi → thêm danh sách dense lọc theo khái niệm vào RRF
     from sict_crawler.service.graph import graph as G
     ents = G.match_question(question, r["rewritten"]) if has_text else []
     ekeys = G.ekeys(ents)
     route.entities = [e.name for e in ents]
-    if query_image_b64 and route.media == "none":
+    if query_image_b64 and route.media == "none" and not route.oos:
         route.media = "optional"  # người dùng gửi ảnh → luôn xét media tương tự
     if route.wants_file:
         f.prefer_doc_types = ["attachment"]
@@ -411,8 +411,10 @@ def retrieve(question: str, top_k: int = 5,
     tsrcs = text_sources(text_hits[:k] + extra)
     route.inputs = [x for x, on in (("text", bool(question.strip())), ("image", bool(query_image_b64))) if on]
     route.outputs = [x for x, on in (("text", bool(tsrcs)), ("image", bool(msrcs))) if on]
-    cache.put(ck, json.dumps(
-        {"text": [s.model_dump() for s in tsrcs],
-         "media": [s.model_dump() for s in msrcs],
-         "route": route.to_dict()}).encode(), QUERY_TTL)
+    if route_override is None:
+        cache.put(ck, json.dumps({
+            "text": [s.model_dump() for s in tsrcs],
+            "media": [s.model_dump() for s in msrcs],
+            "route": route.to_dict(),
+        }).encode(), QUERY_TTL)
     return tsrcs, msrcs, route

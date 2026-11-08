@@ -191,6 +191,11 @@ class LlmConfig:
     # đo được lợi ích (golden recall@5 0,985 cả hai; MRR 0,898 không viết lại vs 0,888; media_mode 0,871 vs 0,886)
     # → chỉ còn luật viết tắt (query_rewriter._rule_rewrite) + luật router. Bật lại: LLM_REWRITE_QUERY=1.
     rewrite_query: bool = False
+    router_model: str = ""
+    router_timeout: int = 3
+    router_shadow: bool = False
+    router_mode: str = "rules"  # rules | shadow | hybrid; hybrid chỉ dùng sau gate
+    router_reroute: bool = False
     # D27: ngân sách ngữ cảnh gửi LLM (ký tự) — mỗi nguồn tối đa source_chars, tổng ≈ context_chars (chia đều khi nhiều
     # nguồn). Trước đây LLM chỉ thấy 300 ký tự đầu mỗi đoạn (excerpt hiển thị trên UI).
     # 2026-11-03: 1500 → 2200 — 74% đoạn của index dài hơn 1500 ký tự (trung vị ~1940) nên phần lớn nguồn mất ~1/4
@@ -221,6 +226,18 @@ class LlmConfig:
             self.answer_with_image = _env_bool(os.environ["LLM_ANSWER_WITH_IMAGE"])
         if os.environ.get("LLM_REWRITE_QUERY"):
             self.rewrite_query = _env_bool(os.environ["LLM_REWRITE_QUERY"])
+        if os.environ.get("LLM_ROUTER_MODE"):
+            self.router_mode = os.environ["LLM_ROUTER_MODE"].lower()
+        if self.router_mode not in ("rules", "shadow", "hybrid"):
+            raise ValueError("LLM_ROUTER_MODE phải là rules, shadow hoặc hybrid")
+        if os.environ.get("LLM_ROUTER_REROUTE"):
+            self.router_reroute = _env_bool(os.environ["LLM_ROUTER_REROUTE"])
+        if os.environ.get("LLM_ROUTER_MODEL"):
+            self.router_model = os.environ["LLM_ROUTER_MODEL"]
+        if os.environ.get("LLM_ROUTER_TIMEOUT"):
+            self.router_timeout = int(os.environ["LLM_ROUTER_TIMEOUT"])
+        if os.environ.get("LLM_ROUTER_SHADOW"):
+            self.router_shadow = _env_bool(os.environ["LLM_ROUTER_SHADOW"])
 
 
 @dataclass

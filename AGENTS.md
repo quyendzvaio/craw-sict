@@ -65,7 +65,7 @@ Bulk (re)index path: `snapshot --out _snapshot/<date>` → `compute --snapshot S
 - Default collections are `*_v2`; `loader.check` accepts `_v2`/`_v3` and matches backend/model/dim/prefix against the
   artifact manifest. Only HTTP 404/410 deletes a doc, and a mass-delete guard aborts past thresholds.
   `--rechunk`, `--videos-backfill`, `--annotate-ocr` are v1-only and refuse v2/v3 collections.
-- Eval before touching models/thresholds/chunking: `eval/golden_v1.jsonl` (70 q) with `scripts/eval_retrieval.py`
+- Eval before touching models/thresholds/chunking: `eval/golden_v2.jsonl` (88 q) with `scripts/eval_retrieval.py`
   (offline) / `eval_api.py` (over HTTP). `scripts/eval_multimodal.py`
   does not exist yet; the BM25/jina/bge-m3 12-question comparison is `scripts/eval_compare.py` → `eval/results/COMPARE.md`.
 - Point ids are deterministic uuid5, so re-index/loader overwrite instead of duplicating.

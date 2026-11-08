@@ -191,7 +191,7 @@ def infer_person(image: bytes, page_title: str, page_text: str) -> str:
     return out[:200]
 
 
-def _text_call(model: str, prompt: str) -> str:
+def _text_call(model: str, prompt: str, timeout: float | None = None) -> str:
     """Text-only chat completion against cfg.llm endpoint. '' on any failure."""
     cfg = get_settings().llm
     body = {
@@ -203,8 +203,21 @@ def _text_call(model: str, prompt: str) -> str:
         "stream": False,
     }
     try:
-        with _client(get_settings().llm) as c:
-            r = c.post("/chat/completions", json=body)
+        if timeout is None:
+            with _client(cfg) as c:
+                r = c.post("/chat/completions", json=body)
+        else:
+            # HTTPX read timeout chỉ chặn khoảng im lặng; wait_for giới hạn toàn lượt,
+            # kể cả server gửi từng mẩu liên tục, và hủy kết nối khi hết hạn.
+            import asyncio
+            async def request():
+                async with httpx.AsyncClient(base_url=cfg.api_base,
+                                             headers={"Authorization": f"Bearer {cfg.api_key}", **NO_TOKEN_SAVER},
+                                             timeout=timeout) as client:
+                    return await client.post("/chat/completions", json=body)
+            async def bounded():
+                return await asyncio.wait_for(request(), timeout=timeout)
+            r = asyncio.run(bounded())
         if r.status_code != 200:
             print(f"[llm] {model} → {r.status_code}: {r.text[:120]}")
             return ""
@@ -213,6 +226,30 @@ def _text_call(model: str, prompt: str) -> str:
     except Exception as e:
         print(f"[llm] {model} text call fail: {e}")
         return ""
+
+
+
+def route_intent(question: str, has_image: bool) -> dict | None:
+    """LLM chỉ đề xuất ý định; dữ liệu hỏng hoặc lỗi trả None."""
+    from sict_crawler.service.retrieval.route_schema import RouteDecision
+    cfg = get_settings().llm
+    if not cfg.api_key:
+        return None
+    prompt = (
+        "Bạn định tuyến câu hỏi cho SICT. Trả duy nhất JSON với media, wants_file, oos, confidence. "
+        "media=required khi muốn xem ảnh/video; optional khi có thể minh họa hoặc nói về ảnh gửi kèm; "
+        "none khi chỉ hỏi thông tin. wants_file=true khi cần văn bản hoặc biểu mẫu; "
+        "oos=true khi câu hỏi ngoài phạm vi SICT; confidence từ 0 đến 1. "
+        "Ảnh gửi kèm là đầu vào, trừ khi yêu cầu xem thêm ảnh.\n"
+        "Phạm vi bao gồm cả thông tin liên quan tới trường HaUI, kể cả khi câu hỏi không nhắc rõ SICT; thiếu dữ liệu không đồng nghĩa ngoài phạm vi.\n"
+        f"Có ảnh gửi kèm: {has_image}. Câu hỏi: {question}"
+    )
+    try:
+        raw = _text_call(cfg.router_model or cfg.model, prompt, timeout=cfg.router_timeout)
+        decision = RouteDecision.from_llm(raw)
+        return decision.model_dump() if decision else None
+    except Exception:
+        return None
 
 
 def parse_route_json(raw: str) -> dict | None:

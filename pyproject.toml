@@ -29,6 +29,8 @@ dev = [
 # API serve: FastAPI. Cần thêm group ml (E5+CLIP cho query).
 api = [
     "fastapi>=0.115",
+    "langchain-core>=1.7,<2",
+    "langgraph>=1.2,<2",
     "prometheus-client>=0.20",   # GET /metrics (D13)
     "uvicorn[standard]>=0.30",
 ]

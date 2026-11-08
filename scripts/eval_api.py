@@ -8,7 +8,7 @@ Câu liệt kê (`--list eval/list_v1.jsonl`): độ phủ = tỷ lệ mục `ex
 so khớp không dấu) có mặt trong `context` gửi LLM; kèm độ chính xác cờ `sufficient` (câu liệt kê phải true, câu ngoài
 phạm vi phải false). Chấm trên ngữ cảnh chứ không trên câu trả lời, nên không phụ thuộc LLM trả lời.
 
-Usage: python3 scripts/eval_api.py --api http://localhost:8003 --golden eval/golden_v1.jsonl
+Usage: python3 scripts/eval_api.py --api http://localhost:8003 --golden eval/golden_v2.jsonl
        python3 scripts/eval_api.py --api http://localhost:8003 --list eval/list_v1.jsonl [--top-k 8]
 """
 from __future__ import annotations
@@ -40,7 +40,7 @@ def ask(api: str, q: str, filters: dict | None, timeout: int, top_k: int = 10) -
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--api", default="http://localhost:8003")
-    ap.add_argument("--golden", default="eval/golden_v1.jsonl")
+    ap.add_argument("--golden", default="eval/golden_v2.jsonl")
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--list", help="bộ câu liệt kê (eval/list_v1.jsonl): chấm độ phủ thay cho recall")
     ap.add_argument("--top-k", type=int, default=8, help="top_k cho --list (UI gửi 8)")
