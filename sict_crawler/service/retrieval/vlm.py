@@ -191,20 +191,33 @@ def infer_person(image: bytes, page_title: str, page_text: str) -> str:
     return out[:200]
 
 
-def _text_call(model: str, prompt: str) -> str:
+def _text_call(model: str, prompt: str, timeout: float | None = None, *, max_tokens: int | None = None) -> str:
     """Text-only chat completion against cfg.llm endpoint. '' on any failure."""
     cfg = get_settings().llm
     body = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": cfg.max_new_tokens,
+        "max_tokens": cfg.max_new_tokens if max_tokens is None else max_tokens,
         "temperature": 0.0,
         # ghi rõ: proxy kiểu 9router coi thiếu "stream" là stream=true
         "stream": False,
     }
     try:
-        with _client(get_settings().llm) as c:
-            r = c.post("/chat/completions", json=body)
+        if timeout is None:
+            with _client(cfg) as c:
+                r = c.post("/chat/completions", json=body)
+        else:
+            # HTTPX read timeout chỉ chặn khoảng im lặng; wait_for giới hạn toàn lượt,
+            # kể cả server gửi từng mẩu liên tục, và hủy kết nối khi hết hạn.
+            import asyncio
+            async def request():
+                async with httpx.AsyncClient(base_url=cfg.api_base,
+                                             headers={"Authorization": f"Bearer {cfg.api_key}", **NO_TOKEN_SAVER},
+                                             timeout=timeout) as client:
+                    return await client.post("/chat/completions", json=body)
+            async def bounded():
+                return await asyncio.wait_for(request(), timeout=timeout)
+            r = asyncio.run(bounded())
         if r.status_code != 200:
             print(f"[llm] {model} → {r.status_code}: {r.text[:120]}")
             return ""
@@ -213,6 +226,39 @@ def _text_call(model: str, prompt: str) -> str:
     except Exception as e:
         print(f"[llm] {model} text call fail: {e}")
         return ""
+
+
+
+def route_intent(question: str, has_image: bool) -> dict | None:
+    """LLM chỉ đề xuất ý định; dữ liệu hỏng hoặc lỗi trả None."""
+    from sict_crawler.service.retrieval.route_schema import RouteDecision
+    cfg = get_settings().llm
+    if not cfg.api_key:
+        return None
+    prompt = (
+        "Bạn định tuyến câu hỏi cho SICT. Trả duy nhất JSON với media, wants_file, oos, confidence. "
+        "Phân loại theo đầu ra người dùng yêu cầu, không theo chủ đề hoặc loại nguồn có thể chứa đáp án. "
+        "media=required khi muốn xem ảnh/video; optional khi muốn mô tả tổng quan hoạt động có ích khi minh họa "
+        "hoặc nói về ảnh gửi kèm. media=none khi hỏi dữ kiện cụ thể (ai, số lượng, ngày, địa điểm, kết quả) "
+        "hoặc liệt kê thông tin, kể cả câu có nhắc sự kiện, hội thảo, lễ hay cuộc thi. "
+        "wants_file=true khi xin tải/xem/lấy văn bản, biểu mẫu, hoặc tra cứu một tài liệu bằng tên "
+        "(tên quy chế, quyết định, kế hoạch, tiến độ, thời khóa biểu, danh sách học phần). "
+        "wants_file=false khi chỉ hỏi dữ kiện trong/về văn bản (số hiệu, người ký, căn cứ quyết định nào) "
+        "hoặc hỏi có những quy chế/quy định nào mà không xin các file. "
+        "oos=true khi câu hỏi ngoài phạm vi SICT; confidence từ 0 đến 1. "
+        "Ảnh gửi kèm là đầu vào, trừ khi yêu cầu xem thêm ảnh.\n"
+        "Phạm vi bao gồm cả thông tin liên quan tới trường HaUI, kể cả khi câu hỏi không nhắc rõ SICT; thiếu dữ liệu không đồng nghĩa ngoài phạm vi.\n"
+        "Tuyển dụng, thực tập, hợp tác doanh nghiệp và cơ hội nghề nghiệp cho sinh viên thuộc phạm vi, "
+        "kể cả câu chỉ nêu tên doanh nghiệp. Học phí/điểm chuẩn của một trường khác không liên quan HaUI là ngoài phạm vi.\n"
+        f"Có ảnh gửi kèm: {has_image}. Câu hỏi: {question}"
+    )
+    try:
+        raw = _text_call(cfg.router_model or cfg.model, prompt, timeout=cfg.router_timeout,
+                         max_tokens=cfg.router_max_new_tokens or cfg.max_new_tokens)
+        decision = RouteDecision.from_llm(raw)
+        return decision.model_dump() if decision else None
+    except Exception:
+        return None
 
 
 def parse_route_json(raw: str) -> dict | None:
@@ -335,18 +381,43 @@ def stream_answer(question: str, context: str, image_b64: str | None = None, max
     # trên ~46 câu ở máy dev, người dùng nhận ngữ cảnh echo thay vì câu trả lời. Chỉ gọi lại khi lỗi mạng / 5xx / 429:
     # 4xx (model_not_found…) hay hết token cho phần suy nghĩ thì gọi lại cũng vậy. Đã gửi chữ rồi thì không gọi lại
     # (UI đã hiện phần đầu câu trả lời).
+    # Lượt gọi lại KHÔNG stream: trên production cùng câu đó stream bị cắt 3/3 lượt (~190 s rồi echo), còn gọi không
+    # stream trả lời trong ~17 s với ~500 token (đo 2026-11-05, ngữ cảnh ~20k ký tự) — lỗi nằm ở đường stream của
+    # gateway chứ không ở độ dài suy nghĩ. Câu trả lời đến một lần thay vì từng mẩu.
     attempts = 1 + max(0, int(getattr(cfg, "stream_retries", 0)))
     for attempt in range(1, attempts + 1):
         st = {"wrote": 0, "thought": 0, "retry": False}
-        yield from _stream_once(cfg, body, st)
+        if attempt == 1:
+            yield from _stream_once(cfg, body, st)
+        else:
+            yield from _complete_once(cfg, {**body, "stream": False}, st)
         if st["wrote"] or not st["retry"]:
             break
         if attempt < attempts:
-            print(f"[llm] stream_answer: gọi lại lần {attempt}/{attempts - 1}")
+            print(f"[llm] stream_answer: gọi lại lần {attempt}/{attempts - 1} (không stream)")
     if st["thought"] and not st["wrote"]:
         # model suy luận dùng hết max_tokens cho phần suy nghĩ → caller echo ngữ cảnh
         print(f"[llm] stream_answer: chỉ có {st['thought']} ký tự suy luận, không có câu trả lời — tăng llm.max_new_tokens "
               f"(hiện {body['max_tokens']})")
+
+
+def _complete_once(cfg, body: dict, st: dict):
+    """Một lượt /chat/completions không stream: yield cả `content` một lần (nếu có); cùng quy ước st như _stream_once."""
+    try:
+        with _client(cfg) as c:
+            r = c.post("/chat/completions", json=body, timeout=max(float(getattr(cfg, "timeout", 60)), 180.0))
+        if r.status_code != 200:
+            print(f"[llm] stream_answer HTTP {r.status_code}: {r.text[:300]}")
+            st["retry"] = r.status_code >= 500 or r.status_code == 429
+            return
+        msg = ((r.json().get("choices") or [{}])[0].get("message") or {})
+        st["thought"] += len(msg.get("reasoning_content") or msg.get("reasoning") or "")
+        if msg.get("content"):
+            st["wrote"] += 1
+            yield msg["content"]
+    except Exception as e:
+        print(f"[llm] stream_answer fail (không stream): {e}")
+        st["retry"] = True
 
 
 def _stream_once(cfg, body: dict, st: dict):

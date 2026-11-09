@@ -51,14 +51,14 @@ def _terms(text: str) -> list[str]:
     return out
 
 
-def rewrite(question: str) -> dict:
+def rewrite(question: str, *, allow_llm: bool = True) -> dict:
     """Câu tìm kiếm phụ: mặc định luật viết tắt (CNTT → công nghệ thông tin…). `llm.rewrite_query` bật → LLM viết lại
     + ý định router trong CÙNG 1 lượt gọi (vlm.rewrite_and_route), lỗi thì quay về luật. Trả {rewritten, terms,
     route_llm} — route_llm None khi không dùng/không có LLM hay JSON lỗi (router.decide dùng luật từ khoá).
     retrieve luôn tìm bằng câu gốc; câu này chỉ thêm danh sách RRF khi khác câu gốc (D27)."""
     from sict_crawler.core.config import get_settings
     from sict_crawler.service.retrieval import vlm
-    llm = vlm.rewrite_and_route(question) if get_settings().llm.rewrite_query else None
+    llm = vlm.rewrite_and_route(question) if allow_llm and get_settings().llm.rewrite_query else None
     restored = None
     if not llm and get_settings().retrieval.restore_accents:
         from sict_crawler.service.retrieval import accent

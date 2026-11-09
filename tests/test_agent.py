@@ -63,6 +63,50 @@ def test_run_insufficient_when_question_terms_missing(monkeypatch):
     assert _agent.run("Học phí học kỳ phụ?", 5)["sufficient"] is True
 
 
+def test_run_insufficient_keeps_only_coupled_media(monkeypatch):
+    """C: câu ngoài phạm vi đòi ảnh ("cho xem ảnh tháp Eiffel", `sufficient` False) không còn ảnh ngẫu nhiên; ảnh thuộc
+    bài chữ đứng đầu vẫn giữ. Câu đủ bằng chứng không bị đụng."""
+    from sict_crawler.service.retrieval import retriever, router
+
+    text = [Source(url="https://x/a", title="Học phí", kind="text", score=0.9, excerpt="học phí học kỳ phụ",
+                   content="học phí học kỳ phụ", cosine=0.7)]
+    media = [Source(url="i1", title="Học phí", kind="image", score=0.3, parent_url="https://x/a", via="doc"),
+             Source(url="i2", title="Khác", kind="image", score=0.3, parent_url="https://x/z", via="clip")]
+    route = router.Route(media="required", outputs=["text", "image"])
+    monkeypatch.setattr(retriever, "retrieve", lambda *a, **k: (text, list(media), route))
+    res = _agent.run("Cho xem ảnh tháp Eiffel?", 5)
+    assert res["sufficient"] is False and [m.url for m in res["media"]] == ["i1"] and "(image)" in res["context"]
+    res = _agent.run("Học phí học kỳ phụ?", 5)
+    assert res["sufficient"] is True and [m.url for m in res["media"]] == ["i1", "i2"]
+
+
+def test_validate_consolidates_post_checks():
+    """Validate là điểm neo duy nhất của hậu kiểm: (a) đủ bằng chứng giữ nguyên; (b) thiếu → chỉ
+    giữ media gắn bài chữ; (c) thiếu + required + rỗng sau C → note + bỏ output ảnh; (d) optional
+    rỗng không note."""
+    from sict_crawler.service.retrieval import router
+
+    text = [Source(url="https://x/a", title="Học phí", kind="text", score=0.9, excerpt="học phí",
+                   content="học phí học kỳ phụ", cosine=0.7)]
+    media = [Source(url="i1", title="Học phí", kind="image", score=0.3, parent_url="https://x/a", via="doc"),
+             Source(url="i2", title="Khác", kind="image", score=0.3, parent_url="https://x/z", via="clip")]
+    route = router.Route(media="required", outputs=["text", "image"])
+    # (a) sufficient True → giữ nguyên, không note
+    _, m, note, r = _agent.validate("học phí?", text, list(media), "ctx", {"sufficient": True}, route)
+    assert [x.url for x in m] == ["i1", "i2"] and note is None and r.outputs == ["text", "image"]
+    # (b) False + media gắn → chỉ giữ media gắn, chưa note (còn media)
+    _, m, note, r = _agent.validate("học phí?", text, list(media), "ctx", {"sufficient": False}, route)
+    assert [x.url for x in m] == ["i1"] and note is None
+    # (c) False + required + rỗng sau C → note AC-R9 + bỏ "image" khỏi outputs
+    _, m, note, r = _agent.validate("cho xem ảnh tháp Eiffel?", text, [media[1]], "ctx",
+                                    {"sufficient": False}, route)
+    assert m == [] and note and "ảnh/video" in note and "image" not in r.outputs
+    # (d) False + optional + rỗng → không note
+    opt = router.Route(media="optional", outputs=["text"])
+    _, m, note, r = _agent.validate("học phí?", text, [media[1]], "ctx", {"sufficient": False}, opt)
+    assert m == [] and note is None
+
+
 if __name__ == "__main__":
     import os
 
@@ -93,7 +137,8 @@ if __name__ == "__main__":
     try:
         for t in (test_run_does_not_call_llm_judge, test_run_single_retrieval_pass,
                   test_run_empty_falls_back_to_lexical_and_is_insufficient,
-                  test_run_insufficient_when_question_terms_missing):
+                  test_run_insufficient_when_question_terms_missing,
+                  test_run_insufficient_keeps_only_coupled_media):
             t(mp)
             mp.undo()
             print("OK —", t.__name__)

@@ -36,17 +36,27 @@ def mm(monkeypatch):
         return out
     monkeypatch.setattr(query_rewriter, "hybrid_search_text", hybrid)
 
+    def doc_filter(flt):
+        """document_id MatchAny trong Filter (lượt _doc_media) → tập bài; None = không lọc theo bài."""
+        for c in getattr(flt, "must", None) or []:
+            if getattr(c, "key", None) == "document_id":
+                return set(c.match.any)
+        return None
+
     def images(vec, limit=5, query_filter=None):
         calls["images"].append(vec)
         if vec == IMG:   # ảnh giống ảnh người dùng gửi
-            return [{"kind": "image", "media_key": "sim1", "url": "u/sim1.jpg", "title": "Sự kiện", "score": 0.9,
-                     "document_id": [5], "page_urls": ["https://x/vn/su-kien"]},
-                    {"kind": "image", "media_key": "weak", "url": "u/weak.jpg", "title": "Y", "score": 0.4,
-                     "document_id": [7]}]
-        return [{"kind": "image", "media_key": "t2i1", "url": "u/t2i1.jpg", "title": "Học phí", "score": 0.3,
-                 "document_id": [1]},
-                {"kind": "image", "media_key": "t2i-far", "url": "u/far.jpg", "title": "Z", "score": 0.3,
-                 "document_id": [99]}]
+            out = [{"kind": "image", "media_key": "sim1", "url": "u/sim1.jpg", "title": "Sự kiện", "score": 0.9,
+                    "document_id": [5], "page_urls": ["https://x/vn/su-kien"]},
+                   {"kind": "image", "media_key": "weak", "url": "u/weak.jpg", "title": "Y", "score": 0.4,
+                    "document_id": [7]}]
+        else:
+            out = [{"kind": "image", "media_key": "t2i1", "url": "u/t2i1.jpg", "title": "Học phí", "score": 0.3,
+                    "document_id": [1]},
+                   {"kind": "image", "media_key": "t2i-far", "url": "u/far.jpg", "title": "Z", "score": 0.3,
+                    "document_id": [99]}]
+        docs = doc_filter(query_filter)
+        return out if docs is None else [h for h in out if docs & set(h["document_id"])]
     monkeypatch.setattr(vector_store, "search_images", images)
 
     def search_text(vec, limit=8, filter_document_id=None, query_filter=None, collection=None):
@@ -74,8 +84,9 @@ def test_u3_u4_image_only(mm):
 def test_u2_text_to_image(mm):
     t, m, route = retriever.retrieve("Cho xem ảnh học phí", 5)
     assert route.inputs == ["text"] and route.media == "required"
-    assert mm["images"] == [TXT]                                          # vector chữ tìm trong collection ảnh
-    assert sorted(s.media_key for s in m) == ["t2i-far", "t2i1"] and all(s.via == "clip" for s in m)
+    assert mm["images"] == [TXT, TXT]               # vector chữ tìm trong collection ảnh + trong ảnh của bài đứng đầu (A)
+    assert [(s.media_key, s.via) for s in m] == [("t2i1", "doc"), ("t2i-far", "clip")]   # ảnh của bài chữ đứng đầu trước
+    assert m[0].parent_url == "https://x/vn/hoc-phi"  # bài cha = bài chữ đã kéo ảnh lên
     assert t[0].heading_path == ["Mức thu"] and t[0].via == "text"
 
 

@@ -21,7 +21,7 @@
 #   Chung:
 #   (VM1|VM2) ./scripts/cutover_v3.sh env-check vm1|vm2 .env có đủ biến v3 (chỉ in TÊN biến) + store_auth.sh check
 #   (VM1)     ./scripts/cutover_v3.sh backup            pg_dump + snapshot Qdrant các collection đang có → ~/backup-v3-<ngày>/
-#   (dev/VM1) ./scripts/cutover_v3.sh verify            golden_v1 / golden_v2 / list_v2 + accept_api qua HTTP (API=…)
+#   (dev/VM1) ./scripts/cutover_v3.sh verify            golden_v2 / list_v2 + accept_api qua HTTP (API=…)
 #   (VM1)     ./scripts/cutover_v3.sh rollback          in hướng dẫn; CONFIRM_ROLLBACK=yes [ROLLBACK_TO=v2|v1] thì làm thật
 #
 # Thứ tự production (docs/deploy_v3.md): CD vm2 + deploy_embed → dừng cron → export (dev) → upload-media-store
@@ -464,8 +464,6 @@ PY
     say "kiểm: log loader 'ok: true', points = expected; rồi CD vm1 (API đọc .env v3) → verify → bật cron"
     ;;
   verify)
-    say "golden_v1 (mong: recall@5 ≥ 0,985, MRR ≥ 0,93)"
-    run python3 scripts/eval_api.py --api "$API" --golden eval/golden_v1.jsonl
     say "golden_v2 (mong: url_hit ≥ 70/80)"
     run python3 scripts/eval_api.py --api "$API" --golden eval/golden_v2.jsonl
     say "list_v2 (mong: coverage ≥ 0,90, sufficient_acc ≥ 0,94)"

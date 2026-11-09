@@ -11,6 +11,8 @@ Hỏi được bằng chữ, bằng ảnh, hoặc cả hai; câu trả lời có
 > Dự án đang ở giai đoạn production hardening. Mọi quyết định thiết kế (D1–D33), lộ trình và cách
 > verify/rollback nằm ở [`plan.md`](plan.md); tiêu chí nghiệm thu ở `tests/acceptance_*.md`.
 > [`CLAUDE.md`](CLAUDE.md) là tài liệu kỹ thuật chi tiết nhất về từng thành phần.
+> Kiến trúc router 4 phase (middleware → shadow LLM → hybrid → LangGraph) xem
+> [`PLAN.md`](PLAN.md); hiện trạng đo lường ở [`eval/RESULTS.md`](eval/RESULTS.md).
 
 ## Tính năng
 
@@ -32,8 +34,14 @@ Hỏi được bằng chữ, bằng ảnh, hoặc cả hai; câu trả lời có
 - **Guardrail không phụ thuộc LLM**: đa dạng tài liệu trong top k, câu liệt kê lấy rộng hơn, bài áp
   đảo được thêm đoạn, cờ `sufficient` tính bằng luật (cosine + độ phủ từ khoá). Đổi model LLM không
   đổi kết quả truy xuất.
-- **Router media**: chỉ kèm ảnh/video khi câu hỏi cần (`none | optional | required`) và khi có bằng
-  chứng (ngưỡng điểm thô theo từng cặp phương thức).
+- **Router media + ý định tài liệu**: chỉ kèm ảnh/video khi câu hỏi cần (`none | optional | required`),
+  cờ `wants_file` (đơn đăng ký, kế hoạch, biểu mẫu…), và khi có bằng chứng (ngưỡng điểm thô theo
+  từng cặp phương thức). Ảnh người dùng gửi là **đầu vào** (U5–U7), không tự nâng thành yêu cầu xem.
+- **Router hybrid (LangGraph, 2026-11-09)**: luật luôn chạy (~0 ms); câu nhập nhằng gọi LLM router
+  (`RouteDecision` Pydantic, `route_schema.py`) qua `hybrid_router.py`; guardrail `policy_merge`
+  không bao giờ hạ `required`/`wants_file` luật đã bắt; điều phối bằng **StateGraph** (`graph.py`,
+  `langgraph` + `langchain-core` nhóm `api`). Mặc định `LLM_ROUTER_MODE=rules`; hybrid chỉ bật sau
+  gate (bảo toàn quyết định ≥99 %, latency, quota ≤1 call/request). Chi tiết: [`PLAN.md`](PLAN.md).
 - **Cập nhật tăng dần an toàn**: phát hiện bài mới / bài sửa theo hash nội dung đã làm sạch, chỉ xoá
   khi HTTP 404/410, cầu chì xoá hàng loạt, reconcile Postgres ↔ Qdrant hằng đêm.
 
@@ -47,9 +55,14 @@ sict.haui.edu.vn → frontier → crawler → parser → indexing/chunk → embe
                                         ├→ S3 / MinIO  (HTML gốc, ảnh, file đính kèm)
                                         └→ Qdrant      (text / image / ocr: dense + BM25) ←┘
 
-câu hỏi (+ ảnh) → /query, /chat → agent: rewrite (luật) → retrieve (hybrid + graph + media router)
-                                        → dựng ngữ cảnh đánh số [n] → LLM (stream) → trích dẫn
+câu hỏi (+ ảnh) → /query, /chat → StateGraph (LangGraph): cache → route (luật ~0 ms; câu nhập nhằng
+                     → LLM router + policy_merge) → retrieve (hybrid + graph + media gate)
+                     → validate (agent.validate: sufficient, OOS, media_note) → LLM (stream) → trích dẫn
 ```
+
+Câu trả lời đi qua **agent.validate()** — điểm neo hậu kiểm duy nhất (luật C `supported_media`,
+note OOS AC-R9, đủ bằng chứng mới gắn media) trước khi sinh câu trả lời; các quyết định router
+được cache theo `route_policy` + cấu hình để serving lặp lại không gọi lại LLM.
 
 Hai đường ghi index dùng **cùng một bộ luật** (`service/index/indexing.py`, `doc_rules.py`, id điểm
 uuid5 cố định nên nạp lại là ghi đè, không nhân bản):
@@ -166,13 +179,14 @@ uv run python -m tests.test_agent
 
 | Bộ | Script | Kết quả gần nhất (index v3) |
 |---|---|---|
-| `eval/golden_v1.jsonl` (70 câu, URL đáp án, chế độ media) | `scripts/eval_retrieval.py` (offline), `scripts/eval_api.py` (HTTP) | recall@5 0,985 · MRR@10 0,898 · chế độ media 0,871 |
+| `eval/golden_v2.jsonl` (88 câu, URL đáp án, media/file/OOS) | `scripts/eval_media.py --api` (HTTP, cache tắt) | media mode 88/88, file intent 88/88, OOS 85/85 có nhãn |
 | `eval/list_v1.jsonl` (12 câu liệt kê + 8 câu ngoài phạm vi) | `scripts/eval_api.py --list` | độ phủ mục 0,970 · `sufficient` đúng 0,95 |
-| RAGAS trên golden + list | `scripts/eval_ragas.py collect / score` | faithfulness 0,884 · answer relevancy 0,750 · context precision 0,735 · context recall (list) 0,937 |
-| Nghiệm thu U1–U6 qua HTTP | `scripts/accept_api.py --api URL` | 54/54 |
+| RAGAS controlled trên 80 cặp golden_v2 | `scripts/eval_ragas.py collect / score` | faithfulness 0,8993 (baseline) → 0,8977 (nhánh, g057 giảm); gate không tụt chưa nghiệm thu |
+| Nghiệm thu U1–U6 qua HTTP | `scripts/accept_api.py --api URL` | hybrid thật 59/60 (g004 trượt cả baseline); rules 52/54 |
 
-Chạy đánh giá trước khi đổi model, ngưỡng hay luật chunk. Lịch sử số đo ở `eval/RESULTS.md` và
-`eval/results/`.
+Chạy đánh giá trước khi đổi model, ngưỡng hay luật chunk. Lịch sử số đo chi tiết (Phase 0 →
+Phase 4: baseline 139→148 wants_file multimodal, RAGAS từng lượt, latency hybrid, các gate
+chưa đạt) ở `eval/RESULTS.md` và `eval/results/`.
 
 ## Triển khai
 

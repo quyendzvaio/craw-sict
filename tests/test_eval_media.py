@@ -80,6 +80,128 @@ def test_file_hit_uses_kind_file_and_url_hit_accepts_parent():
     assert r["file_hit"] is False and r["url_hit"] is True
 
 
+def test_audited_url_labels_separate_file_and_page_and_preserve_old_metric():
+    row = {"id": "f", "media_mode": "none", "wants_file": True, "expected_urls": [FILE, PARENT]}
+    labels = {"file_urls": [FILE], "page_urls": [PARENT]}
+    res = {"media_mode": "none", "wants_file": True,
+           "text": [txt(FILE, kind="file", parent=OTHER), txt(OTHER, kind="file", parent=PARENT)]}
+    r = em.score_row(row, res, labels)
+    assert r['file_hit'] is True
+    assert r['attachment_url_hit'] is True
+    assert r['attachment_parent_hit'] is True
+    assert r['resource_page_hit'] is True
+
+
+def test_audited_url_labels_mark_unknown_file_as_not_applicable():
+    row = {"id": "f", "media_mode": "none", "wants_file": True, "expected_urls": [PARENT]}
+    labels = {"file_urls": [], "page_urls": [PARENT]}
+    r = em.score_row(row, {"media_mode": "none", "wants_file": True, "text": [txt(PARENT)]}, labels)
+    assert r['file_hit'] is False and r['attachment_url_hit'] is None
+    assert r['attachment_parent_hit'] is False and r['resource_page_hit'] is True
+    s = em.summarize([r])
+    assert s['counts']['attachment_url_hit'] == '0/0'
+    assert s['counts']['attachment_parent_hit'] == '0/1'
+
+
+def test_unreviewed_urls_and_irrelevant_files_are_not_counted():
+    row = {"id": "f", "media_mode": "none", "wants_file": True, "expected_urls": [PARENT]}
+    r = em.score_row(row, {"media_mode": "none", "text": [txt(FILE, 'file', OTHER)]})
+    assert r['attachment_url_hit'] is None and r['resource_page_hit'] is None
+    r = em.score_row(row, {"media_mode": "none", "text": [txt(FILE, 'file', OTHER)]},
+                     {"file_urls": [], "page_urls": [PARENT]})
+    assert r['attachment_parent_hit'] is False and r['resource_page_hit'] is False
+
+
+def test_audit_cannot_change_expected_urls_or_claim_same_url_has_both_types():
+    import pytest
+    row = {"id": "f", "media_mode": "none", "wants_file": True, "expected_urls": [FILE, PARENT]}
+    with pytest.raises(ValueError):
+        em.score_row(row, {}, {"file_urls": [OTHER], "page_urls": []})
+    with pytest.raises(ValueError):
+        em.score_row(row, {}, {"file_urls": [FILE], "page_urls": [FILE]})
+
+
+def test_cli_reports_reviewed_url_metrics(tmp_path, monkeypatch, capsys):
+    import sys
+    row = {"id": "f", "question": "Biểu mẫu", "media_mode": "none", "wants_file": True,
+           "expected_urls": [PARENT]}
+    source = tmp_path / "rows.jsonl"
+    source.write_text(json.dumps(row), encoding="utf-8")
+    labels = tmp_path / "labels.json"
+    labels.write_text(json.dumps({"f": {"page_urls": [PARENT]}}), encoding="utf-8")
+    output = tmp_path / "out.json"
+    monkeypatch.setattr(sys, "argv", ["eval_media", "--set", str(source), "--url-labels", str(labels),
+                                      "--out", str(output)])
+    monkeypatch.setattr(em, "ask", lambda *a: {"media_mode": "none", "wants_file": True, "text": [txt(PARENT)]})
+    em.main()
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["rows"][0]["resource_page_hit"] is True
+    assert result["summary"]["counts"]["attachment_url_hit"] == "0/0"
+    assert "resource_page=OK" in capsys.readouterr().out
+
+
+def test_cli_rejects_invalid_sidecar_before_calling_api(tmp_path, monkeypatch):
+    import pytest
+    import sys
+    source = tmp_path / "rows.jsonl"
+    source.write_text(json.dumps({"id": "f", "question": "Biểu mẫu", "media_mode": "none",
+                                  "wants_file": True, "expected_urls": [PARENT]}), encoding="utf-8")
+    labels = tmp_path / "labels.json"
+    monkeypatch.setattr(sys, "argv", ["eval_media", "--set", str(source), "--url-labels", str(labels)])
+    calls = []
+    monkeypatch.setattr(em, "ask", lambda *a: calls.append(a))
+    for bad in ({"typo": {"page_urls": [PARENT]}}, {"f": None}, {"f": {"pages_urls": [PARENT]}}):
+        labels.write_text(json.dumps(bad), encoding="utf-8")
+        with pytest.raises(ValueError):
+            em.main()
+    assert not calls
+
+
+def test_source_link_audit_is_separate_from_golden_and_parent_association():
+    row = {"id": "f", "media_mode": "none", "wants_file": True, "expected_urls": [PARENT]}
+    labels = {"page_urls": [PARENT], "source_file_urls": [FILE]}
+    other = em.score_row(row, {"media_mode": "none", "text": [txt(OTHER, "file", PARENT)]}, labels)
+    assert other["file_hit"] is False and other["attachment_parent_hit"] is True
+    assert other["source_file_hit"] is False
+    exact = em.score_row(row, {"media_mode": "none", "text": [txt(FILE, "file", OTHER)]}, labels)
+    assert exact["file_hit"] is False and exact["source_file_hit"] is True
+    assert em.summarize([other, exact])["counts"]["source_file_hit"] == "1/2"
+    assert em.score_row(row, {}, {"page_urls": [PARENT]})["source_file_hit"] is None
+
+
+def test_source_link_audit_rejects_invalid_values_and_page_as_file():
+    import pytest
+    row = {"id": "f", "media_mode": "none", "wants_file": True, "expected_urls": [PARENT]}
+    with pytest.raises(ValueError):
+        em.score_row(row, {}, {"source_file_urls": "not a list"})
+    with pytest.raises(ValueError):
+        em.score_row(row, {}, {"source_file_urls": ["not-a-url"]})
+    with pytest.raises(ValueError):
+        em.score_row(row, {}, {"page_urls": [PARENT], "source_file_urls": [PARENT]})
+
+
+def test_source_link_audit_keeps_path_and_query_case():
+    row = {"id": "f", "media_mode": "none", "wants_file": True, "expected_urls": [PARENT]}
+    url = "https://example.org/Dir/FILE.pdf?download=YES"
+    labels = {"source_file_urls": [url]}
+    assert em.score_row(row, {"text": [txt(url.replace("Dir", "dir"), "file")]}, labels)["source_file_hit"] is False
+    assert em.score_row(row, {"text": [txt(url.replace("YES", "yes"), "file")]}, labels)["source_file_hit"] is False
+    assert em.score_row(row, {"text": [txt(url.replace("example.org", "EXAMPLE.ORG"), "file")]}, labels)["source_file_hit"] is True
+    page_row = {**row, "expected_urls": [url]}
+    different_file = url.replace("Dir", "dir")
+    assert em.score_row(page_row, {"text": [txt(different_file, "file")]},
+                        {"page_urls": [url], "source_file_urls": [different_file]})["source_file_hit"] is True
+
+
+def test_file_audit_rejects_nonempty_labels_for_non_file_question():
+    import pytest
+    row = {"id": "f", "media_mode": "none", "wants_file": False, "expected_urls": [PARENT]}
+    with pytest.raises(ValueError):
+        em.score_row(row, {}, {"page_urls": [PARENT]})
+    with pytest.raises(ValueError):
+        em.score_row(row, {}, {"source_file_urls": [FILE]})
+
+
 def test_video_hit_needs_video_frame_of_right_post():
     row = {"id": "v1", "case": "video", "style": "question", "media_mode": "required", "wants_file": False,
            "min_media": 1, "expected_urls": [POST], "expected_media_docs": [POST]}
