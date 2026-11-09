@@ -100,11 +100,18 @@ def classify_rules(question: str, has_image: bool = False) -> Route:
     qn = unicodedata.normalize("NFC", question.lower())
     input_ctx = bool(has_image and _INPUT_CONTEXT.search(qn))
     bare_anh = bool(_ANH_ACCENT.search(qn)) and not input_ctx
+    # Cụm danh từ "anh <sự kiện>" không dấu: "anh" có thể là "ảnh".
+    # Chỉ bảo vệ khi tên sự kiện đứng ngay sau "anh" và không hỏi dữ kiện;
+    # chủ ngữ người + hành động ("anh Nam tham gia ...") vẫn qua router thường.
+    image_event_phrase = (not has_image and q.startswith("anh ") and qn == q
+                          and not q[4:].startswith(("tham gia ", "dien ra "))
+                          and bool(_EVENT.match(q[4:]) or re.match(r"khai mac\b", q[4:]))
+                          and not _FACT_QUESTION.search(q))
     required = bool(_REQUIRED_EXPLICIT.search(q)) or (not input_ctx and bool(_REQUIRED_REF.search(q)))
     explicit_request = bool(has_image and re.search(
         r"\b(?:tim|gui|cho|xem|hien thi)(?:\s+(?:them|toi|minh|cho|chung|cac|nhung|mot|so))*"
         r"\s+anh\b(?!\s+(?:nay|tren|dinh kem)\b)", q))
-    if required or bare_anh or explicit_request:
+    if required or bare_anh or explicit_request or image_event_phrase:
         media = "required"
     elif input_ctx or _EVENT.search(q):
         media = "optional"  # ảnh gửi kèm là đầu vào: không đòi ảnh nhưng vẫn có nhánh media
