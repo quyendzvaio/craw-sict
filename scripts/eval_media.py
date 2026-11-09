@@ -14,11 +14,20 @@ Số đo (tổng và theo case / style):
   media_precision     tỷ lệ media trả về thuộc bài đúng (micro: tổng media đúng / tổng media; chỉ câu có expected_media_docs)
   none_clean          câu none hoặc ngoài phạm vi: không có media
   file_hit            câu wants_file: có nguồn kind=file có url trong expected_urls
+  attachment_url_hit  URL attachment trùng URL file đã kiểm duyệt
+  attachment_parent_hit  attachment có parent_url trùng URL trang đã kiểm duyệt (không chứng minh đúng file)
+  resource_page_hit   nguồn chữ có url hoặc parent_url trùng URL trang đã kiểm duyệt
+  source_file_hit     URL file trong nguồn trả về khớp link đã kiểm duyệt từ trang nguồn
   video_hit           câu case=video: có media kind=video (1 slot/video, v2) hoặc video_frame (v1) thuộc bài đúng
   abstain_ok          câu ngoài phạm vi: sufficient == false;  false_abstain: câu trả lời được mà sufficient == false
 
 Usage: python3 scripts/eval_media.py --api http://localhost:8003 [--set eval/media_v1.jsonl] [--top-k 8]
                                      [--out eval/results/media_v1_2026-11-05.json] [--only m001,v002]
+                                     [--url-labels /tmp/url-labels.json]
+Nhãn URL tùy chọn: {"id": {"file_urls": ["..."], "page_urls": ["..."]}}. URL phải thuộc expected_urls;
+không có nhãn loại nào thì phép đo loại đó là N/A. Giữ file nhãn ngoài repo nếu chứa dữ liệu riêng tư.
+Có thể thêm source_file_urls cho link được kiểm duyệt từ trang, kể cả khi golden chỉ nêu URL trang;
+đây là phép đo riêng và không xác nhận nội dung file hoặc thay nhãn golden.
 Dòng cuối stdout là JSON tóm tắt (như scripts/eval_api.py).
 """
 from __future__ import annotations
@@ -27,6 +36,7 @@ import argparse
 import json
 import re
 import sys
+import urllib.parse
 import urllib.request
 from collections import defaultdict
 
@@ -36,6 +46,17 @@ VIDEO_KINDS = ("video", "video_frame")
 
 def norm(u: str | None) -> str:
     return re.sub(r"^https?://", "", u or "").replace("//", "/").rstrip("/").lower()
+
+
+def source_url_key(u: str | None) -> tuple[str, str, str, str] | None:
+    """URL file: chỉ bỏ fragment và chuẩn hóa scheme/host; path/query có phân biệt hoa thường."""
+    try:
+        p = urllib.parse.urlsplit(u or "")
+    except ValueError:
+        return None
+    if p.scheme.lower() not in ("http", "https") or not p.netloc:
+        return None
+    return p.scheme.lower(), p.netloc.lower(), p.path, p.query
 
 
 def doc_of(s: dict) -> str:
@@ -50,9 +71,31 @@ def ask(api: str, q: str, timeout: int, top_k: int = 8) -> dict:
         return json.loads(r.read())
 
 
-def score_row(row: dict, res: dict) -> dict:
+def score_row(row: dict, res: dict, url_labels: dict | None = None) -> dict:
     """Chấm một câu (thuần, không mạng). res = JSON của /query. Trường None = tiêu chí không áp dụng cho câu này."""
     want = {norm(u) for u in row.get("expected_urls") or []}
+    file_urls: set[str] = set()
+    page_urls: set[str] = set()
+    source_file_urls: set[tuple[str, str, str, str]] = set()
+    if url_labels is not None:
+        if not isinstance(url_labels, dict):
+            raise ValueError("URL labels must be an object")
+        if url_labels.keys() - {"file_urls", "page_urls", "source_file_urls"}:
+            raise ValueError(f"Unknown URL label fields for {row['id']}")
+        for name, target in (("file_urls", file_urls), ("page_urls", page_urls)):
+            values = url_labels.get(name, [])
+            if not isinstance(values, list) or any(not isinstance(u, str) or not norm(u) for u in values):
+                raise ValueError(f"{name} must be a list of non-empty URLs")
+            target.update(norm(u) for u in values)
+        source_values = url_labels.get("source_file_urls", [])
+        if not isinstance(source_values, list) or any(not isinstance(u, str) or source_url_key(u) is None for u in source_values):
+            raise ValueError("source_file_urls must contain absolute HTTP(S) URLs")
+        source_file_urls = {source_url_key(u) for u in source_values}
+        source_pages = {source_url_key(u) for u in url_labels.get("page_urls", [])}
+        if (file_urls | page_urls) - want or file_urls & page_urls or source_file_urls & source_pages:
+            raise ValueError(f"URL labels conflict with expected_urls for {row['id']}")
+        if not row.get("wants_file") and (file_urls or page_urls or source_file_urls):
+            raise ValueError(f"File URL labels supplied for non-file question {row['id']}")
     mdocs = {norm(u) for u in row.get("expected_media_docs") or []}
     text = res.get("text") or []
     media = res.get("media") or []
@@ -79,6 +122,8 @@ def score_row(row: dict, res: dict) -> dict:
         "media_good": len(on_target) if mdocs else 0,
         "none_clean": (len(media) == 0) if (row["media_mode"] == "none" or oos) else None,
         "file_hit": None, "file_rank": None, "video_hit": None,
+        "attachment_url_hit": None, "attachment_parent_hit": None, "resource_page_hit": None,
+        "source_file_hit": None,
         "sufficient": res.get("sufficient"),
         "abstain_ok": (res.get("sufficient") is False) if oos else None,
         "false_abstain": (res.get("sufficient") is False) if (not oos and want) else None,
@@ -88,6 +133,13 @@ def score_row(row: dict, res: dict) -> dict:
     if row.get("wants_file"):
         fr = next((i + 1 for i, s in enumerate(text) if s.get("kind") == "file" and norm(s.get("url")) in want), None)
         r["file_hit"], r["file_rank"] = fr is not None, fr
+        if file_urls:
+            r["attachment_url_hit"] = any(s.get("kind") == "file" and norm(s.get("url")) in file_urls for s in text)
+        if source_file_urls:
+            r["source_file_hit"] = any(s.get("kind") == "file" and source_url_key(s.get("url")) in source_file_urls for s in text)
+        if page_urls:
+            r["attachment_parent_hit"] = any(s.get("kind") == "file" and norm(s.get("parent_url")) in page_urls for s in text)
+            r["resource_page_hit"] = any(norm(s.get("url")) in page_urls or norm(s.get("parent_url")) in page_urls for s in text)
     if row.get("case") == "video" and not oos:
         # /query gộp mỗi video thành 1 nguồn kind=video (url YouTube, AC-R3); index v1 trả từng khung hình video_frame
         r["video_hit"] = any(m.get("kind") in VIDEO_KINDS and doc_of(m) in mdocs for m in media)
@@ -119,6 +171,10 @@ def summarize(scored: list[dict]) -> dict:
             "media_on_target": _rate(rows, "media_on_target"),
             "media_precision": round(sum(r["media_good"] for r in rows) / tot, 3) if tot else None,
             "none_clean": _rate(rows, "none_clean"), "file_hit": _rate(rows, "file_hit"),
+            "attachment_url_hit": _rate(rows, "attachment_url_hit"),
+            "attachment_parent_hit": _rate(rows, "attachment_parent_hit"),
+            "resource_page_hit": _rate(rows, "resource_page_hit"),
+            "source_file_hit": _rate(rows, "source_file_hit"),
             "video_hit": _rate(rows, "video_hit"),
             "abstain_ok": _rate(rows, "abstain_ok"), "false_abstain": _rate(rows, "false_abstain"),
         }
@@ -126,6 +182,7 @@ def summarize(scored: list[dict]) -> dict:
     out = block(scored)
     out["counts"] = {k: _count(scored, k) for k in ("mode_ok", "wants_file_ok", "url_hit", "required_has_media",
                                                      "media_on_target", "none_clean", "file_hit", "video_hit",
+                                                     "attachment_url_hit", "attachment_parent_hit", "resource_page_hit", "source_file_hit",
                                                      "abstain_ok", "false_abstain")}
     by_case: dict[str, list] = defaultdict(list)
     by_style: dict[str, list] = defaultdict(list)
@@ -161,8 +218,23 @@ def main() -> None:
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--out", help="ghi JSON chi tiết (từng câu + tóm tắt)")
     ap.add_argument("--only", help="chỉ chạy các id này, phẩy ngăn cách")
+    ap.add_argument("--url-labels", help="JSON nhãn URL theo id: file_urls / page_urls / source_file_urls")
     args = ap.parse_args()
     rows = [json.loads(x) for x in open(args.set, encoding="utf-8") if x.strip()]
+    labels = {}
+    if args.url_labels:
+        with open(args.url_labels, encoding="utf-8") as fh:
+            labels = json.load(fh)
+        if not isinstance(labels, dict):
+            raise ValueError("URL labels must be an object keyed by id")
+        # Kiểm tra toàn bộ sidecar trước --only và trước khi gửi request.
+        rows_by_id = {row["id"]: row for row in rows}
+        if labels.keys() - rows_by_id.keys():
+            raise ValueError("URL labels contain unknown IDs")
+        for row_id, label in labels.items():
+            if not isinstance(label, dict):
+                raise ValueError(f"URL labels must be an object for {row_id}")
+            score_row(rows_by_id[row_id], {}, label)
     if args.only:
         keep = set(args.only.split(","))
         rows = [r for r in rows if r["id"] in keep]
@@ -173,7 +245,7 @@ def main() -> None:
         except Exception as e:   # lỗi HTTP một câu không làm hỏng cả lượt chạy
             print(f"{g['id']} LỖI {e}", file=sys.stderr, flush=True)
             res = {"text": [], "media": [], "media_mode": None, "wants_file": None, "sufficient": None, "error": str(e)}
-        r = score_row(g, res)
+        r = score_row(g, res, labels.get(g["id"]))
         r["question"] = g["question"]
         if res.get("error"):
             r["error"] = res["error"]
@@ -182,6 +254,8 @@ def main() -> None:
               f"{'' if r['wants_file_ok'] else '!'} rank={_fmt(r['text_rank'])} url={_fmt(r['url_hit'])} "
               f"media={r['n_media']}/{r['n_media_on_target']} tgt={_fmt(r['media_on_target'])} "
               f"clean={_fmt(r['none_clean'])} file_hit={_fmt(r['file_hit'])} video={_fmt(r['video_hit'])} "
+              f"attachment_url={_fmt(r['attachment_url_hit'])} attachment_parent={_fmt(r['attachment_parent_hit'])} "
+              f"resource_page={_fmt(r['resource_page_hit'])} source_file={_fmt(r['source_file_hit'])} "
               f"suff={r['sufficient']}", flush=True)
     summary = summarize(scored)
     summary["failures"] = failures(scored)

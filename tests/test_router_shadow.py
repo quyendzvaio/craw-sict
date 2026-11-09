@@ -4,6 +4,26 @@ from unittest.mock import patch
 
 from sict_crawler.core.config import LlmConfig
 from sict_crawler.service.retrieval.route_schema import RouteDecision
+
+
+def test_no_accent_image_event_noun_phrase_preserves_person_and_fact_questions():
+    from sict_crawler.service.retrieval import router
+    for question in ("anh khai mac olympic tin hoc sinh vien lan thu 33",
+                     "anh khai giang nam 2026", "anh hoi thao khoa hoc nam 2026"):
+        assert router.classify_rules(question).media == "required"
+    for question in ("anh chi cho em biet lich hoc cua truong",
+                     "chuan dau ra tieng anh cua truong",
+                     "anh Nguyen Van Nam la giang vien khoa nao",
+                     "anh tham gia hoi thao nao",
+                     "anh tham gia hoi thao", "anh chi tham gia hoi thao",
+                     "anh Nam tham gia hoi thao", "anh Nguyen Van Nam tham gia hoi thao"):
+        assert router.classify_rules(question).media != "required"
+
+
+def test_no_accent_image_event_skips_llm_router(monkeypatch):
+    from sict_crawler.service.retrieval import hybrid_router, vlm
+    monkeypatch.setattr(vlm, "route_intent", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("LLM was called")))
+    assert hybrid_router.route("anh khai mac olympic tin hoc sinh vien lan thu 33", False).media == "required"
 from sict_crawler.service.retrieval import vlm
 
 
