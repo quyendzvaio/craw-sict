@@ -33,7 +33,7 @@ def test_answer_from_screenshot():
     assert "**" not in out and "&gt;" not in out
     assert out.startswith("<p><strong>Ngành CNTT</strong></p><ul><li><strong>Mô tả chung:</strong>")
     assert "<ul><li><em>3-5 năm:</em> chuyên viên.</li><li><em>Trên 10 năm:</em>" in out   # lồng trong mục cha
-    assert '<a class="cite" href="https://sict.haui.edu.vn/a?x=1&amp;y=2"' in out and '<span class="cite">[4]</span>' in out
+    assert '<sup class="cite"><a class="cite-l" href="https://sict.haui.edu.vn/a?x=1&amp;y=2"' in out and '<sup class="cite">4</sup>' in out
     assert "<blockquote><p><strong>Lưu ý:</strong>" in out
 
 
@@ -50,3 +50,23 @@ def test_tables_ordered_lists_code_and_urls():
 def test_plain_text_keeps_line_breaks_and_math_stars():
     out = render("Dòng 1\nDòng 2\n\n2*3*4 = 24 và snake_case_name")
     assert out == "<p>Dòng 1<br>Dòng 2</p><p>2*3*4 = 24 và snake_case_name</p>"
+
+
+def test_cite_is_wikipedia_style_superscript_badge():
+    """2026-11-09 (chủ duyệt): [n] là nút mờ superscript kiểu Wikipedia — chỉ số, không ngoặc;
+    title kèm nhãn nguồn; link giữ target _blank. File cũng mở thẳng qua url của cite."""
+    out = render("Đoạn có nguồn [2] và file [5].", {
+        "2": {"n": 2, "url": "https://sict.haui.edu.vn/vn/bai", "cite": "Bài viết"},
+        "5": {"n": 5, "url": "https://sict.haui.edu.vn/media/29/file.pdf", "cite": "quy-che — trang 3"},
+    })
+    assert '<sup class="cite"><a class="cite-l" href="https://sict.haui.edu.vn/vn/bai"' in out
+    assert 'title="Bài viết">2</a></sup>' in out
+    assert '<sup class="cite"><a class="cite-l" href="https://sict.haui.edu.vn/media/29/file.pdf"' in out
+    assert 'title="quy-che — trang 3">5</a></sup>' in out
+    assert "[2]" not in out and "[5]" not in out   # không còn dạng ngoặc
+
+
+def test_cite_without_source_stays_superscript_plain():
+    """[n] không có nguồn (server chưa gửi citations) vẫn hiện dạng superscript, không link."""
+    out = render("Chưa map [7].", {})
+    assert '<sup class="cite">7</sup>' in out and "<a" not in out

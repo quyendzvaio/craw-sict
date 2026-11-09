@@ -20,9 +20,11 @@
       (u) => hold('<a href="' + u + '" target="_blank" rel="noopener">' + u + '</a>'));
     s = s.replace(/\[(\d{1,3})\]/g, (m, n) => {
       const c = cites && cites[n];
+      // 2026-11-09 (chủ duyệt): nút mờ superscript kiểu Wikipedia — chỉ số, không ngoặc; bấm mở nguồn
+      // (bài hoặc file mở thẳng). Không có nguồn (server chưa gửi citations) → vẫn superscript, không link.
       return hold(c && c.url
-        ? '<a class="cite" href="' + esc(c.url) + '" target="_blank" rel="noopener" title="' + esc(c.cite || c.url) + '">[' + n + ']</a>'
-        : '<span class="cite">[' + n + ']</span>');
+        ? '<sup class="cite"><a class="cite-l" href="' + esc(c.url) + '" target="_blank" rel="noopener" title="' + esc(c.cite || c.url) + '">' + n + '</a></sup>'
+        : '<sup class="cite">' + n + '</sup>');
     });
     s = s.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>');
     s = s.replace(/(^|[^\p{L}\p{N}_])__(?=\S)([\s\S]*?\S)__(?![\p{L}\p{N}_])/gu, '$1<strong>$2</strong>');
