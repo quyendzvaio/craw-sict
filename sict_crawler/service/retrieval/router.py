@@ -93,6 +93,9 @@ _ANH_ACCENT = re.compile(r"(?<![^\W\d_])ảnh(?![^\W\d_])(?!\s+hưởng)")
 # Cụm quy chiếu ẢNH ĐẦU VÀO của người dùng (I2): "sự kiện trong ảnh này là gì" hỏi về ảnh mình
 # gửi, không phải đòi xem thêm ảnh → chữ "ảnh" không tự nâng media lên required.
 _INPUT_CONTEXT = re.compile(r"ảnh này|ảnh trên|trong ảnh|của ảnh|ảnh của|ảnh đính kèm|photo|picture")
+# 2026-11-10 (chủ duyệt): ảnh NGƯỜI + "người này là ai" — hỏi danh tính trong ảnh mình gửi
+# (U4/I2). Ý định nhận diện người: media optional (đối chiếu ảnh giúp), câu hỏi rỗng thì still optional.
+_PERSON_ID = re.compile(r"nguoi (?:nay|trong anh)|trong anh la ai|la ai trong anh|nguoi gi|d day la ai|day la ai")
 
 
 def classify_rules(question: str, has_image: bool = False) -> Route:
@@ -113,7 +116,7 @@ def classify_rules(question: str, has_image: bool = False) -> Route:
         r"\s+anh\b(?!\s+(?:nay|tren|dinh kem)\b)", q))
     if required or bare_anh or explicit_request or image_event_phrase:
         media = "required"
-    elif input_ctx or _EVENT.search(q):
+    elif input_ctx or _EVENT.search(q) or (has_image and bool(_PERSON_ID.search(q))):
         media = "optional"  # ảnh gửi kèm là đầu vào: không đòi ảnh nhưng vẫn có nhánh media
     else:
         media = "none"

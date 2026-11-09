@@ -168,8 +168,14 @@ def test_source_cosine_from_dense_score_when_not_reranked():
 
 def test_evidence_without_sources_or_image_only():
     assert not agent.evidence("học phí?", [], [], "")["sufficient"]
-    img = [Source(url="u", title="t", kind="image", score=0.9)]
-    assert agent.evidence("", [], img, "")["sufficient"]                # chỉ ảnh, có ảnh giống → đủ
+    # 2026-11-10 (chủ duyệt): chỉ ảnh — đủ CHỈ khi ảnh đó đi qua nhánh i2i (đã lọc ngưỡng i2i_min).
+    # Ảnh via=None / via khác không còn tự động "đủ" nữa (tránh nhận diện sai người).
+    img_stray = [Source(url="u", title="t", kind="image", score=0.9)]   # via=None → không đủ
+    assert not agent.evidence("", [], img_stray, "")["sufficient"]
+    img_hit = [Source(url="u", title="t", kind="image", score=0.9, via="i2i")]
+    assert agent.evidence("", [], img_hit, "")["sufficient"]            # i2i khớp → đủ
+    doc_hit = [Source(url="u", title="t", kind="text", score=0.9, via="i2i-doc")]
+    assert agent.evidence("", doc_hit, [], "")["sufficient"]            # i2i-doc → đủ
 
 
 # --- câu gốc luôn được tìm, câu LLM viết lại chỉ bổ sung ------------------------------------------------------------
