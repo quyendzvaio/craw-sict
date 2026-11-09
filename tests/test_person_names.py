@@ -48,13 +48,14 @@ def test_name_phrases_keeps_mid_sentence_two_word_runs():
 
 # --- evidence đòi cụm tên trong ngữ cảnh ----------------------------------------------------------------------------
 
-def _src(content, cosine=0.7):
+def _src(content, cosine=0.8):
     return Source(url="u", title="t", kind="text", score=0.9, excerpt=content[:50], content=content, cosine=cosine)
 
 
 def test_evidence_requires_name_phrase_as_a_whole(monkeypatch):
     monkeypatch.setattr(get_settings().retrieval, "min_cosine", 0.45)
     monkeypatch.setattr(get_settings().retrieval, "min_term_cover", 0.8)
+    monkeypatch.setattr(get_settings().retrieval, "weak_top_cosine", 0.75)   # test này kiểm tên riêng, không phải cosine
     q = "khoảnh khắc của sinh viên Phạm Văn Tùng"
     scattered = "khoảnh khắc sinh viên. ThS. Nguyễn Thanh Tùng. TS. Phạm Huy Thông. Phạm Văn Hà văn hóa."
     ev = agent.evidence(q, [_src(scattered)], [], scattered)          # đủ token rời nhưng không có nguyên cụm
@@ -68,6 +69,7 @@ def test_evidence_requires_name_phrase_as_a_whole(monkeypatch):
 def test_evidence_without_name_phrase_unchanged(monkeypatch):
     monkeypatch.setattr(get_settings().retrieval, "min_cosine", 0.45)
     monkeypatch.setattr(get_settings().retrieval, "min_term_cover", 0.8)
+    monkeypatch.setattr(get_settings().retrieval, "weak_top_cosine", 0.75)
     ctx = "học phí học kỳ phụ"
     assert agent.evidence("Học phí học kỳ phụ?", [_src(ctx)], [], ctx)["sufficient"] is True
 

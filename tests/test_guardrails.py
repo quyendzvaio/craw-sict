@@ -144,8 +144,9 @@ def test_http_responses_do_not_expose_full_content(monkeypatch):
 def test_evidence_requires_question_terms_in_context(monkeypatch):
     monkeypatch.setattr(get_settings().retrieval, "min_term_cover", 0.6)
     monkeypatch.setattr(get_settings().retrieval, "min_cosine", 0.3)
+    monkeypatch.setattr(get_settings().retrieval, "weak_top_cosine", 0.75)
     s = [_src(1, "Thông báo thu học phí học kỳ phụ năm 2025")]
-    s[0].cosine = 0.6
+    s[0].cosine = 0.8   # ≥ weak_top_cosine: test này kiểm term cover, không phải cosine
     ok = agent.evidence("Học phí năm 2025 bao nhiêu?", s, [], sources.build_context(s, []))
     assert ok["sufficient"] and ok["cover"] == 1.0
     off = agent.evidence("Giá vé xem phim CGV hôm nay", s, [], sources.build_context(s, []))

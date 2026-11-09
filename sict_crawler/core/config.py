@@ -285,9 +285,9 @@ class RetrievalConfig:
     min_cosine: float = 0.45     # sufficient: cosine câu hỏi↔đoạn tốt nhất tối thiểu (jina-clip-v2, index v3)
     min_term_cover: float = 0.8  # sufficient: tỷ lệ từ nội dung của câu hỏi (bỏ dấu, bỏ hư từ) có trong ngữ cảnh
     # 2026-11-10 (case "kế hoạch đào tạo 2025" trả 8 bài kế hoạch không bài nào đúng, cosine top-1 ~0,62):
-    # top-1 dưới ngưỡng khối này → sufficient=False (nguồn chỉ liên quan một phần). Nới hơn min_cosine để
-    # tránh false-abstain: cosine 0,45–0,55 vẫn trả lời nhưng kèm ghi chú "có thể chưa đầy đủ". 0 = tắt.
-    weak_top_cosine: float = 0.55
+    # top-1 dưới ngưỡng khối này → sufficient=False (nguồn chỉ liên quan một phần). Chủ duyệt nâng 0,55 → 0,75:
+    # chỉ nguồn cosine ≥ 0,75 mới đủ để trả lời tự tin; 0,45–0,75 vẫn trả lời nhưng kèm ghi chú. 0 = tắt.
+    weak_top_cosine: float = 0.75
 
 
 @dataclass

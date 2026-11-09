@@ -57,7 +57,7 @@ def test_run_insufficient_when_question_terms_missing(monkeypatch):
     from sict_crawler.service.retrieval import retriever
 
     off = [Source(url="u", title="Thông báo học phí", kind="text", score=0.9, excerpt="học phí học kỳ phụ",
-                  content="học phí học kỳ phụ", cosine=0.7)], []
+                  content="học phí học kỳ phụ", cosine=0.8)], []
     monkeypatch.setattr(retriever, "retrieve", lambda *a, **k: off)
     assert _agent.run("Giá vé xem phim CGV hôm nay?", 5)["sufficient"] is False
     assert _agent.run("Học phí học kỳ phụ?", 5)["sufficient"] is True
@@ -69,7 +69,7 @@ def test_run_insufficient_keeps_only_coupled_media(monkeypatch):
     from sict_crawler.service.retrieval import retriever, router
 
     text = [Source(url="https://x/a", title="Học phí", kind="text", score=0.9, excerpt="học phí học kỳ phụ",
-                   content="học phí học kỳ phụ", cosine=0.7)]
+                   content="học phí học kỳ phụ", cosine=0.8)]
     media = [Source(url="i1", title="Học phí", kind="image", score=0.3, parent_url="https://x/a", via="doc"),
              Source(url="i2", title="Khác", kind="image", score=0.3, parent_url="https://x/z", via="clip")]
     route = router.Route(media="required", outputs=["text", "image"])
@@ -81,19 +81,24 @@ def test_run_insufficient_keeps_only_coupled_media(monkeypatch):
 
 
 def test_evidence_weak_top_cosine_flags_partial():
-    """2026-11-10 (đề xuất 2): top-1 cosine trong khoảng [min_cosine, weak_top_cosine) → sufficient=False
+    """2026-11-10 (đề xuất 2, chủ duyệt nâng 0,55 → 0,75): top-1 cosine dưới weak_top_cosine → sufficient=False
     ("đoạn đầu yếu") — case "kế hoạch đào tạo 2025" trả 8 bài kế hoạch sai bài, cosine ~0,62 cũ không chặn."""
     from sict_crawler.core.config import get_settings
     cfg = get_settings().retrieval
     assert cfg.weak_top_cosine > cfg.min_cosine, "ngưỡng khối phải chặt hơn min_cosine"
-    # cosine 0,50: trên min_cosine (0,45) nhưng dưới weak_top_cosine (0,55) → không đủ
+    # cosine 0,62: trên min_cosine (0,45) nhưng dưới weak_top_cosine (0,75) → không đủ (case thực tế)
     weak = [Source(url="u", title="Kế hoạch", kind="text", score=0.9, excerpt="kế hoạch đào tạo",
-                   content="kế hoạch đào tạo năm học mới", cosine=0.50)]
+                   content="kế hoạch đào tạo năm học mới", cosine=0.62)]
     ev = _agent.evidence("kế hoạch đào tạo 2025?", weak, [], "kế hoạch đào tạo 2025")
     assert ev["sufficient"] is False and "đoạn đầu yếu" in ev["reason"]
-    # đủ mạnh (≥ weak_top_cosine) → không flag
+    # cosine 0,50 cũng không đủ
+    mid = [Source(url="u", title="Kế hoạch", kind="text", score=0.9, excerpt="kế hoạch đào tạo",
+                  content="kế hoạch đào tạo năm 2025 chương trình", cosine=0.50)]
+    ev = _agent.evidence("kế hoạch đào tạo 2025?", mid, [], "kế hoạch đào tạo 2025 chương trình")
+    assert ev["sufficient"] is False
+    # đủ mạnh (≥ 0,75) → không flag
     strong = [Source(url="u", title="Kế hoạch", kind="text", score=0.9, excerpt="kế hoạch đào tạo",
-                     content="kế hoạch đào tạo năm 2025 chương trình", cosine=0.62)]
+                     content="kế hoạch đào tạo năm 2025 chương trình", cosine=0.78)]
     ev = _agent.evidence("kế hoạch đào tạo 2025?", strong, [], "kế hoạch đào tạo 2025 chương trình")
     assert ev["sufficient"] is True and ev["reason"] == "ok"
 
@@ -144,7 +149,7 @@ def test_validate_consolidates_post_checks():
     from sict_crawler.service.retrieval import router
 
     text = [Source(url="https://x/a", title="Học phí", kind="text", score=0.9, excerpt="học phí",
-                   content="học phí học kỳ phụ", cosine=0.7)]
+                   content="học phí học kỳ phụ", cosine=0.8)]
     media = [Source(url="i1", title="Học phí", kind="image", score=0.3, parent_url="https://x/a", via="doc"),
              Source(url="i2", title="Khác", kind="image", score=0.3, parent_url="https://x/z", via="clip")]
     route = router.Route(media="required", outputs=["text", "image"])
