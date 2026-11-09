@@ -373,3 +373,143 @@ RAGAS trên 21 câu đổi nguồn: 20 câu person_v1 và golden_v2 g084. Câu t
   - p24: 0,50.
   - p16: 0,83.
 - Các câu âm tính n02–n04 vẫn từ chối đúng.
+
+## 2026-11-05 — media theo bằng chứng: ảnh của bài chữ đứng đầu, video, `sufficient` (nhánh feat/media-evidence-gate)
+
+Vấn đề (đã chẩn đoán trên code + API dev): ứng viên media chỉ đến từ CLIP / caption toàn collection, không lấy ảnh của
+chính các bài nhánh chữ tìm ra; `caption_kw` qua gate không cần ngưỡng; câu đòi video bị ảnh thường lấp hết chỗ; câu
+`sufficient` False vẫn nhận ảnh ngẫu nhiên; `accept_api` lấy thumbnail video làm ảnh truy vấn (U6 q15).
+
+Sửa (chủ dự án duyệt A + C + D + E; tổng quát, không thêm danh sách từ khoá, không thêm ngưỡng):
+- **A.** `retriever._doc_media`: 1 lượt Qdrant sau nhánh chữ, ảnh / khung hình của các bài thuộc `text_hits[:3]`
+  (`document_id` MatchAny), xếp theo cosine câu hỏi↔ảnh, modality `doc`, cùng ngưỡng `t2i_min`. `gate`: ảnh gắn đứng
+  trước theo hạng bài rồi cosine, `page_url` = bài chữ đã kéo ảnh lên; `caption_kw` chỉ nhận khi gắn.
+- **Ý định quyết định số lượng** (`router.media_cap`): `required` top_k, `optional` 3, `none` `router.none_max`
+  (mặc định **0**, xem dưới). `media_mode` vẫn là ý định của router nên `media_mode_acc` giữ nguyên nghĩa.
+- **C.** `sufficient` False → `router.supported_media`: chỉ giữ media thuộc 3 nguồn chữ đầu, đúng loại được hỏi, và ảnh
+  `i2i` của ảnh người dùng gửi.
+- **D.** `Route.wants_video` (chính "video|clip" của `_REQUIRED`): thêm 1 lượt CLIP chỉ trong `video_frame` + 1 lượt
+  dense chỉ trong caption video; video trước ảnh, ảnh không gắn bị loại; bài chữ đứng đầu có video → bỏ media không gắn.
+- **E.** `accept_api`: U3–U6 chỉ dùng media `kind=image` (index v3 trả video là `kind=video`).
+- Cache `q:v11` → `q:v12`.
+
+Đo qua `/query`, 2 API cùng index v3, cache Redis tắt, develop (`289e847`) vs nhánh:
+
+| số đo | develop | nhánh |
+|---|---|---|
+| media_v1 media_mode_acc / wants_file_acc | 98/101 / 96/101 | 98/101 / 96/101 |
+| media_v1 url_hit / text_mrr@10 | 95/97 / 0,846 | **96/97** / 0,846 |
+| media_v1 required_has_media | 50/51 | 47/51 |
+| media_v1 media_on_target | 57/65 (0,877) | 58/67 (0,866) |
+| media_v1 media_precision (micro) | 0,674 | **0,798** |
+| media_v1 none_clean | 31/33 | **33/33** |
+| media_v1 video_hit | 10/15 | **12/15** |
+| media_v1 file_hit / abstain_ok / false_abstain | 15/15 / 4/4 / 4/97 | 15/15 / 4/4 / 4/97 |
+| media_v1 precision theo case: image / optional / video | 0,778 / 0,974 / 0,333 | 0,818 / 0,927 / 0,644 |
+| golden_v1 R@5 / MRR@10 / media_mode / required on target | 1,0 / 0,947 / 0,871 / 7/7 | như develop |
+| golden_v2 R@5 / MRR@10 / media_mode / required on target | 0,91 / 0,746 / 0,909 / 7/8 | như develop |
+| person_v1 R@5 / MRR@10 / media_mode | 0,975 / 0,921 / 0,795 | như develop |
+| list_v2 coverage / full / sufficient_acc | 0,940 / 38/42 / 0,94 | như develop |
+| accept_api (script nhánh) | 48/49 | 48/49 |
+
+Nguồn chữ không đổi ở câu nào của 5 bộ (chỉ media đổi). `accept_api` trượt `M /metrics` ở cả hai vì API thử trỏ Redis
+vào cổng đóng (`sict_pipeline_metrics_up 0`). Script develop chạy trên API develop: 48/50, U6 q15 FAIL (thumbnail video
+làm ảnh truy vấn); script nhánh bỏ q15 khỏi U3–U6 vì media đúng bài của q15 chỉ có video.
+
+Câu tốt lên: m001 0/8 → 8/8 ảnh đúng bài; m013 4/8 → 8/8; m018 6/8 → 8/8; v002 / v003 / v015 có video đúng bài (v002
+qua lượt khung hình video, bài 71355 ngoài top chữ); v005 / v007 / v009 / v010 / v011 / v012 bớt ảnh lạc đề (v010 1/8 →
+5/8); x002 tháp Eiffel, x004 nấu phở 8 → 0 media.
+
+Câu tụt (mọi câu, kèm lý do):
+- **m017** "thiệp sáng tạo 20/11 năm 2021": 3/8 → 0/8 đúng bài. Bài đúng (67435) hạng 3 nhánh chữ, bài hạng 1 (61717,
+  cùng chủ đề năm khác) có đủ 8 ảnh vượt ngưỡng nên lấp hết chỗ. Lỗi xếp hạng chữ, ảnh chỉ đi theo.
+- **o003 / o016** "Lễ khai mạc ICPC Asia Hanoi 2024 diễn ra ngày nào?": 0 → 1 ảnh của bài hạng 2 (71198, không phải bài
+  khai mạc 71199 ở hạng 3). Trước đây không có ảnh nào vì CLIP toàn collection không ra ảnh của top bài.
+- **v008** (tiếng Anh, `sufficient` False, cosine 0,436): 8 media (1 đúng bài) → 0. Luật C: chữ yếu thì media không gắn
+  bị bỏ; bài đúng không nằm trong top chữ.
+- **v004 / v013** `required_has_media` True → False: 8 media đều lạc đề → 0 (`sufficient` False), có `media_note`.
+- Precision `optional` 0,974 → 0,927 do o003 / o016.
+
+Còn trượt (không đổi so với develop): m023 "Phạm Văn Cương" bài đúng hạng 1 nhưng ảnh của bài có cosine tối đa 0,244 <
+`t2i_min` 0,25 nên 8 ảnh CLIP không gắn lấp chỗ; m027 bài đúng hạng 2 sau bài hạng 1 nhiều ảnh (như m017); m033 tiếng Anh
+(`none`, `sufficient` False).
+
+**`none_max` để 0.** Đo trên 4 bộ (303 câu), câu route `none`: ảnh của bài chữ đứng đầu không tách được câu muốn xem
+ảnh mà không có từ khoá ("khoảnh khắc của sinh viên Phạm Văn Tùng", "Show me photos…") khỏi câu fact: p15 và p17
+"Phạm Văn Tùng là ai" cùng top bài, cosine ảnh 0,29–0,33 vs 0,21–0,23; ảnh của câu fact cũng 0,1–0,42 (n008 "mã CTĐT"
+0,375). Mô phỏng các luật (ảnh bài hạng ≤ 1 ≥ 0,25 / ≥ 0,30 / ≥ 0,33; nằm trong top 3–10 CLIP toàn collection; ≥ cosine
+ảnh tốt nhất − 0,02 / 0,04; caption của bài trong top chữ): luật tốt nhất bắt 3/11 câu dương và 14/169 câu fact, luật bắt
+đủ 11/11 dính 95/169 câu fact. Vị trí ảnh cạnh đoạn trả lời không dùng được: ~92 % ảnh không có `block_idx` trên Qdrant.
+Chạy thật `none_max: 2` (API thứ ba, cùng nhánh): 13/14 câu dương có ảnh (8 đúng bài: p15 Tùng, p25, p38, q14, q37,
+q59, g062, o014), nhưng 151/228 câu fact cũng có 1–2 ảnh; media_v1 none_clean 33/33 → 15/33; list_v2 coverage 0,940 →
+0,932 (37/42; ảnh chia ngân sách ngữ cảnh). Bật hay không là quyết định của chủ dự án; câu loại này cần tín hiệu ý định
+(LLM router `llm.rewrite_query` đã có), không phải bằng chứng truy xuất.
+
+Biến thể đã thử, không giữ: chia lượt ảnh gắn theo từng hit chữ (mỗi hit một ảnh): m017 / m027 lên, nhưng bài hạng 1
+thường đúng nên precision image 0,818 → 0,720, optional 0,927 → 0,634.
+
+Độ trễ `/query` (không LLM, xen kẽ 2 API, 2 vòng × 101 câu media_v1, cache nhúng nóng): develop p50 / p90 0,118 / 0,198 s,
+nhánh 0,132 / 0,195 s (+1 lượt Qdrant lọc theo bài sau nhánh chữ; câu video +2 lượt song song).
+
+Câu trả lời `/chat` sẽ đổi (ngữ cảnh LLM đổi vì media đổi; chưa chạy RAGAS): media_v1 38/101 (m001, m003, m004, m006,
+m007, m008, m013, m015–m018, m028, m030, m034, m035, v002–v013, v015, o003, o005, o007, o010, o012, o013, o015, o016,
+x002, x004), golden_v1 q15, q43, q48–q51, q70; golden_v2 g057, g059, g063, g064; person_v1 p06; list_v2 m27.
+
+## 2026-11-08 — Điều tra các câu faithfulness giảm ở Phase 1
+
+So sánh các câu đã sinh và ngữ cảnh đã lưu của baseline với Phase 1 (một lượt mỗi
+bên); 12 câu bên dưới có **ngữ cảnh và thứ tự URL giống hệt**. File điểm RAGAS chỉ
+lưu điểm, không lưu giải thích từng phán quyết, nên các nhận định dưới đây là kiểm
+tra thủ công về nguồn có thể gây giảm điểm, không phải lý do đã được giám khảo xác
+nhận. Không thể kết luận nguyên nhân từ truy xuất hoặc từ router khi đầu vào bằng nhau.
+
+| Câu | Baseline → Phase 1 | Đối chiếu câu trả lời và ngữ cảnh |
+|---|---:|---|
+| g002 | 1,000 → 0,842 | Các mốc nhập học trong cả hai câu trả lời đều có trong bài; câu Phase 1 diễn đạt dài hơn và thêm liên kết dạng rút gọn vốn đã xuất hiện trong nguồn. Chưa xác định được khẳng định sai cụ thể. |
+| g022 | 1,000 → 0,750 | Phase 1 bổ sung ngoại lệ chương trình ngôn ngữ bậc 5/bậc 3; các mức này và mốc 2019 đều có trong quy định được truy xuất. Chưa xác định được lỗi chứng cứ rõ ràng. |
+| g041 | 0,714 → 0,333 | Cả hai đều nói không thấy điểm số cụ thể. Phase 1 ghép mức điểm với đề án tuyển sinh; nguồn chỉ nói cách tính và nguyên tắc theo đề án, nên cách gộp có thể mạnh hơn chứng cứ. |
+| g042 | 1,000 → 0,875 | Hai câu trả lời đều liệt kê năm phương thức; các phương thức được nêu trong nhiều nguồn. Chưa thấy sai khác bằng chứng rõ ràng, không thể khẳng định giám khảo sai nếu không có trace. |
+| g044 | 0,889 → 0,643 | Phase 1 mô tả chi tiết cấu trúc bảng tiến độ và gộp ngày quyết định với ngày đăng thông báo; các chữ viết tắt/OCR trong bảng có thể khiến phần diễn giải vượt chứng cứ. |
+| g049 | 1,000 → 0,800 | Phase 1 liệt kê bốn lớp và ghi thiếu danh sách đầy đủ; bốn dòng tương ứng đều có trong bảng nguồn. Chưa xác định được khẳng định không được hỗ trợ. |
+| g055 | 1,000 → 0,800 | Phase 1 thêm trung tâm được nêu ở trang liên hệ; sơ đồ tổ chức khác chỉ liệt kê hai trung tâm. Nguồn có thể khác thời điểm/phạm vi, chưa đủ chứng cứ xác định quan hệ hiện tại. |
+| g057 | 1,000 → 0,929 | Phase 1 mở rộng mô tả từng hội thảo và nói đã tổ chức; một sự kiện trong nguồn được thông báo cho ngày 14/11, sau ngày đo 08/11. Ngữ cảnh còn mang tính dự kiến ở một số sự kiện. |
+| g060 | 0,875 → 0,400 | Phase 1 khái quát rằng cả năm ảnh đều có cùng chữ chào mừng, nhưng OCR chỉ cho thấy cụm đó ở hai ảnh; các ảnh còn lại có OCR khác hoặc không có chữ. Đây là khẳng định vượt chứng cứ trong lượt sinh. |
+| g065 | 1,000 → 0,917 | Nội dung hoạt động xuất hiện trong bài viết; Phase 1 gán phần tóm tắt cho phụ đề video và dẫn nguồn video. Cần kiểm tra riêng transcript trước khi khẳng định nguồn gốc này. |
+| g067 | 1,000 → 0,8125 | Phase 1 tóm tắt từng tin dài hơn baseline; các chủ đề chính có trong các bài tương ứng. Chưa cô lập được mệnh đề cụ thể làm điểm giảm. |
+| g074 | 1,000 → 0,667 | Hai câu gần như cùng nói khoảng thi và lịch chi tiết công bố sau; cả hai thông tin có trong nguồn đầu. Chênh lệch này có thể do biến thiên chấm, chưa có trace để xác nhận. |
+
+Các rủi ro trả lời trên vẫn tồn tại và không được sửa bằng thay đổi router này; cần
+đánh giá riêng nếu muốn sửa prompt hoặc retrieval theo fix-policy và toàn bộ eval.
+
+Sau khi chấm lại các câu lỗi bằng cùng giám khảo, xuất hiện thêm năm câu giảm điểm;
+chúng cũng có ngữ cảnh và danh sách URL giống hệt giữa hai bên:
+
+| Câu | Baseline → Phase 1 | Đối chiếu thủ công |
+|---|---:|---|
+| g012 | 1,000 → 0,790 | Phase 1 gộp thưởng ngoại ngữ vào mức khoảng 19 tháng và nói là thông tin chung cho cả hai đợt; nguồn liệt kê thưởng ngoại ngữ riêng và hai đợt có mức chi tiết khác nhau. |
+| g058 | 1,000 → 0,529 | Phase 1 mô tả hình ảnh, logo và không khí từ OCR; OCR chỉ cho biết chữ nhận diện được, không đủ chứng minh toàn bộ nội dung cảnh ảnh. Baseline cũng diễn giải một số ảnh. |
+| g064 | 1,000 → 0,889 | Hai lượt tóm tắt cùng sự kiện; Phase 1 gán thông tin cho phụ đề video. Cần đối chiếu transcript cụ thể để xác định trích dẫn đó có đủ chứng cứ. |
+| g073 | 1,000 → 0,963 | Phase 1 bổ sung trường đủ điều kiện và mốc cập nhật khi kết hợp hai nguồn học bổng; danh sách trường ở đoạn nguồn đầu bị cắt, nên không đủ căn cứ kiểm tra khẳng định cụ thể đó. |
+| g086 | 1,000 → 0,813 | Phase 1 nói có chín chương trình nhưng liệt kê tám nhóm; nguồn đầu thực tế liệt kê mười chương trình nếu tách hai chương trình tiếng Anh. Đây là lỗi đếm trong lượt sinh. |
+
+## 2026-11-08 — Phase 1, gate API và chấm lại RAGAS
+
+Trên cùng index v3, cache truy vấn tắt, so baseline `e59db2f` với Phase 1 (kèm bản
+vá nhận diện yêu cầu ảnh): multimodal mode 123 → 135/150, wants_file 139 → 148/150,
+none_clean 46/51; media wants_file 96 → 99/101, URL 96/97 giữ nguyên; golden_v1
+R@5/MRR 1,000/0,954 và golden_v2 0,910/0,725 giữ nguyên; list_v2 coverage 0,916
+và đủ 37/42 giữ nguyên. So sánh trực tiếp bản vá ảnh với Phase 1 trước vá: năm bộ
+không đổi số đo tổng, tiêu chí từng câu hoặc top_docs. Q15 U5: số ảnh 3 → 8, như
+baseline; Q15 U6 vẫn trượt trên cả hai nhánh. Metrics đạt khi nối Redis; trong
+lượt eval Redis được tắt nên acceptance báo metrics down. Test: 395 passed, 5 skipped;
+ba script test safety/captions/agent đạt.
+
+RAGAS golden_v2: cùng giám khảo `deepseek-v4-flash-sale`, cùng index, hai lượt trả
+lời độc lập; chấm lại tất cả câu lỗi với tối đa 16384 token, riêng một lỗi 504 thử
+lại thêm lần nữa. Sau đó đủ **80/80 cặp áp dụng** (8 câu ngoài phạm vi): mean
+faithfulness **0,9264 → 0,9232**, giảm 0,0032; 17 câu giảm, 15 câu tăng. Chênh lệch
+trung bình này không đạt ngưỡng "không tụt" viết trong plan và chỉ là một mẫu sinh /
+chấm, không xác định được ý nghĩa thống kê. Kiểm tra thủ công 17 câu giảm ở bảng trên:
+ngữ cảnh và URL giống hệt giữa hai nhánh, nhưng một số câu trả lời có suy diễn hoặc
+đếm sai. Không quy các lỗi đó cho việc thay route khi chưa có bằng chứng. Các câu
+trả lời và log đánh giá chi tiết nằm ngoài repo tại `/DATA/tmp/sict-ragas-2026-11-08/`.
