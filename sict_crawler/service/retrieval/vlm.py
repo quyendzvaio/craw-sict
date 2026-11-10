@@ -329,6 +329,11 @@ ANSWER_RULES = (
     "Trả lời câu hỏi của người dùng CHỈ dựa vào ngữ cảnh được cung cấp. "
     "Trả lời ngắn gọn bằng tiếng Việt. Ngữ cảnh chỉ có một phần thông tin thì trả lời phần có (kèm [n]) rồi nói rõ "
     "phần còn thiếu; chỉ nói không có thông tin khi không nguồn nào liên quan đến câu hỏi. "
+    # 2026-11-10 (case kế hoạch đào tạo 2025): model khớp TÊN CHỦ ĐỀ với bất kỳ bài nào mang tên đó và
+    # trình bày như đáp án. Tên chủ đề trùng tiêu đề nguồn KHÔNG phải bằng chứng nội dung.
+    "Nguồn chỉ trùng tên chủ đề của câu hỏi (cùng nói về \"kế hoạch\", \"quy chế\"…) nhưng không chứa "
+    "nội dung cụ thể được hỏi thì trả lời phần thật có trong nguồn (kèm [n]) và nói rõ nguồn chưa chứa "
+    "chi tiết được hỏi — KHÔNG được trình bày nội dung nguồn khác như thể nó trả lời câu hỏi. "
     "Ngữ cảnh gồm các nguồn đánh số [1], [2]…; MỌI ý trả lời phải kết thúc bằng số nguồn dạng [n] "
     "(nguồn là file thì kèm số trang có trong nhãn), chỉ dùng số nguồn có trong ngữ cảnh. "
     # RAGAS 2026-10-26: người dùng hay gõ cụm từ / tên văn bản thay vì câu hỏi; model trả "không tìm thấy" dù

@@ -82,9 +82,12 @@ main{flex:1;width:100%;max-width:760px;margin:0 auto;padding:8px 16px 24px;displ
 .md th,.md td{border:1px solid var(--border);padding:6px 10px;text-align:left;vertical-align:top}
 .md th{background:var(--soft);font-weight:600}.md hr{border:0;border-top:1px solid var(--border);margin:16px 0}
 .md a{color:var(--link);text-underline-offset:2px}
-.md .cite{display:inline-block;font-size:11px;line-height:16px;min-width:18px;padding:0 4px;margin-left:2px;border-radius:6px;text-align:center;
-  vertical-align:2px;text-decoration:none;color:var(--muted);background:var(--soft2);font-weight:600}
-.md a.cite:hover{background:var(--accent);color:var(--bg)}
+/* 2026-11-09 (chủ duyệt): [n] là nút mờ superscript kiểu Wikipedia — chỉ số nhỏ, nâng lên, không khung;
+   bấm mở nguồn (bài hoặc file). Không còn hàng chip "Trích dẫn" / "tải file" cuối câu trả lời. */
+.md sup.cite{line-height:0;vertical-align:super;font-size:.72em;font-weight:600}
+.md sup.cite a.cite-l{display:inline-block;min-width:1.15em;padding:0 .22em;margin-left:.12em;border-radius:4px;
+  text-align:center;text-decoration:none;color:var(--faint);background:var(--soft2);opacity:.9}
+.md sup.cite a.cite-l:hover{color:var(--bg);background:var(--accent);opacity:1}
 
 /* ghi chú, lỗi, nguồn */
 .note{margin-top:12px;padding:8px 12px;border-radius:10px;font-size:13.5px;background:var(--warn-bg);color:var(--warn-fg)}
@@ -215,7 +218,7 @@ main{flex:1;width:100%;max-width:760px;margin:0 auto;padding:8px 16px 24px;displ
   <div class="bar"><a id="lbopen" target="_blank" rel="noopener">Mở ảnh gốc</a><a id="lbpage" target="_blank" rel="noopener">Bài viết chứa ảnh</a><button type="button" id="lbx">Đóng (Esc)</button></div>
 </div>
 
-<script src="md.js?v=1"></script>
-<script src="app.js?v=6"></script>
+<script src="md.js?v=2"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

@@ -102,9 +102,13 @@ def _has_file(result: dict) -> bool:
 def _has_supported_file(question: str, result: dict) -> bool:
     from sict_crawler.core.config import get_settings
     from sict_crawler.service.retrieval import agent, sources
+    rc = get_settings().retrieval
+    # 2026-11-10: file "được hỗ trợ" phải vượt ngưỡng khối (weak_top_cosine khi bật, không chỉ min_cosine)
+    # — file cosine 0,6 trả câu đòi kế hoạch đào tạo 2025 nhưng thực tế là file khảo sát cựu SV 2023.
+    floor = max(rc.min_cosine, rc.weak_top_cosine) if rc.weak_top_cosine > 0 else rc.min_cosine
     for source in result['text']:
         if (getattr(source, 'kind', None) != 'file' or source.cosine is None
-                or source.cosine < get_settings().retrieval.min_cosine):
+                or source.cosine < floor):
             continue
         context = sources.build_context([source], [])
         if agent.evidence(question, [source], [], context)['sufficient']:

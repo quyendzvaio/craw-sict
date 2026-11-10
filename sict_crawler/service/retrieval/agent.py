@@ -67,9 +67,22 @@ def evidence(question: str, tsrcs: list, msrcs: list, context: str) -> dict:
     if not (tsrcs or msrcs):
         return {"sufficient": False, "cosine": None, "cover": 0.0, "reason": "không có nguồn"}
     if not question.strip():
-        return {"sufficient": True, "cosine": None, "cover": None, "reason": "chỉ ảnh, có nguồn"}
+        # 2026-11-10 (chủ duyệt): chỉ ảnh + câu "người này là ai" — đủ CHỈ khi có ít nhất một ảnh khớp
+        # (via=i2i, đã lọc i2i_min ở retriever) hoặc một đoạn chữ của bài chứa ảnh đó (i2i-doc).
+        # Không có gì đạt ngưỡng → không đủ, để câu trả lời rơi nhánh "không tìm thấy".
+        has_i2i = any(getattr(s, "via", None) == "i2i" for s in msrcs)
+        has_i2i_doc = any(getattr(s, "via", None) == "i2i-doc" for s in tsrcs)
+        if has_i2i or has_i2i_doc:
+            return {"sufficient": True, "cosine": None, "cover": None, "reason": "chỉ ảnh, có nguồn khớp"}
+        if tsrcs or msrcs:
+            return {"sufficient": False, "cosine": None, "cover": 0.0,
+                    "reason": "chỉ ảnh, không ảnh/chữ nào đạt ngưỡng"}
+        return {"sufficient": False, "cosine": None, "cover": 0.0, "reason": "không có nguồn"}
     cfg = get_settings().retrieval
     cos = max((s.cosine for s in tsrcs + msrcs if s.cosine is not None), default=None)
+    # 2026-11-10: top-1 cosine (chỉ nguồn CHỮ, media không phải bằng chứng câu hỏi) dưới weak_top_cosine
+    # → nguồn chỉ liên quan một phần; vẫn trả lời nhưng sufficient=False để UI hiện ghi chú.
+    top_cos = max((s.cosine for s in tsrcs if s.cosine is not None), default=None)
     terms = question_terms(question)
     have = set(sparse.tokens(context))
     cover = round(sum(t in have for t in terms) / len(terms), 3) if terms else 1.0
@@ -79,6 +92,8 @@ def evidence(question: str, tsrcs: list, msrcs: list, context: str) -> dict:
     missing = [p for p in query_rewriter.name_phrases(question) if " ".join(fold(p).split()) not in fctx]
     low = [x for x, bad in (("cosine", cos is not None and cos < cfg.min_cosine),
                             ("từ khoá", cover < cfg.min_term_cover),
+                            ("đoạn đầu yếu", top_cos is not None and cfg.weak_top_cosine > 0
+                             and top_cos < cfg.weak_top_cosine),
                             ("tên riêng " + ", ".join(missing), bool(missing))) if bad]
     return {"sufficient": not low, "cosine": None if cos is None else round(cos, 3), "cover": cover,
             "reason": ("thấp: " + ", ".join(low)) if low else "ok"}

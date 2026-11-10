@@ -57,7 +57,7 @@ def test_run_insufficient_when_question_terms_missing(monkeypatch):
     from sict_crawler.service.retrieval import retriever
 
     off = [Source(url="u", title="Thông báo học phí", kind="text", score=0.9, excerpt="học phí học kỳ phụ",
-                  content="học phí học kỳ phụ", cosine=0.7)], []
+                  content="học phí học kỳ phụ", cosine=0.8)], []
     monkeypatch.setattr(retriever, "retrieve", lambda *a, **k: off)
     assert _agent.run("Giá vé xem phim CGV hôm nay?", 5)["sufficient"] is False
     assert _agent.run("Học phí học kỳ phụ?", 5)["sufficient"] is True
@@ -69,7 +69,7 @@ def test_run_insufficient_keeps_only_coupled_media(monkeypatch):
     from sict_crawler.service.retrieval import retriever, router
 
     text = [Source(url="https://x/a", title="Học phí", kind="text", score=0.9, excerpt="học phí học kỳ phụ",
-                   content="học phí học kỳ phụ", cosine=0.7)]
+                   content="học phí học kỳ phụ", cosine=0.8)]
     media = [Source(url="i1", title="Học phí", kind="image", score=0.3, parent_url="https://x/a", via="doc"),
              Source(url="i2", title="Khác", kind="image", score=0.3, parent_url="https://x/z", via="clip")]
     route = router.Route(media="required", outputs=["text", "image"])
@@ -80,6 +80,65 @@ def test_run_insufficient_keeps_only_coupled_media(monkeypatch):
     assert res["sufficient"] is True and [m.url for m in res["media"]] == ["i1", "i2"]
 
 
+def test_evidence_weak_top_cosine_flags_partial():
+    """2026-11-10: top-1 cosine dưới weak_top_cosine → sufficient=False ("đoạn đầu yếu").
+    Chủ duyệt chọn 0,55 sau sweep golden_v2 trên live (0,63 flag 28 câu/21 nhầm, 0,75 flag 72/62 nhầm;
+    0,55 flag 11/0 nhầm). Case "kế hoạch đào tạo 2025" (cosine 0,62) KHÔNG còn bị tín hiệu này chặn —
+    nó được chặn bằng ANSWER_RULES (đề xuất 1) và sanity của người đọc qua ghi chú UI."""
+    from sict_crawler.core.config import get_settings
+    cfg = get_settings().retrieval
+    assert cfg.weak_top_cosine > cfg.min_cosine, "ngưỡng khối phải chặt hơn min_cosine"
+    # cosine 0,50: trên min_cosine (0,45) nhưng dưới weak_top_cosine (0,55) → không đủ
+    weak = [Source(url="u", title="Kế hoạch", kind="text", score=0.9, excerpt="kế hoạch đào tạo",
+                   content="kế hoạch đào tạo năm học mới", cosine=0.50)]
+    ev = _agent.evidence("kế hoạch đào tạo 2025?", weak, [], "kế hoạch đào tạo 2025")
+    assert ev["sufficient"] is False and "đoạn đầu yếu" in ev["reason"]
+    # đủ mạnh (≥ 0,55) → không flag (kể cả case thực tế 0,62)
+    strong = [Source(url="u", title="Kế hoạch", kind="text", score=0.9, excerpt="kế hoạch đào tạo",
+                     content="kế hoạch đào tạo năm 2025 chương trình", cosine=0.62)]
+    ev = _agent.evidence("kế hoạch đào tạo 2025?", strong, [], "kế hoạch đào tạo 2025 chương trình")
+    assert ev["sufficient"] is True and ev["reason"] == "ok"
+
+
+def test_evidence_image_only_requires_matching_source():
+    """2026-11-10 (chủ duyệt, case A/B/C ảnh người): chỉ ảnh + "người này là ai" —
+    A) có ảnh i2i khớp (hoặc i2i-doc) → đủ;  B) chỉ ảnh/text không đạt → không đủ
+    (không trả thông tin người sai);  C) rỗng → không đủ."""
+    hit = [Source(url="i1", title="PGS.TS Trần Tiến Dũng", kind="image", score=0.9, via="i2i", cosine=0.75)]
+    ev = _agent.evidence("", [], hit, "nguồn")          # A: ảnh khớp → đủ
+    assert ev["sufficient"] is True
+    doc = [Source(url="u", title="Trang giảng viên", kind="text", score=0.9, via="i2i-doc")]
+    ev = _agent.evidence("", doc, [], "nguồn")          # A': i2i-doc → đủ
+    assert ev["sufficient"] is True
+    stray = [Source(url="i2", title="Ảnh khác", kind="image", score=0.9, via="clip")]
+    stray_text = [Source(url="u2", title="Bài khác", kind="text", score=0.9, via="text")]
+    ev = _agent.evidence("", stray_text, stray, "nguồn")  # B: không i2i/i2i-doc → không đủ
+    assert ev["sufficient"] is False and "đạt ngưỡng" in ev["reason"]
+    ev = _agent.evidence("", [], [], "")                # C: rỗng → không đủ
+    assert ev["sufficient"] is False
+
+
+def test_router_person_id_in_image_is_optional():
+    """2026-11-10 (chủ duyệt): ảnh người + "người này là ai" → media optional (đối chiếu ảnh giúp,
+    không đòi thêm ảnh). Không ảnh gửi kèm → luật không tự kích."""
+    from sict_crawler.service.retrieval import router
+    r = router.classify_rules("người này là ai?", has_image=True)
+    assert r.media == "optional"
+    r = router.classify_rules("đây là ai trong ảnh?", has_image=True)
+    assert r.media == "optional"
+    # không có ảnh đầu vào → không khớp ý định nhận diện người
+    r = router.classify_rules("người này là ai?", has_image=False)
+    assert r.media == "none"
+
+
+def test_evidence_image_only_with_question_still_runs_rules():
+    """"người này là ai" + ảnh → có câu hỏi → luật cosine/cover chạy như thường (nhánh question.strip())."""
+    weak = [Source(url="u", title="Bài A", kind="text", score=0.9, via="i2i-doc",
+                   content="bài khác hẳn", cosine=0.30)]
+    ev = _agent.evidence("người này là ai?", weak, [], "bài khác hẳn")
+    assert ev["sufficient"] is False  # cosine 0,30 < min_cosine 0,45
+
+
 def test_validate_consolidates_post_checks():
     """Validate là điểm neo duy nhất của hậu kiểm: (a) đủ bằng chứng giữ nguyên; (b) thiếu → chỉ
     giữ media gắn bài chữ; (c) thiếu + required + rỗng sau C → note + bỏ output ảnh; (d) optional
@@ -87,7 +146,7 @@ def test_validate_consolidates_post_checks():
     from sict_crawler.service.retrieval import router
 
     text = [Source(url="https://x/a", title="Học phí", kind="text", score=0.9, excerpt="học phí",
-                   content="học phí học kỳ phụ", cosine=0.7)]
+                   content="học phí học kỳ phụ", cosine=0.8)]
     media = [Source(url="i1", title="Học phí", kind="image", score=0.3, parent_url="https://x/a", via="doc"),
              Source(url="i2", title="Khác", kind="image", score=0.3, parent_url="https://x/z", via="clip")]
     route = router.Route(media="required", outputs=["text", "image"])

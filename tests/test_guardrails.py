@@ -144,8 +144,9 @@ def test_http_responses_do_not_expose_full_content(monkeypatch):
 def test_evidence_requires_question_terms_in_context(monkeypatch):
     monkeypatch.setattr(get_settings().retrieval, "min_term_cover", 0.6)
     monkeypatch.setattr(get_settings().retrieval, "min_cosine", 0.3)
+    monkeypatch.setattr(get_settings().retrieval, "weak_top_cosine", 0.75)
     s = [_src(1, "Thông báo thu học phí học kỳ phụ năm 2025")]
-    s[0].cosine = 0.6
+    s[0].cosine = 0.8   # ≥ weak_top_cosine: test này kiểm term cover, không phải cosine
     ok = agent.evidence("Học phí năm 2025 bao nhiêu?", s, [], sources.build_context(s, []))
     assert ok["sufficient"] and ok["cover"] == 1.0
     off = agent.evidence("Giá vé xem phim CGV hôm nay", s, [], sources.build_context(s, []))
@@ -168,8 +169,14 @@ def test_source_cosine_from_dense_score_when_not_reranked():
 
 def test_evidence_without_sources_or_image_only():
     assert not agent.evidence("học phí?", [], [], "")["sufficient"]
-    img = [Source(url="u", title="t", kind="image", score=0.9)]
-    assert agent.evidence("", [], img, "")["sufficient"]                # chỉ ảnh, có ảnh giống → đủ
+    # 2026-11-10 (chủ duyệt): chỉ ảnh — đủ CHỈ khi ảnh đó đi qua nhánh i2i (đã lọc ngưỡng i2i_min).
+    # Ảnh via=None / via khác không còn tự động "đủ" nữa (tránh nhận diện sai người).
+    img_stray = [Source(url="u", title="t", kind="image", score=0.9)]   # via=None → không đủ
+    assert not agent.evidence("", [], img_stray, "")["sufficient"]
+    img_hit = [Source(url="u", title="t", kind="image", score=0.9, via="i2i")]
+    assert agent.evidence("", [], img_hit, "")["sufficient"]            # i2i khớp → đủ
+    doc_hit = [Source(url="u", title="t", kind="text", score=0.9, via="i2i-doc")]
+    assert agent.evidence("", doc_hit, [], "")["sufficient"]            # i2i-doc → đủ
 
 
 # --- câu gốc luôn được tìm, câu LLM viết lại chỉ bổ sung ------------------------------------------------------------

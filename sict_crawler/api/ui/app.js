@@ -101,8 +101,7 @@ lb.addEventListener('click', (ev) => { if (ev.target === lb) closeImage(); });
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !lb.hidden) closeImage(); });
 
 // ---------- nguồn ----------
-// Thứ tự dưới một câu trả lời (2026-11-05): câu trả lời → ghi chú → lưới "Ảnh & Video" → "Trích dẫn" (gộp theo bài)
-// → tệp đính kèm (hành động, luôn hiện). Không còn danh sách mọi đoạn tìm được: chỉ một danh sách nguồn là "Trích dẫn".
+// Thứ tự dưới một câu trả lời (2026-11-09): câu trả lời (nguồn là nút mờ superscript inline) → ghi chú → "Ảnh & Video".
 const fmtDate = (d) => d ? d.slice(0, 10).split('-').reverse().join('/') : '';
 const pageOf = (s) => (s.kind !== 'file' && s.parent_url) || s.url;    // ảnh/video → bài chứa nó
 const VIDEO = new Set(['video', 'video_frame']);
@@ -161,64 +160,13 @@ function renderMedia(box, media) {
   }
 }
 
-// tệp đính kèm là hành động (tải về / mở trang chứa file) → luôn hiện; mọi đoạn văn bản tìm được → mục thu gọn
-function renderText(box, text) {
-  if (!(text || []).length) return;
-  box.hidden = false;
-  const files = [], seenFile = new Set();
-  for (const s of text) if (s.kind === 'file' && !seenFile.has(s.url)) { seenFile.add(s.url); files.push(s); }
-  if (files.length) {
-    const row = el('div', 'files');
-    for (const s of files) {
-      row.appendChild(srcLink(s));
-      if (s.parent_url) row.appendChild(link('src text', 'trang chứa file', s.parent_url));
-    }
-    box.appendChild(row);
-  }
-  // Không hiện danh sách "Nguồn tham khảo" (mọi đoạn tìm được): chủ dự án 2026-11-05 chỉ giữ một danh sách nguồn
-  // dưới câu trả lời là "Trích dẫn" (nguồn câu trả lời thật sự dùng; không trích gì thì server thêm "Nguồn:").
-  if (!files.length) box.hidden = true;
-}
-
-// "[3][7]", "[11]–[16]": số liền nhau ≥ 3 gộp thành khoảng
-function fmtNums(ns) {
-  const out = [];
-  for (let i = 0; i < ns.length;) {
-    let j = i;
-    while (j + 1 < ns.length && ns[j + 1] === ns[j] + 1) j++;
-    if (j - i >= 2) out.push(`[${ns[i]}]–[${ns[j]}]`);
-    else for (let k = i; k <= j; k++) out.push(`[${ns[k]}]`);
-    i = j + 1;
-  }
-  return out.join('');
-}
-
-// D24: mỗi chip một bài/tài liệu: các [n] trỏ cùng bài (đoạn văn của bài + ảnh của bài) gộp lại, link tới bài đó.
-// all = nguồn chữ + nguồn media theo đúng thứ tự đánh số [1]…[n] của server (citations.index / enforce).
-function renderCitations(box, list, all) {
-  box.textContent = '';
-  box.hidden = false;
-  box.appendChild(el('span', 'lbl', 'Trích dẫn'));
-  const groups = new Map();
-  for (const c of list) {
-    const s = all[c.n - 1];
-    const href = (s && s.url === c.url ? pageOf(s) : null) || c.url;
-    const key = (href || c.title || String(c.n)).replace(/^https?:\/\//, '').replace(/\/+$/, '').toLowerCase();
-    if (!groups.has(key)) groups.set(key, {href, items: []});
-    groups.get(key).items.push(c);
-  }
-  const ordered = [...groups.values()].sort((x, y) => Math.min(...x.items.map((c) => c.n)) - Math.min(...y.items.map((c) => c.n)));
-  for (const g of ordered) {
-    const ns = g.items.map((c) => c.n).sort((a, b) => a - b);
-    const first = g.items[0];
-    // một [n]: nhãn cite đầy đủ (file kèm trang, bài kèm mục); nhiều [n] cùng bài: tên bài
-    const cites = new Set(g.items.map((c) => c.cite || c.title));
-    const name = cites.size === 1 ? (first.cite || first.title || g.href) : (first.title || first.cite || g.href);
-    const kind = g.items.some((c) => c.kind === 'file') ? 'file' : 'text';
-    const a = link('src cite-' + kind, `${fmtNums(ns)} ${name}`.slice(0, 140), g.href);
-    a.title = [...cites].join('\n');
-    box.appendChild(a);
-  }
+// 2026-11-09 (chủ duyệt): không còn hàng chip "Trích dẫn" / "tải file" cuối câu trả lời — nguồn hiện thành nút mờ
+// superscript ngay sau đoạn dùng nó (md.js). Hàm này chỉ chọn link cho [n]: file → mở thẳng file (PDF/PPTX),
+// ảnh/video → bài chứa nó, đoạn văn → bài. all = nguồn chữ + media theo đúng thứ tự đánh số [1]…[n] của server.
+function citeTarget(c, all) {
+  const s = all[c.n - 1];
+  const href = (s && s.url === c.url ? pageOf(s) : null) || c.url;
+  return {...c, url: href, cite: c.cite || c.title || href};
 }
 
 function httpError(status) {
@@ -258,9 +206,7 @@ async function ask(q, b64, imgUrl) {
   const body = el('div', 'md');
   const notes = el('div');
   const mbox = el('div', 'media'); mbox.hidden = true;   // lưới "Ảnh & Video" ngay dưới câu trả lời
-  const cbox = el('div', 'srcs'); cbox.hidden = true;     // "Trích dẫn" — [n] ↔ nguồn (D24), gộp theo bài
-  const sbox = el('div', 'srcs'); sbox.hidden = true;     // tệp đính kèm (tải file / trang chứa file)
-  bot.append(phase, body, notes, mbox, cbox, sbox);
+  bot.append(phase, body, notes, mbox);
   bt.append(av, bot);
   log.append(ut, bt);
   toBottom();
@@ -309,11 +255,10 @@ async function ask(q, b64, imgUrl) {
         try { obj = JSON.parse(data); } catch { continue; }
         if (obj.delta) { raw += obj.delta; paint(); }
         if (obj.answer) { raw = obj.answer; paint(); }          // server chuẩn hoá lại câu trả lời (bỏ [n] ảo)
-        // D24: trích dẫn bắt buộc — [n] ↔ nguồn (file PDF/PPTX kèm số trang trong nhãn cite)
+        // D24: trích dẫn bắt buộc — [n] ↔ nguồn; md.js vẽ thành nút mờ superscript, bấm mở nguồn
         if (obj.citations && obj.citations.length) {
-          for (const c of obj.citations) cites[c.n] = c;      // [n] trong câu trả lời → link tới nguồn n
+          for (const c of obj.citations) cites[c.n] = citeTarget(c, all);
           paint();
-          renderCitations(cbox, obj.citations, all);
         }
         if (obj.status) {
           if (phase.isConnected) phaseText.textContent = 'Đang soạn câu trả lời';
@@ -328,7 +273,6 @@ async function ask(q, b64, imgUrl) {
           all = [...(obj.text || []), ...(obj.media || [])];   // đánh số [n] như server: chữ trước, media sau
           const stick = nearBottom();
           renderMedia(mbox, obj.media);
-          renderText(sbox, obj.text);
           if (stick) toBottom();
         }
       }
