@@ -30,11 +30,25 @@ def _record(question, has_image, rules, proposal, final, origin, started):
 
 def route(question: str, has_image: bool) -> router.Route:
     started = time.monotonic()
+    from sict_crawler.service.retrieval import prompt_cache as pc
+    from sict_crawler.service.retrieval import retriever
     rules = router.classify_rules(question, has_image=has_image)
     # optional theo chủ đề và câu liệt kê đều có thể là câu hỏi thuần thông tin.
     if not question.strip() or rules.media == 'required':
         return _record(question, has_image, rules, None, rules, 'rules', started)
     cfg = get_settings()
+    # pc:v1 T1 route cache (spec: docs/prompt_caching_multi_tier.md): key đủ ngữ cảnh —
+    # đổi model router / policy / câu hỏi / ảnh đều đổi key. Chỉ cache nhánh LLM (luật ~0 ms).
+    image_hash = hashlib.sha256(str(has_image).encode()).hexdigest()[:16]
+    qkey = retriever.query_cache_key(question, top_k=0)[:32]
+    cached_route = pc.get_route(question, image_hash, qkey)
+    if cached_route is not None:
+        try:
+            decision = RouteDecision.model_validate(cached_route).model_dump()
+            final = router.policy_merge(rules, decision, question=question)
+            return _record(question, has_image, rules, decision, final, 'pc-cache', started)
+        except (TypeError, ValueError):
+            pass
     normalized = question
     if cfg.retrieval.restore_accents:
         from sict_crawler.service.retrieval import accent
@@ -62,5 +76,8 @@ def route(question: str, has_image: bool) -> router.Route:
             except (TypeError, ValueError):
                 decision = None
     final = router.policy_merge(rules, decision, question=question)
+    if decision is not None:
+        # Lưu T1 route cache sau khi LLM chạy thật (miss) — không cache nhánh rules-only.
+        pc.put_route(question, image_hash, qkey, decision)
     return _record(question, has_image, rules, decision, final,
                    origin if decision is not None else 'fallback', started)

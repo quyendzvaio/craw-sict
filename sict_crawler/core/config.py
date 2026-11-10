@@ -197,6 +197,12 @@ class LlmConfig:
     router_shadow: bool = False
     router_mode: str = "rules"  # rules | shadow | hybrid; hybrid chỉ dùng sau gate
     router_reroute: bool = False
+    # Prompt caching nhiều tầng (spec: docs/prompt_caching_multi_tier.md). Default tắt; bật bằng PROMPT_CACHE_ENABLED.
+    # T1 route cache (luật+LLM shadow), T2 câu trả lời sinh. Key chứa đủ ngữ cảnh để không phục vụ kết quả sai.
+    prompt_cache_enabled: bool = False          # PROMPT_CACHE_ENABLED
+    prompt_cache_route_ttl: int = 86400         # PROMPT_CACHE_ROUTE_TTL_S (giây) — T1
+    prompt_cache_prompt_ttl: int = 43200        # PROMPT_CACHE_PROMPT_TTL_S (giây) — T2
+    prompt_cache_template_version: str = "v1"   # PROMPT_CACHE_TEMPLATE_VERSION — đổi prompt answer → bump
     # D27: ngân sách ngữ cảnh gửi LLM (ký tự) — mỗi nguồn tối đa source_chars, tổng ≈ context_chars (chia đều khi nhiều
     # nguồn). Trước đây LLM chỉ thấy 300 ký tự đầu mỗi đoạn (excerpt hiển thị trên UI).
     # 2026-11-03: 1500 → 2200 — 74% đoạn của index dài hơn 1500 ký tự (trung vị ~1940) nên phần lớn nguồn mất ~1/4
@@ -243,6 +249,14 @@ class LlmConfig:
             raise ValueError("LLM_ROUTER_MAX_NEW_TOKENS phải ≥ 0")
         if os.environ.get("LLM_ROUTER_SHADOW"):
             self.router_shadow = _env_bool(os.environ["LLM_ROUTER_SHADOW"])
+        if os.environ.get("PROMPT_CACHE_ENABLED"):
+            self.prompt_cache_enabled = _env_bool(os.environ["PROMPT_CACHE_ENABLED"])
+        if os.environ.get("PROMPT_CACHE_ROUTE_TTL_S"):
+            self.prompt_cache_route_ttl = int(os.environ["PROMPT_CACHE_ROUTE_TTL_S"])
+        if os.environ.get("PROMPT_CACHE_PROMPT_TTL_S"):
+            self.prompt_cache_prompt_ttl = int(os.environ["PROMPT_CACHE_PROMPT_TTL_S"])
+        if os.environ.get("PROMPT_CACHE_TEMPLATE_VERSION"):
+            self.prompt_cache_template_version = os.environ["PROMPT_CACHE_TEMPLATE_VERSION"]
 
 
 @dataclass

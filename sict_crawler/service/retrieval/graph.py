@@ -169,9 +169,11 @@ def _answer_events(question: str, image: str | None, result: dict):
     if not result['sufficient']:
         context = '(Lưu ý: tài liệu tìm được chỉ liên quan một phần, câu trả lời có thể chưa đầy đủ.)\n\n' + context
     prompt = question.strip() or 'Người dùng gửi một ảnh, không kèm câu hỏi. Hãy cho biết thông tin liên quan đến ảnh này.'
+    # T2 prompt cache: hit → stream lại từ cache, không gọi LLM (spec docs/prompt_caching_multi_tier.md).
+    from sict_crawler.service.retrieval.prompt_cache import stream_answer_cached
     pieces = []
     try:
-        for chunk in vlm.stream_answer(prompt, context, image):
+        for chunk in stream_answer_cached(prompt, context, image):
             pieces.append(chunk)
             yield {'delta': chunk}
     except Exception:

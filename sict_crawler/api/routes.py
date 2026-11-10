@@ -116,7 +116,11 @@ async def chat(q: QueryIn):
         def worker():
             """vlm.stream_answer is a sync generator doing blocking HTTP."""
             try:
-                for chunk in vlm.stream_answer(q.question.strip() or IMAGE_ONLY_QUESTION, context, q.image):
+                # T2 prompt cache (spec: docs/prompt_caching_multi_tier.md): hit → stream lại từ
+                # cache, không gọi LLM. Default tắt; mọi key chứa đủ model/context/index.
+                from sict_crawler.service.retrieval.prompt_cache import stream_answer_cached
+                gen = stream_answer_cached(q.question.strip() or IMAGE_ONLY_QUESTION, context, q.image)
+                for chunk in gen:
                     q_out.put(chunk)
             finally:
                 q_out.put(SENTINEL)
