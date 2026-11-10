@@ -285,10 +285,10 @@ class RetrievalConfig:
     min_cosine: float = 0.45     # sufficient: cosine câu hỏi↔đoạn tốt nhất tối thiểu (jina-clip-v2, index v3)
     min_term_cover: float = 0.8  # sufficient: tỷ lệ từ nội dung của câu hỏi (bỏ dấu, bỏ hư từ) có trong ngữ cảnh
     # 2026-11-10 (case "kế hoạch đào tạo 2025" trả 8 bài kế hoạch không bài nào đúng, cosine top-1 ~0,62):
-    # top-1 dưới ngưỡng khối này → sufficient=False (nguồn chỉ liên quan một phần). Chủ duyệt chọn 0,63
-    # sau khi thử 0,75 trên live (0,62 vẫn đủ → sai vẫn trả lời tự tin): 0,63 chặn case đó mà giữ phần
-    # lớn câu golden ở mức đủ. 0 = tắt.
-    weak_top_cosine: float = 0.63
+    # top-1 dưới ngưỡng khối này → sufficient=False (nguồn chỉ liên quan một phần). Sweep golden_v2 trên
+    # live (2026-11-10): 0,55 flag 11/80 (0 chặn nhầm), 0,63 flag 28 (21 chặn nhầm), 0,75 flag 72 (62
+    # chặn nhầm — cosine câu ĐÚNG rải dày 0,58–0,72) → chủ duyệt giữ 0,55. 0 = tắt.
+    weak_top_cosine: float = 0.55
 
 
 @dataclass

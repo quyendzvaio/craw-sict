@@ -81,24 +81,21 @@ def test_run_insufficient_keeps_only_coupled_media(monkeypatch):
 
 
 def test_evidence_weak_top_cosine_flags_partial():
-    """2026-11-10 (đề xuất 2, chủ duyệt nâng 0,55 → 0,75): top-1 cosine dưới weak_top_cosine → sufficient=False
-    ("đoạn đầu yếu") — case "kế hoạch đào tạo 2025" trả 8 bài kế hoạch sai bài, cosine ~0,62 cũ không chặn."""
+    """2026-11-10: top-1 cosine dưới weak_top_cosine → sufficient=False ("đoạn đầu yếu").
+    Chủ duyệt chọn 0,55 sau sweep golden_v2 trên live (0,63 flag 28 câu/21 nhầm, 0,75 flag 72/62 nhầm;
+    0,55 flag 11/0 nhầm). Case "kế hoạch đào tạo 2025" (cosine 0,62) KHÔNG còn bị tín hiệu này chặn —
+    nó được chặn bằng ANSWER_RULES (đề xuất 1) và sanity của người đọc qua ghi chú UI."""
     from sict_crawler.core.config import get_settings
     cfg = get_settings().retrieval
     assert cfg.weak_top_cosine > cfg.min_cosine, "ngưỡng khối phải chặt hơn min_cosine"
-    # cosine 0,62: trên min_cosine (0,45) nhưng dưới weak_top_cosine (0,75) → không đủ (case thực tế)
+    # cosine 0,50: trên min_cosine (0,45) nhưng dưới weak_top_cosine (0,55) → không đủ
     weak = [Source(url="u", title="Kế hoạch", kind="text", score=0.9, excerpt="kế hoạch đào tạo",
-                   content="kế hoạch đào tạo năm học mới", cosine=0.62)]
+                   content="kế hoạch đào tạo năm học mới", cosine=0.50)]
     ev = _agent.evidence("kế hoạch đào tạo 2025?", weak, [], "kế hoạch đào tạo 2025")
     assert ev["sufficient"] is False and "đoạn đầu yếu" in ev["reason"]
-    # cosine 0,50 cũng không đủ
-    mid = [Source(url="u", title="Kế hoạch", kind="text", score=0.9, excerpt="kế hoạch đào tạo",
-                  content="kế hoạch đào tạo năm 2025 chương trình", cosine=0.50)]
-    ev = _agent.evidence("kế hoạch đào tạo 2025?", mid, [], "kế hoạch đào tạo 2025 chương trình")
-    assert ev["sufficient"] is False
-    # đủ mạnh (≥ 0,75) → không flag
+    # đủ mạnh (≥ 0,55) → không flag (kể cả case thực tế 0,62)
     strong = [Source(url="u", title="Kế hoạch", kind="text", score=0.9, excerpt="kế hoạch đào tạo",
-                     content="kế hoạch đào tạo năm 2025 chương trình", cosine=0.78)]
+                     content="kế hoạch đào tạo năm 2025 chương trình", cosine=0.62)]
     ev = _agent.evidence("kế hoạch đào tạo 2025?", strong, [], "kế hoạch đào tạo 2025 chương trình")
     assert ev["sufficient"] is True and ev["reason"] == "ok"
 
