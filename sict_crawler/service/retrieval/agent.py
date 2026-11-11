@@ -144,7 +144,8 @@ def _validate_step(question, state):
     if getattr(route, "oos", False):
         tsrcs, msrcs = [], []
         route.outputs = []
-    ctx = sources.build_context(tsrcs, msrcs, context_chars=budget)
+    ctx = sources.build_context(tsrcs, msrcs, context_chars=budget,
+                                media_first=bool(route and route.media == "required"))
     ev = evidence(question, tsrcs, msrcs, ctx)
     if getattr(route, "oos", False):
         ev = {**ev, "sufficient": False, "reason": "ngoài phạm vi"}
@@ -153,7 +154,8 @@ def _validate_step(question, state):
     tsrcs, msrcs, note, route = validate(question, tsrcs, msrcs, ctx, ev, route)
     if len(msrcs) < before:
         log.append(f"media: bỏ {before - len(msrcs)} ảnh/video không gắn bài chữ (thiếu bằng chứng)")
-        ctx = sources.build_context(tsrcs, msrcs, context_chars=budget)
+        ctx = sources.build_context(tsrcs, msrcs, context_chars=budget,
+                                    media_first=bool(route and route.media == "required"))
     return _result(tsrcs, msrcs, ctx, state["attempts"], ev["sufficient"], log, route, note)
 
 
