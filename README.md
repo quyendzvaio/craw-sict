@@ -44,6 +44,12 @@ Hỏi được bằng chữ, bằng ảnh, hoặc cả hai; câu trả lời có
   gate (bảo toàn quyết định ≥99 %, latency, quota ≤1 call/request). Chi tiết: [`PLAN.md`](PLAN.md).
 - **Cập nhật tăng dần an toàn**: phát hiện bài mới / bài sửa theo hash nội dung đã làm sạch, chỉ xoá
   khi HTTP 404/410, cầu chì xoá hàng loạt, reconcile Postgres ↔ Qdrant hằng đêm.
+- **Prompt caching 2 tầng** (2026-11-11, mặc định bật; tắt bằng `PROMPT_CACHE_ENABLED=0`): T1 cache
+  quyết định route (TTL 24h) + T2 cache câu trả lời sinh (TTL 12h) trong Redis db 3; key gồm câu hỏi
+  (giữ dấu), ảnh, model, max_tokens, ngữ cảnh (sha256) và fingerprint của index — ngữ cảnh khác thì
+  key khác, không phục vụ câu trả lời cũ cho nguồn mới. Cache hit stream lại nguyên câu trả lời,
+  miss thì stream LLM và chỉ lưu khi stream hoàn tất không lỗi. Chi tiết:
+  [`docs/prompt_caching_multi_tier.md`](docs/prompt_caching_multi_tier.md).
 
 ## Kiến trúc
 
@@ -181,7 +187,8 @@ uv run python -m tests.test_agent
 |---|---|---|
 | `eval/golden_v2.jsonl` (88 câu, URL đáp án, media/file/OOS) | `scripts/eval_media.py --api` (HTTP, cache tắt) | media mode 88/88, file intent 88/88, OOS 85/85 có nhãn |
 | `eval/list_v1.jsonl` (12 câu liệt kê + 8 câu ngoài phạm vi) | `scripts/eval_api.py --list` | độ phủ mục 0,970 · `sufficient` đúng 0,95 |
-| RAGAS controlled trên 80 cặp golden_v2 | `scripts/eval_ragas.py collect / score` | faithfulness 0,8993 (baseline) → 0,8977 (nhánh, g057 giảm); gate không tụt chưa nghiệm thu |
+| RAGAS golden_v2 (bản đo cuối, 2026-11-08, 80/80 cặp áp dụng) | `scripts/eval_ragas.py collect / score` | faithfulness baseline 0,926 vs Phase 1 0,923 (−0,003, 17 giảm / 15 tăng, ngữ cảnh + URL giống hệt); url_hit 0,923 · false_abstain 0,05 → 0,062 · abstain_ok 1,0 |
+| RAGAS golden_v2 (so PR #30/#31, giám khảo qwen3.5, `eval/results/ragas/2026-11-03-g2`) | `scripts/eval_ragas.py collect / score` | faithfulness 0,946 · answer_relevancy 0,739 · context_precision 0,758 · context_recall 0,887 · url_hit 0,897 · false_abstain 0,075 |
 | Nghiệm thu U1–U6 qua HTTP | `scripts/accept_api.py --api URL` | hybrid thật 59/60 (g004 trượt cả baseline); rules 52/54 |
 
 Chạy đánh giá trước khi đổi model, ngưỡng hay luật chunk. Lịch sử số đo chi tiết (Phase 0 →
@@ -200,8 +207,11 @@ Hai VM, Docker Compose (không k8s, D15):
   `scripts/cutover_v3.sh` (`pack`, `env-check`, `backup`, `load` bằng image worker, `verify`, `upload-media`,
   `rollback`) làm cutover từng bước; thứ tự và checklist ở [`docs/deploy_v3.md`](docs/deploy_v3.md).
 - **CI/CD**: `ci.yml` chạy test và build thử image trên mọi PR; `release.yml` đẩy
-  `ghcr.io/<owner>/sict-{api,worker,embed}:<sha>` khi merge vào `main`; `cd.yml` (chạy tay, chỉ
-  `main`) kéo image theo SHA về VM, không build trên VM.
+  `ghcr.io/<owner>/sict-{api,worker,embed}:<sha>` khi merge vào `main`; `cd.yml` **tự động deploy**
+  khi merge vào `main` (chờ image build xong tối đa 20 phút rồi kéo về cả 2 VM; deploy tay vẫn giữ
+  để chọn target / deploy_embed / deploy_alloy; rollback = chạy lại với tag cũ), không build trên VM.
+- **HLD router 4 phase** (middleware → shadow LLM → hybrid → LangGraph): [`PLAN.md`](PLAN.md) §HLD;
+  kết quả đo từng phase và các gate chưa đạt (latency hybrid, RAGAS không tụt) cũng nằm ở đó.
 - **Giám sát**: Grafana Alloy trên mỗi host đẩy metric + log lên Grafana Cloud; dashboard sinh từ
   code (`scripts/grafana_dashboards.py`).
 

@@ -1,9 +1,9 @@
 # Prompt caching nhiều tầng (multi-tier) — spec thiết kế
 
-**Mục đích:** Giảm độ trễ và số lần gọi LLM cho router + answering, giữ kết quả giống hệt (bit-for-bit) khi cache hit; không làm thay đổi hành vi serving mặc định (default tắt; bật bằng cờ rõ ràng).
+**Mục đích:** Giảm độ trễ và số lần gọi LLM cho router + answering, giữ kết quả giống hệt (bit-for-bit) khi cache hit; mặc định bật từ 2026-11-11 (chủ duyệt), tắt bằng `PROMPT_CACHE_ENABLED=0`.
 
 **Nguyên tắc không phá:**
-- Default bật/tắt bằng biến môi trường riêng (`PROMPT_CACHE_ENABLED=false`), không ảnh hưởng latency khi tắt.
+- Default bật/tắt bằng biến môi trường riêng (`PROMPT_CACHE_ENABLED`), env ghi đè default.
 - Cache key chứa đầy đủ ngữ cảnh phân biệt (câu hỏi + ảnh + model + max_tokens + index fingerprint + phiên bản policy), tránh phục vụ kết quả sai.
 - Không cache câu trả lời sinh cuối cùng (`answer`) nếu owner yêu cầu cân nhắc bản quyền/personal data — chỉ cache *prompt-tùy-token* (token-level / response-template) và *route decision* đã có.
 - Không thay LangGraph/StateGraph, không thêm dependency mới (chỉ dùng stdlib + `hashlib`, `json`).
@@ -50,7 +50,7 @@ Nhờ StateGraph (Phase 3) có thể đóng gói các node `route`/`answer` vào
 
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
-| `PROMPT_CACHE_ENABLED` | `false` | Bật/tắt toàn bộ |
+| `PROMPT_CACHE_ENABLED` | `true` (2026-11-11; ban đầu `false`) | Bật/tắt toàn bộ |
 | `PROMPT_CACHE_ROUTE_TTL_S` | `86400` | TTL route cache |
 | `PROMPT_CACHE_PROMPT_TTL_S` | `43200` | TTL prompt/answer cache |
 | `PROMPT_CACHE_TEMPLATE_VERSION` | `"v1"` | Phiên bản template câu trả lời |
@@ -96,7 +96,7 @@ answer(question, context, image, model, max_tokens):
 
 ## 7. File dự kiến tạo / sửa
 
-- `sict_crawler/core/config.py`: thêm 5 biến cấu hình vào `LlmConfig` (mặc định tắt).
+- `sict_crawler/core/config.py`: thêm 5 biến cấu hình vào `LlmConfig` (mặc định bật từ 2026-11-11 theo chủ duyệt; ban đầu tắt). Kiểm tra trước khi bật: test suite 26/26 (key phân biệt đầy đủ, stream hit/miss đúng, tắt → không chạm Redis).
 - `sict_crawler/service/retrieval/prompt_cache.py` (mới): hàm tạo key, wrapper `route_cached` / `answer_cached` (stdlib + Redis cache hiện có).
 - `tests/test_prompt_cache.py` (mới): key uniqueness, TTL, invalidate khi đổi policy/model, miss→hit.
 - `docs/prompt_caching_multi_tier.md`: spec này (lưu vào docs).
