@@ -1,13 +1,17 @@
 name: CD
-# Deploy thủ công (D10): VM KHÔNG build — chỉ pull image GHCR đã build ở workflow release-images, theo commit SHA.
-#   Actions → CD → Run workflow (nhánh main) → target, tag (trống = commit hiện tại của main), embed / alloy tuỳ chọn.
+# Deploy tự động khi merge vào main (push) + vẫn giữ chạy tay (workflow_dispatch):
+#   push main → workflow release-images build image GHCR theo SHA → CD chờ image xong rồi deploy cả 2 VM.
+#   Deploy tay: Actions → CD → Run workflow (nhánh main) → target, tag (trống = commit hiện tại của main), embed / alloy tuỳ chọn.
 #   Rollback = chạy lại với tag cũ (VM ghi tag trước vào .env: API_IMAGE_PREV / WORKER_IMAGE_PREV / EMBED_IMAGE_PREV).
+# Push tự động chỉ deploy all/vm1/vm2 mặc định: KHÔNG deploy_embed, KHÔNG deploy_alloy (chỉ bấm tay khi cần).
 # Chỉ chạy từ main; job deploy dùng environment `production` (thêm Required reviewers trong Settings → Environments
-# để phải duyệt trước khi chạy).
+# để phải duyệt trước khi chạy — bật qua UI, trigger push vẫn tôn trọng reviewers).
 # Secrets: VM1_HOST, VM1_KEY, VM2_HOST, VM2_KEY (đã có); alloy thêm GCLOUD_HOSTED_METRICS_URL, GCLOUD_HOSTED_METRICS_ID,
 #   GCLOUD_SCRAPE_INTERVAL, GCLOUD_HOSTED_LOGS_URL, GCLOUD_HOSTED_LOGS_ID, GCLOUD_RW_API_KEY.
 # Trên VM: IP/mật khẩu nội bộ nằm trong ~/craw-sict/.env của VM (xem .env.worker.example), KHÔNG ghi cứng ở đây.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       target:
@@ -51,6 +55,7 @@ jobs:
         env:
           IN_TAG: ${{ inputs.tag }}
         run: |
+          # push trigger thì `inputs.tag` rỗng → tag = SHA của commit vừa merge vào main
           tag="${IN_TAG:-${{ github.sha }}}"
           [[ "$tag" =~ ^[0-9a-f]{40}$ ]] || { echo "tag phải là SHA đầy đủ 40 ký tự"; exit 1; }
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -60,6 +65,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Image của tag phải tồn tại (release-images đã chạy xong)
+        # push trigger: release-images chạy song song ngay khi push — chờ tối đa 20 phút thay vì fail ngay
+        if: github.event_name == 'push'
+        timeout-minutes: 20
+        run: |
+          for i in $(seq 1 40); do
+            ok=1
+            for img in api worker embed; do
+              docker manifest inspect "ghcr.io/${{ github.repository_owner }}/sict-$img:${{ steps.t.outputs.tag }}" >/dev/null || ok=0
+            done
+            [ "$ok" = 1 ] && exit 0
+            sleep 30
+          done
+          echo "release-images chưa build xong image của ${{ steps.t.outputs.tag }} sau 20 phút"; exit 1
+      - name: "Image của tag phải tồn tại (deploy tay: phải build xong trước)"
+        if: github.event_name != 'push'
         run: |
           for img in api worker embed; do
             docker manifest inspect "ghcr.io/${{ github.repository_owner }}/sict-$img:${{ steps.t.outputs.tag }}" >/dev/null \
