@@ -197,9 +197,10 @@ class LlmConfig:
     router_shadow: bool = False
     router_mode: str = "rules"  # rules | shadow | hybrid; hybrid chỉ dùng sau gate
     router_reroute: bool = False
-    # Prompt caching nhiều tầng (spec: docs/prompt_caching_multi_tier.md). Default tắt; bật bằng PROMPT_CACHE_ENABLED.
-    # T1 route cache (luật+LLM shadow), T2 câu trả lời sinh. Key chứa đủ ngữ cảnh để không phục vụ kết quả sai.
-    prompt_cache_enabled: bool = False          # PROMPT_CACHE_ENABLED
+    # Prompt caching nhiều tầng (spec: docs/prompt_caching_multi_tier.md). 2026-11-11: BẬT mặc định theo chủ duyệt
+    # (T1 route TTL 24h, T2 answer TTL 12h; key chứa đủ ngữ cảnh để không phục vụ kết quả sai; tắt bằng PROMPT_CACHE_ENABLED=0).
+    # T1 route cache (luật+LLM shadow), T2 câu trả lời sinh.
+    prompt_cache_enabled: bool = True           # PROMPT_CACHE_ENABLED
     prompt_cache_route_ttl: int = 86400         # PROMPT_CACHE_ROUTE_TTL_S (giây) — T1
     prompt_cache_prompt_ttl: int = 43200        # PROMPT_CACHE_PROMPT_TTL_S (giây) — T2
     prompt_cache_template_version: str = "v1"   # PROMPT_CACHE_TEMPLATE_VERSION — đổi prompt answer → bump
