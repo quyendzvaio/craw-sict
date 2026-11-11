@@ -88,7 +88,8 @@ jobs:
 
   deploy-vm1:
     needs: prepare
-    if: inputs.target == 'all' || inputs.target == 'vm1'
+    # push trigger thì `inputs` rỗng → coi như target=all (deploy cả 2 VM)
+    if: inputs.target == 'all' || inputs.target == 'vm1' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -142,7 +143,7 @@ jobs:
 
   deploy-vm2:
     needs: prepare
-    if: inputs.target == 'all' || inputs.target == 'vm2'
+    if: inputs.target == 'all' || inputs.target == 'vm2' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -190,7 +191,7 @@ jobs:
 
   deploy-embed:
     needs: [prepare, deploy-vm2]
-    if: always() && needs.prepare.result == 'success' && inputs.deploy_embed && (inputs.target == 'all' || inputs.target == 'vm2')
+    if: always() && needs.prepare.result == 'success' && inputs.deploy_embed == true && (inputs.target == 'all' || inputs.target == 'vm2' || github.event_name == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 75
     environment: production
