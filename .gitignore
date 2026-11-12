@@ -41,3 +41,10 @@ eval/results/compare/corpus.jsonl
 # cấu hình Alloy đã render (có URL/ID Grafana Cloud) — sinh bằng scripts/render_alloy.py
 monitor/rendered/
 eval/results/ragas/*.answers.jsonl
+
+# công cụ trợ lý cục bộ — không đưa lên GitHub
+.claude/
+codex/
+docs/superpowers/
+graphify-out/
+AGENT.md
