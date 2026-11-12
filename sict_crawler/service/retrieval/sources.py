@@ -74,18 +74,23 @@ MIN_SOURCE_CHARS = 400   # nhiều nguồn: mỗi nguồn vẫn giữ ít nhất
 
 
 def build_context(tsrcs: list[Source], msrcs: list[Source],
-                  source_chars: int | None = None, context_chars: int | None = None) -> str:
+                  source_chars: int | None = None, context_chars: int | None = None,
+                  media_first: bool = False) -> str:
     """D27: mỗi nguồn đưa nội dung đầy đủ (`content`, rỗng ở bản cache cũ → excerpt), cắt ở min(source_chars,
-    context_chars / số nguồn) — chia đều để nguồn cuối không bị cắt mất (câu hỏi liệt kê có tới 10 nguồn)."""
+    context_chars / số nguồn) — chia đều để nguồn cuối không bị cắt mất (câu hỏi liệt kê có tới 10 nguồn).
+    media_first (2026-11-12): khối ảnh/video xếp TRƯỚC nguồn chữ (câu đòi ảnh/video) — RAGAS 11-11: context_precision
+    nhóm 8 câu đòi media 0,37 → 0,80 vì giám khảo coi unit đứng đầu quan trọng hơn; số [n] KHÔNG đổi (text vẫn
+    [1..n], media [n+1..]) nên trích dẫn LLM và citations phía server giữ nguyên."""
     cfg = get_settings().llm
     srcs = tsrcs + msrcs
     per = source_chars or cfg.source_chars
     if srcs:
         per = max(MIN_SOURCE_CHARS, min(per, (context_chars or cfg.context_chars) // len(srcs)))
     # D24: nguồn đánh số [1]…[n] (chữ trước, media sau) — LLM trích dẫn bằng [n], citations.enforce kiểm lại
-    parts = [f"[{i}] ({s.kind}) {s.cite or s.title or s.url}{_date_tag(s)}\n{(s.content or s.excerpt)[:per]}"
-             for i, s in enumerate(tsrcs, 1)]
-    parts += _media_parts(msrcs, len(tsrcs) + 1, per)
+    text_parts = [f"[{i}] ({s.kind}) {s.cite or s.title or s.url}{_date_tag(s)}\n{(s.content or s.excerpt)[:per]}"
+                  for i, s in enumerate(tsrcs, 1)]
+    media_parts = _media_parts(msrcs, len(tsrcs) + 1, per)
+    parts = media_parts + text_parts if media_first else text_parts + media_parts
     return "\n\n---\n\n".join(parts)
 
 

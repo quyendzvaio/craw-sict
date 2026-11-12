@@ -179,6 +179,18 @@ def test_media_context_grouped_by_post_with_ocr_label():
     assert [e["n"] for e in C.index(t + m)] == [1, 2, 3, 4]       # số [n] không đổi
 
 
+def test_media_first_keeps_numbering():
+    """2026-11-12 (RAGAS 11-11, CP nhóm câu đòi media 0,37 → 0,80): câu đòi ảnh/video đưa khối media lên
+    ĐẦU ngữ cảnh; số [n] giữ nguyên (text [1..n], media [n+1..]) → trích dẫn LLM và citations không đổi."""
+    t, m = [_src(), _src(url="https://sict.haui.edu.vn/vn/a/2", title="Bài B")], [
+        _cap("Ảnh X", "", 1, parent="https://sict.haui.edu.vn/vn/a/2")]
+    first = sources.build_context(t, m, media_first=True).split("\n\n---\n\n")[0]
+    assert first.splitlines()[0] == "Bài: Ảnh X — đăng ngày 26/08/2024 — 1 ảnh"
+    assert first.splitlines()[1].startswith("[3] (image)")        # số [n] vẫn theo text trước, media sau
+    # mặc định giữ layout cũ (text trước, media sau) cho câu không đòi media
+    assert sources.build_context(t, m).split("\n\n---\n\n")[0].startswith("[1] (text) Bài A")
+
+
 def test_media_header_counts_kinds_and_uses_post_title():
     """Header dùng tên bài (không kèm mục) và ghi rõ "đăng ngày": g064 2026-11-04 header "… › Các cuộc thi công
     nghệ: (30/03/2025)" → model nói video "không có ngày đăng"."""
