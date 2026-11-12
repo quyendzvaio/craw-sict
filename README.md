@@ -26,7 +26,8 @@ Hỏi được bằng chữ, bằng ảnh, hoặc cả hai; câu trả lời có
   chunk mang `heading_path`; file đính kèm chunk theo trang để trích dẫn được "trang N".
 - **Tìm kiếm lai**: dense + BM25 trên chữ đã bỏ dấu (sparse vector Qdrant, IDF), gộp RRF; câu gốc
   luôn được tìm, câu viết lại chỉ bổ sung. Ưu tiên mềm theo mục, năm, "mới nhất" suy từ câu hỏi;
-  lọc cứng khi người gọi truyền `filters`.
+  lọc cứng khi người gọi truyền `filters`. Không có re-rank cross-encoder: xếp lại theo cosine
+  embedding đã đo làm tụt recall (xóa phiếu BM25 khỏi RRF), nên thứ tự giữ nguyên fusion.
 - **Graph khái niệm** (D33, kiểu LazyGraphRAG): khái niệm = cụm danh từ ≥ 2 từ (underthesea) xuất
   hiện ở 2 bài đến ~5,6 % số bài; mỗi đoạn mang payload `entities`, câu hỏi khớp danh bạ → thêm một
   danh sách lọc theo khái niệm vào RRF. Dựng lại sau mỗi lượt ingest có thay đổi; không luật theo
@@ -186,14 +187,25 @@ uv run python -m tests.test_agent
 | Bộ | Script | Kết quả gần nhất (index v3) |
 |---|---|---|
 | `eval/golden_v2.jsonl` (88 câu, URL đáp án, media/file/OOS) | `scripts/eval_media.py --api` (HTTP, cache tắt) | media mode 88/88, file intent 88/88, OOS 85/85 có nhãn |
-| `eval/list_v1.jsonl` (12 câu liệt kê + 8 câu ngoài phạm vi) | `scripts/eval_api.py --list` | độ phủ mục 0,970 · `sufficient` đúng 0,95 |
-| RAGAS golden_v2 (bản đo cuối, 2026-11-08, 80/80 cặp áp dụng) | `scripts/eval_ragas.py collect / score` | faithfulness baseline 0,926 vs Phase 1 0,923 (−0,003, 17 giảm / 15 tăng, ngữ cảnh + URL giống hệt); url_hit 0,923 · false_abstain 0,05 → 0,062 · abstain_ok 1,0 |
-| RAGAS golden_v2 (so PR #30/#31, giám khảo qwen3.5, `eval/results/ragas/2026-11-03-g2`) | `scripts/eval_ragas.py collect / score` | faithfulness 0,946 · answer_relevancy 0,739 · context_precision 0,758 · context_recall 0,887 · url_hit 0,897 · false_abstain 0,075 |
+| `eval/list_v2.jsonl` (42 câu liệt kê + 8 câu ngoài phạm vi) | `scripts/eval_api.py --list` | độ phủ mục 0,940 (38/42) · `sufficient` đúng 0,94 |
+| `eval/media_v1.jsonl` (101 câu ảnh/video/file/none) | `scripts/eval_media.py --api` | media precision 0,798 · none_clean 33/33 · video_hit 12/15 · file_hit 15/15 |
+| **RAGAS golden_v2 — bản đo cuối (2026-11-11, 88 câu, giám khảo -v4-flash, trả lời gpt-oss-120b)** | `scripts/eval_ragas.py collect / score` | faithfulness **0,914** · answer_relevancy 0,730 · context_precision 0,724 · context_recall **0,886** · url_hit **0,923** · false_abstain 0,087 |
+| Độ trễ (máy dev, cùng lần đo) | `scripts/eval_ragas.py` (t_query / t_chat) | `/query` p50 0,64 s · p90 1,07 s · `/chat` p50 16,3 s · p90 42,8 s (LLM stream qua proxy miễn phí) |
+| Sau sửa prompt đếm + vị trí tải (lần đo lại 14 câu media) | `scripts/eval_ragas.py --retry-errors` | faithfulness 0,791 → **0,898** trên cùng câu, ngữ cảnh + URL giống hệt |
+| Câu đòi ảnh/video — bố cục ngữ cảnh media lên đầu (2026-11-12) | thí nghiệm 4 bố cục, cùng answer | context_precision nhóm 8 câu 0,366 → **0,798** (bố cục C cắt text còn 4 nguồn đạt 0,955 nhưng làm mất grounding, chưa áp) |
 | Nghiệm thu U1–U6 qua HTTP | `scripts/accept_api.py --api URL` | hybrid thật 59/60 (g004 trượt cả baseline); rules 52/54 |
+
+Ghi chú về các chỉ số: `answer_relevancy` và `context_precision` bị trần do giám khảo (câu trả lời
+kiểu cụm từ / không dấu chấm AR ~0,82 dù đáp án đúng; CP chấm theo bố cục ngữ cảnh, nhiễu đơn câu
+±0,5 — g086 chấm 3 lần cùng ngữ cảnh ra 0,0 / 0,83 / 0,33) — đọc theo nhóm câu, không đọc một số
+duy nhất. Hệ thống **không dùng re-rank cross-encoder**: thứ tự kết quả do fusion RRF (dense + BM25 +
+graph + tên riêng) quyết định; xếp lại theo cosine embedding đã đo làm tụt golden R@5 0,97 → 0,94
+(vì xóa phiếu BM25 khỏi đồng thuận), cosine chỉ còn làm cổng ngưỡng `sufficient` / media.
 
 Chạy đánh giá trước khi đổi model, ngưỡng hay luật chunk. Lịch sử số đo chi tiết (Phase 0 →
 Phase 4: baseline 139→148 wants_file multimodal, RAGAS từng lượt, latency hybrid, các gate
-chưa đạt) ở `eval/RESULTS.md` và `eval/results/`.
+chưa đạt) ở `eval/RESULTS.md` và `eval/results/`; điểm RAGAS từng lần ở
+`eval/results/ragas/2026-11-11-g2-full.*` (bản đo cuối) và các ngày trước đó.
 
 ## Triển khai
 
