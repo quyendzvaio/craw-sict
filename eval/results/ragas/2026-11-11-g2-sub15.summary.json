@@ -1,0 +1,202 @@
+{
+ "g2": {
+  "n": 14,
+  "faithfulness": 0.898,
+  "faithfulness_n": 14,
+  "answer_relevancy": 0.546,
+  "answer_relevancy_n": 14,
+  "context_precision": 0.365,
+  "context_precision_n": 14,
+  "context_recall": 0.75,
+  "context_recall_n": 14,
+  "url_hit": 0.857,
+  "false_abstain": 0.143
+ },
+ "all": {
+  "n": 14,
+  "faithfulness": 0.898,
+  "faithfulness_n": 14,
+  "answer_relevancy": 0.546,
+  "answer_relevancy_n": 14,
+  "context_precision": 0.365,
+  "context_precision_n": 14,
+  "context_recall": 0.75,
+  "context_recall_n": 14,
+  "url_hit": 0.857,
+  "false_abstain": 0.143
+ },
+ "by_case": {
+  "document": {
+   "n": 1,
+   "faithfulness": 1.0,
+   "faithfulness_n": 1,
+   "answer_relevancy": 0.4,
+   "answer_relevancy_n": 1,
+   "context_precision": 0.143,
+   "context_precision_n": 1,
+   "context_recall": 0.0,
+   "context_recall_n": 1,
+   "url_hit": 1.0,
+   "false_abstain": 0.0
+  },
+  "fact": {
+   "n": 1,
+   "faithfulness": 1.0,
+   "faithfulness_n": 1,
+   "answer_relevancy": 0.471,
+   "answer_relevancy_n": 1,
+   "context_precision": 0.0,
+   "context_precision_n": 1,
+   "context_recall": 0.5,
+   "context_recall_n": 1,
+   "url_hit": 0.0,
+   "false_abstain": 0.0
+  },
+  "image": {
+   "n": 5,
+   "faithfulness": 0.759,
+   "faithfulness_n": 5,
+   "answer_relevancy": 0.596,
+   "answer_relevancy_n": 5,
+   "context_precision": 0.42,
+   "context_precision_n": 5,
+   "context_recall": 1.0,
+   "context_recall_n": 5,
+   "url_hit": 1.0,
+   "false_abstain": 0.2
+  },
+  "latest": {
+   "n": 1,
+   "faithfulness": 1.0,
+   "faithfulness_n": 1,
+   "answer_relevancy": 0.299,
+   "answer_relevancy_n": 1,
+   "context_precision": 1.0,
+   "context_precision_n": 1,
+   "context_recall": 1.0,
+   "context_recall_n": 1,
+   "url_hit": 1.0,
+   "false_abstain": 0.0
+  },
+  "list": {
+   "n": 1,
+   "faithfulness": 1.0,
+   "faithfulness_n": 1,
+   "answer_relevancy": 0.764,
+   "answer_relevancy_n": 1,
+   "context_precision": 0.289,
+   "context_precision_n": 1,
+   "context_recall": 1.0,
+   "context_recall_n": 1,
+   "url_hit": 1.0,
+   "false_abstain": 0.0
+  },
+  "multi_hop": {
+   "n": 1,
+   "faithfulness": 1.0,
+   "faithfulness_n": 1,
+   "answer_relevancy": 0.63,
+   "answer_relevancy_n": 1,
+   "context_precision": 0.25,
+   "context_precision_n": 1,
+   "context_recall": 0.0,
+   "context_recall_n": 1,
+   "url_hit": 1.0,
+   "false_abstain": 0.0
+  },
+  "no_text": {
+   "n": 1,
+   "faithfulness": 1.0,
+   "faithfulness_n": 1,
+   "answer_relevancy": 0.0,
+   "answer_relevancy_n": 1,
+   "context_precision": 0.5,
+   "context_precision_n": 1,
+   "context_recall": 0.0,
+   "context_recall_n": 1,
+   "url_hit": 0.0,
+   "false_abstain": 1.0
+  },
+  "video": {
+   "n": 3,
+   "faithfulness": 0.926,
+   "faithfulness_n": 3,
+   "answer_relevancy": 0.699,
+   "answer_relevancy_n": 3,
+   "context_precision": 0.276,
+   "context_precision_n": 3,
+   "context_recall": 1.0,
+   "context_recall_n": 3,
+   "url_hit": 1.0,
+   "false_abstain": 0.0
+  }
+ },
+ "by_style": {
+  "english": {
+   "n": 1,
+   "faithfulness": 1.0,
+   "faithfulness_n": 1,
+   "answer_relevancy": 0.63,
+   "answer_relevancy_n": 1,
+   "context_precision": 0.25,
+   "context_precision_n": 1,
+   "context_recall": 0.0,
+   "context_recall_n": 1,
+   "url_hit": 1.0,
+   "false_abstain": 0.0
+  },
+  "no_accent": {
+   "n": 3,
+   "faithfulness": 0.889,
+   "faithfulness_n": 3,
+   "answer_relevancy": 0.411,
+   "answer_relevancy_n": 3,
+   "context_precision": 0.284,
+   "context_precision_n": 3,
+   "context_recall": 0.5,
+   "context_recall_n": 3,
+   "url_hit": 0.667,
+   "false_abstain": 0.0
+  },
+  "phrase": {
+   "n": 6,
+   "faithfulness": 0.818,
+   "faithfulness_n": 6,
+   "answer_relevancy": 0.594,
+   "answer_relevancy_n": 6,
+   "context_precision": 0.499,
+   "context_precision_n": 6,
+   "context_recall": 1.0,
+   "context_recall_n": 6,
+   "url_hit": 1.0,
+   "false_abstain": 0.167
+  },
+  "question": {
+   "n": 4,
+   "faithfulness": 1.0,
+   "faithfulness_n": 4,
+   "answer_relevancy": 0.552,
+   "answer_relevancy_n": 4,
+   "context_precision": 0.253,
+   "context_precision_n": 4,
+   "context_recall": 0.75,
+   "context_recall_n": 4,
+   "url_hit": 0.75,
+   "false_abstain": 0.25
+  }
+ },
+ "latency_s": {
+  "query": {
+   "p50": 0.39,
+   "p90": 0.82,
+   "mean": 0.53,
+   "n": 14
+  },
+  "chat": {
+   "p50": 17.23,
+   "p90": 72.53,
+   "mean": 25.9,
+   "n": 14
+  }
+ }
+}

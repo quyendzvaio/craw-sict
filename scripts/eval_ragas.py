@@ -110,7 +110,10 @@ def collect(args) -> None:
             with post(args.api, "/query", {"question": q["question"], "top_k": args.top_k,
                                            "filters": q["filters"]}, args.timeout) as r:
                 res = json.loads(r.read())
+            t_query = time.time() - t
+            t0_chat = time.time()
             ans = chat(args.api, q, args.top_k, args.timeout)
+            t_chat = time.time() - t0_chat
             if not ans.startswith(ECHO):
                 break
             print(f"{q['id']} LLM không trả lời (hết lượt?), chờ 60 s", flush=True)
@@ -121,7 +124,8 @@ def collect(args) -> None:
         contexts = [c for c in res.get("context", "").split(SEP) if c.strip()]
         row = {**q, "answer": ans, "contexts": contexts, "sufficient": res.get("sufficient"),
                "list_question": res.get("list_question"), "urls": [s["url"] for s in res.get("text", [])],
-               "media_urls": [s.get("url") for s in res.get("media", [])]}
+               "media_urls": [s.get("url") for s in res.get("media", [])],
+               "latency_s": {"query": round(t_query, 2), "chat": round(t_chat, 2)}}
         with out.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         print(f"{q['id']} {time.time() - t:.1f}s nguồn={len(contexts)} trả lời={len(ans)} ký tự", flush=True)
@@ -350,6 +354,15 @@ def summary(path: Path, use: list[str]) -> None:
                                  "bien_the": _mean([v.get(m) for v, _ in pairs])[0]}
                              for m in use if any(v.get(m) is not None for v, _ in pairs)}
         table["variants"]["n_pairs"] = len(pairs)
+    # độ trễ từ collect (latency_s.{query,chat} trong answers.jsonl): p50/p90
+    lat = [a.get("latency_s") for a in answers.values() if a.get("latency_s")]
+    if lat:
+        def _pct(vals, p):
+            vals = sorted(vals)
+            return vals[min(len(vals) - 1, int(round(p / 100 * (len(vals) - 1))))]
+        table["latency_s"] = {k: {"p50": _pct([x[k] for x in lat], 50), "p90": _pct([x[k] for x in lat], 90),
+                                  "mean": round(sum(x[k] for x in lat) / len(lat), 2), "n": len(lat)}
+                              for k in ("query", "chat")}
     print(json.dumps(table, ensure_ascii=False, indent=1))
     Path(str(path).replace(".scores.jsonl", ".summary.json")).write_text(
         json.dumps(table, ensure_ascii=False, indent=1), encoding="utf-8")

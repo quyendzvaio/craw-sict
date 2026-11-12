@@ -343,6 +343,11 @@ ANSWER_RULES = (
     "Hỏi về một văn bản, quy định, kế hoạch, thông báo hay file: nêu tên văn bản, số hiệu / ngày ban hành nếu có, "
     "các điểm chính có trong ngữ cảnh (kèm [n]) và cho biết file ở nguồn nào; ngữ cảnh có nguồn mang đúng tên văn "
     "bản đó thì không được trả lời là không tìm thấy. "
+    # 2026-11-11 (RAGAS g043: hỏi "tải quy chế ở đâu" — nguồn [7] đúng trang Quy chế nhưng model chỉ nói
+    # "tải từ trang web của trường" chung chung, không nêu trang; giám khảo chấm AR 0,39 vì trả lời không
+    # trỏ đúng vị trí người dùng cần).
+    "Hỏi tải / xem ở đâu: nêu đúng tên trang hoặc mục trong nguồn (ví dụ \"trang Quy chế\" ở nguồn [n], "
+    "file đính kèm của bài [n]) thay vì trả lời chung chung \"từ trang web của trường\"."
     # 2026-11-04: 6 ảnh cùng một bài → 6 ý gần như giống nhau; link OCR đọc sai (hqui thay haui) được chép thành link.
     "Ảnh/video được gom theo bài: dòng \"Bài: … — đăng ngày …\" cho tên bài và ngày đăng (dùng được), mỗi dòng "
     "số nguồn bên dưới là một ảnh/video kèm chữ máy đọc từ ảnh (OCR) hoặc phụ đề video. Người dùng muốn xem "
@@ -354,6 +359,12 @@ ANSWER_RULES = (
     "Dòng [graph] ở cuối ngữ cảnh chỉ là thông tin phụ về các thực thể liên quan, không phải nguồn để trích [n]. "
     "Câu hỏi yêu cầu liệt kê thì kể đủ mọi mục có trong ngữ cảnh (mỗi mục kèm [n]); ngữ cảnh có thể chưa đủ "
     "danh sách thì nói rõ."
+    # 2026-11-11 (RAGAS g086 chấm 2 lần đều đếm sai "9 chương trình" trong khi nguồn liệt kê 10): khi đếm số
+    # lượng (chương trình, ngành, suất học bổng…), đếm TỪNG mục trong danh sách của nguồn rồi mới nêu tổng;
+    # không khái quát kiểu "có một số chương trình chuyên sâu…".
+    "Câu hỏi hỏi số lượng (bao nhiêu chương trình / ngành / suất…): đếm từng mục được liệt kê trong nguồn, "
+    "kể tên đủ từng mục kèm [n] rồi mới nêu con số tổng; nguồn chưa liệt kê đủ thì nói rõ nguồn nào đã đếm được "
+    "bao nhiêu, KHÔNG tự cộng thêm nhóm 'một số…' ngoài nguồn."
 )
 
 
